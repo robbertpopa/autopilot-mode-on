@@ -17,6 +17,8 @@ ticket -> Understand -> [Clarify] -> [Design] -> Plan -> Build <-> Check -> Pull
 - You watch every ticket live: an event log drives a window (egui), a CLI and an MCP server.
 - The tool never merges, never pushes to a protected branch, and the agent never holds the GitHub token.
 
+The roadmap also includes a read-only codebase review, followed by approved fixes through the ticket pipeline. See the [review pipeline design](docs/REVIEW-PIPELINE.md).
+
 ## Documents
 
 | File | What it is |
@@ -25,8 +27,8 @@ ticket -> Understand -> [Clarify] -> [Design] -> Plan -> Build <-> Check -> Pull
 | `docs/IMPLEMENTATION-PLAN.md` | The master plan, status table and how to work in several tabs. |
 | `docs/DESIGN.md` | What we build and why. |
 | `docs/decisions.md` | Decisions made, with dates. |
-| `docs/milestones/` | One file per milestone M0 to M8, with tasks, tests and exit criteria. |
-| `docs/spikes/` | One file per spike S1 to S8: questions to answer before dependent work starts. |
+| `docs/milestones/` | One file per milestone M0 to M9, with tasks, tests and exit criteria. |
+| `docs/spikes/` | One file per spike S1 to S9: questions to answer before dependent work starts. |
 | `docs/testing.md` | The testing standard for this repository. |
 | `docs/security.md` | Threat model and rules. |
 | `docs/pitfalls.md` | Past mistakes and traps found in other projects. |

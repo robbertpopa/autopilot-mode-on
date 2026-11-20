@@ -215,6 +215,10 @@ Requirement: for every ticket you can watch its pipeline run in real time.
 - No extra summary field is added to the agents' structured output by default, so the working steps spend nothing on summaries.
 - A ticket-level summary follows the same rule: a code-made line (steps done, rounds, spend) and an on-request explanation.
 
+## 8d. Codebase review and fix
+
+A separate run reviews a scoped repository snapshot against sourced rules. It returns evidence-linked findings with independent verification. Report-only is the default. Approved fixes become small tickets and go through the existing checks and publication approval. [Review design](REVIEW-PIPELINE.md) · [Rule packs](rules/README.md)
+
 ## 9. Evaluation
 
 Replay tickets from a project's own history: take merged PRs with their issue text, run the pipeline from the base commit, compare by the tests the

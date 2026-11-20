@@ -5,7 +5,7 @@ Reviewed 2026-11-20. The research notes below are dated references. Provider beh
 
 ## 0. Status and next step
 
-**Next session starts here:** work in `D:\autopilot-mode-on`. M0 and the [S5 synthetic process checks](spikes/S5-windows-process-control.md) passed locally. The first [fixture-backed M1 CLI](milestones/M1-agent-step.md#fixture-verification) can run and replay a ticket. Continue with the versioned S1 provider contract when the dedicated account, budget and fixture-redaction procedure are ready.
+**Next session starts here:** work in `D:\autopilot-mode-on`. M0 and the [S5 synthetic process checks](spikes/S5-windows-process-control.md) passed locally. The first [fixture-backed M1 CLI](milestones/M1-agent-step.md#fixture-verification) can run and replay a ticket. The offline S1 preflight and synthetic M1 fault fixtures are ready. Capture the versioned S1 provider contract once the dedicated workspace and budget are confirmed. S9 and M9 add the later codebase-review workflow.
 
 The standalone repository holds the current implementation and milestone status. Record spike results and tick milestone items after running their exit checks.
 
@@ -19,6 +19,7 @@ The standalone repository holds the current implementation and milestone status.
 | S6 containment | `docs/spikes/S6-containment.md` | [ ] |
 | S7 graph widget | `docs/spikes/S7-graph-widget.md` | [ ] |
 | S8 Codex auth and terms | `docs/spikes/S8-codex-auth.md` | [ ] |
+| S9 review quality and cost | `docs/spikes/S9-review-quality.md` | [ ] |
 | M0 foundation | `docs/milestones/M0-foundation.md` | [x] |
 | M1 one agent step | `docs/milestones/M1-agent-step.md` | [ ] |
 | M2 understand, ask, inbox | `docs/milestones/M2-understand-ask.md` | [ ] |
@@ -28,6 +29,7 @@ The standalone repository holds the current implementation and milestone status.
 | M6 design step | `docs/milestones/M6-design-step.md` | [ ] |
 | M7 evaluation | `docs/milestones/M7-evaluation.md` | [ ] |
 | M8 Codex adapter, MCP, packaging | `docs/milestones/M8-codex-mcp-packaging.md` | [ ] |
+| M9 codebase review and fix | `docs/milestones/M9-codebase-review.md` | [ ] |
 
 ## 0a. Implementation order and deliverables
 
@@ -115,8 +117,9 @@ Budget for all live spikes: **at most $1**, on a dedicated API key with a Consol
 | S6 | How far can we contain an agent on Windows? | Test agent and check runtimes with synthetic fixtures. Verify filesystem and process-tree boundaries, tool egress restrictions and credential isolation. | A platform and auth capability table that determines where real Build and Check can run. |
 | S7 | egui-snarl or our own graph? | One-day prototype of the 6-node graph with arrows, selection and per-node widgets. | Choose by whether snarl's node widgets can hold our settings forms without fights. |
 | S8 | Can Codex run on a ChatGPT subscription from `codex exec`, how do we switch between subscription and API without the cached login interfering, and what do OpenAI's terms say about driving it from a local tool? | Read OpenAI's auth and terms pages; try `codex login status` and `codex exec --json` on a tiny task with each method; test a separate config directory per auth mode (find the environment variable). | A written rule per auth mode, or a decision that Codex runs on the API key only. |
+| S9 | How well does the review pipeline find real defects and filter noise? | Compare the three review variants on a seeded synthetic sample. Measure precision, recall and cost per verified finding. | A measured baseline and chosen review-unit size, caps and verifier configuration. |
 
-S1 and S5 gate M1's live execution. S2 gates automatic limit classification and any later API fallback. S6 gates the first real repository Build or Check in M3 and publishing in M4. S7 gates M5's graph. S4 gates the remote Design path in M6. S8 gates the Codex adapter only.
+S1 and S5 gate M1's live execution. S2 gates automatic limit classification and any later API fallback. S6 gates the first real repository Build or Check in M3 and publishing in M4. S7 gates M5's graph. S4 gates the remote Design path in M6. S8 gates the Codex adapter only. [S9](spikes/S9-review-quality.md) measures review quality and cost before M9 model-assisted review.
 
 ## 4. Technology choices
 
@@ -233,6 +236,12 @@ Each milestone ends with a working vertical slice and its tests. The window come
 ### M8: second adapter and integrations
 - Codex adapter on `codex exec --json`; MCP server over `engine`; GitHub App authentication option; release packaging (Windows installer, `cargo install`).
 
+### M9. Codebase review and fix
+
+- Start with a report-only review using scoped source inventory, mechanical checks, evidence-linked findings, and independent verification. Report-only needs M3 and the S9 baseline. Running repository code or agents on real projects uses the validated S6 runtime.
+- Add approved fix batches after M4. Each batch follows the same ticket checks, budgets and publishing approval.
+- The [milestone](milestones/M9-codebase-review.md), [review design](REVIEW-PIPELINE.md) and [rule packs](rules/README.md) define the scope and acceptance tests.
+
 ## 7. Test strategy (applies our testing standard to the new repo)
 
 - **Keep rule:** a test stays only if it states the invariant, a plausible breaking change and that no other test catches it. Cut categories: readable code, wiring, defaults, compiler-checked, library behaviour, duplicates, combinations.
@@ -272,6 +281,7 @@ If it needs a change there, it adds one line under "Requests to other tabs" belo
 | 6 | M4 part 1 (worktrees, conflict queue) | `git` | M0 done |
 | 7 | M8 part 1 (Codex adapter) | `agent-codex` | M1 done and S8 done |
 | 8 | M3, then M4 part 2, M6, M7 | `checks`, `tracker`, `eval` | M3 fixtures after M2; real Build and Check after M4 part 1 and S6 |
+| 9 | S9, then M9 | `rules`, `review` | S9 offline setup now. M9 report-only after M3 and S9. Fixing after M4. |
 
 The engine starts in M1 and follows the CLI action work. Sequence M2, M3 and M4 edits to `pipeline` so there is one owner at a time. Sequence S5 and M1 edits to the launch test fixtures the same way.
 
