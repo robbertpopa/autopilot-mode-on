@@ -5,7 +5,7 @@ Reviewed 2026-11-20. The research notes below are dated references. Provider beh
 
 ## 0. Status and next step
 
-**Next session starts here.** Work in `D:\autopilot-mode-on`. M0 and the [S5 synthetic process checks](spikes/S5-windows-process-control.md) passed. The [fixture-backed M1 CLI](milestones/M1-agent-step.md#fixture-verification) runs and replays a ticket and saves streamed activity before exit. The offline S1 preflight is ready. Capture the versioned S1 provider contract once the dedicated workspace and budget are confirmed. The [S3 source review](spikes/S3-read-gru.md#result) and [M4 local worktree operations](milestones/M4-worktrees-pr.md#part-1-git-crate-can-start-after-m0) are verified. The independent offline work can continue with the S7 graph prototype. S9 and M9 add the later codebase-review workflow.
+**Next session starts here.** Work in `D:\autopilot-mode-on`. M0 and the [S5 synthetic process checks](spikes/S5-windows-process-control.md) passed. The [fixture-backed M1 CLI](milestones/M1-agent-step.md#fixture-verification) runs and replays a ticket and saves streamed activity before exit. The offline S1 preflight is ready. Capture the versioned S1 provider contract once the dedicated workspace and budget are confirmed. The [S3 source review](spikes/S3-read-gru.md#result) and [M4 local worktree operations](milestones/M4-worktrees-pr.md#part-1-git-crate-can-start-after-m0) are verified. The [S7 graph comparison](spikes/S7-graph-widget.md#result) selected a fixed egui canvas. The S8 documentation and local preflight can proceed independently. S9 and M9 add the later codebase-review workflow.
 
 The standalone repository holds the current implementation and milestone status. Record spike results and tick milestone items after running their exit checks.
 
@@ -17,7 +17,7 @@ The standalone repository holds the current implementation and milestone status.
 | S4 Claude Design headless | `docs/spikes/S4-claude-design-headless.md` | [ ] |
 | S5 synthetic process control | `docs/spikes/S5-windows-process-control.md` | [x] |
 | S6 containment | `docs/spikes/S6-containment.md` | [ ] |
-| S7 graph widget | `docs/spikes/S7-graph-widget.md` | [ ] |
+| S7 graph widget | `docs/spikes/S7-graph-widget.md` | [x] |
 | S8 Codex auth and terms | `docs/spikes/S8-codex-auth.md` | [ ] |
 | S9 review quality and cost | `docs/spikes/S9-review-quality.md` | [ ] |
 | M0 foundation | `docs/milestones/M0-foundation.md` | [x] |
@@ -139,7 +139,7 @@ Rust stable, edition 2024, toolchain pinned in `rust-toolchain.toml` (same pin a
 | Finding `claude` | `which` 8.0 | Also `%USERPROFILE%\.local\bin`. |
 | Notifications | `notify-rust` 4.19 | |
 | GUI | `eframe` 0.37 (egui) | |
-| Graph widget | `egui-snarl` 0.12 (updated Aug 2026) or custom | `egui_node_graph2` is stale (2024): not used. Decided by S7. |
+| Graph widget | Fixed egui canvas | The fixed six-node layout and edge labels passed the [S7 probe](spikes/S7-graph-widget.md#result). |
 | Tests | `cargo-nextest` 0.9, `insta` 1.49, `assert_cmd` 2.2, `proptest` 1.12, `tempfile` | `wiremock` only if we mock HTTP; with the `gh` CLI we mock the process instead. |
 | Quality gates | `cargo clippy -D warnings` (pedantic, as in the ck-* repos), `cargo deny`, `cargo machete`, `cargo xtask layers` | |
 
