@@ -10,5 +10,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+autopilot-core.workspace = true
 autopilot-process = { path = "../process" }
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
