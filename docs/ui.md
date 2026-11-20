@@ -1,8 +1,8 @@
 # The window (egui)
 
-The visual design lives in a Claude Design canvas (private): https://claude.ai/artifact/GQnUm1GrwCAr3osKRUa78D
-The local export in `../../canvas/project/` contains `Main.dc.html` (pipeline), `Run.dc.html` (live run) and `Step.dc.html` (step detail). Carry the export into the standalone repository when starting M5. The style follows craft-anything's screens:
-dark shell, ticket sidebar with status chips, amber approval cards, progress stepper, cost bar. Copy the canvas files into this repository's docs if the link must outlive the account.
+The visual design lives in a private Claude Design canvas.
+The local export in the original `pipeline-scratch/canvas/project/` folder contains `Main.dc.html` (pipeline), `Run.dc.html` (live run) and `Step.dc.html` (step detail). Carry the export into the standalone repository when starting M5. The style follows craft-anything's screens:
+dark shell, ticket sidebar with status chips, amber approval cards, progress stepper, cost bar.
 
 ## Screens and what drives them
 

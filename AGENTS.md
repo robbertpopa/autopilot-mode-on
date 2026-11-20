@@ -14,7 +14,7 @@ Read this file, then `docs/IMPLEMENTATION-PLAN.md`, then the milestone or spike 
 ## Git
 
 - Branch from `develop` (`feature/`, `fix/`, `chore/`, `docs/`). Squash pull requests into `develop`. Titles: `type: lowercase imperative subject`.
-- Never commit to `main` or `develop` directly.
+- Use pull requests for changes to `master` and `develop`.
 - Ask the user which GitHub account to use before the first commit, push or `gh` command of a prompt (owner preference).
 - No `Co-Authored-By` or "Generated with" lines in commits or pull requests (owner preference, same as the Contest Keeper repositories).
 - Do not commit scratch files, agent session files or anything that may hold a secret.

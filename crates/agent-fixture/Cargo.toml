@@ -1,0 +1,17 @@
+[package]
+name = "autopilot-agent-fixture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+autopilot-agent = { path = "../agent" }
+autopilot-core.workspace = true
+autopilot-process = { path = "../process" }
+serde.workspace = true
+serde_json.workspace = true

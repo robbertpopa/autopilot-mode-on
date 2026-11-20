@@ -1,0 +1,19 @@
+[package]
+name = "autopilot-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+autopilot-agent = { path = "../agent" }
+autopilot-core.workspace = true
+autopilot-store = { path = "../store" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

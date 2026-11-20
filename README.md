@@ -3,7 +3,7 @@
 A local program, written in Rust, that takes a codebase and a pile of stories, bugs and wishes, and runs each one through a pipeline of coding agents
 until a draft pull request is ready for you to review. It asks you only when it needs something.
 
-The active implementation now lives in `D:\autopilot-mode-on`. The [plan in this folder](docs/IMPLEMENTATION-PLAN.md) records the starting design. Use the plan in the standalone repository for current milestone status.
+Status: the fixture-backed Understand CLI runs on Windows and Linux. Follow the [implementation plan](docs/IMPLEMENTATION-PLAN.md) for milestone status.
 
 ## What it does
 
@@ -31,6 +31,24 @@ ticket -> Understand -> [Clarify] -> [Design] -> Plan -> Build <-> Check -> Pull
 | `docs/security.md` | Threat model and rules. |
 | `docs/pitfalls.md` | Past mistakes and traps found in other projects. |
 | `docs/ui.md` | The window: screens and where the visual design lives. |
+
+## Try the fixture-backed CLI
+
+Run these commands from the repository root. The fake agent replays a fixed synthetic transcript, and the result and event history are saved in the selected data directory.
+
+```sh
+cargo build --locked -p autopilot-process -p autopilot-fake-agent -p autopilot-cli
+cargo run --locked -p autopilot-cli -- --data-dir target/fixture-demo run-step --step understand --ticket fixtures/tickets/understand.json --agent fake
+cargo run --locked -p autopilot-cli -- --data-dir target/fixture-demo watch sample-export
+```
+
+Add `--after 3` to `watch` to replay only events after sequence 3. `watch` reads committed events and exits. Use a fresh data directory to run the sample ticket again.
+
+## Development
+
+Run `cargo test --locked --workspace` for the local test suite. `cargo xtask ci` also checks formatting, Clippy, crate layers, dependency licenses, advisories and unused dependencies. The CI workflow pins Nextest, cargo-deny and cargo-machete.
+
+Run `cargo xtask secrets` with Gitleaks installed to scan staged changes before committing.
 
 ## Licence
 

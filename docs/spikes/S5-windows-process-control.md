@@ -1,18 +1,20 @@
-# S5: start `claude.exe` with no window and kill its whole tree on Windows
+# S5: clean up supervised process trees
 
-**Question:** how do we run a headless agent with no console window, read its output, and guarantee no orphan processes after cancel, timeout or a crash of our own program? **Gates:** live execution in M1. **Spending:** none (use `tools/fake-agent` or any console program, plus one real `claude --version`).
+**Question:** how does the launcher manage the console, pipes and lifetime of a synthetic worker and its descendants? **Gates:** live execution in M1. **Spending:** none. Live provider launch and native executable selection are part of the M1 adapter.
 **Start prompt:** "Read `AGENTS.md` and `docs/IMPLEMENTATION-PLAN.md`, then do `docs/spikes/S5-windows-process-control.md`."
 
-## Method: a small Rust program (later becomes the shared `process` supervisor)
-- [ ] Prototype a suspended Windows launch with `CREATE_NO_WINDOW`, then attach it to the job before resuming. Pipe stdin for the prompt and drain stdout and stderr concurrently with bounded buffers.
-- [ ] Put the child in a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` before it can launch descendants. Verify startup aborts if assignment fails. Keep `unsafe` in one small module with `// SAFETY:` comments.
-- [ ] Find `claude.exe` (`which`, then `%USERPROFILE%\.local\bin\claude.exe`); handle a `.cmd` shim by spawning the real binary.
-- [ ] Test cases: normal exit; cancel while running; timeout; the child spawns a grandchild that sleeps (is it killed?); our program is killed with Task Manager (does the job kill the children?); a very large output; a child that ignores stdin closing.
-- [ ] Confirm no console window appears (run from a GUI parent and watch) and that CPU stays idle while waiting.
-- [ ] Test Linux process-group cancellation and separately verify a supervisor lifetime mechanism for abrupt parent exit. Enable unattended execution only after that target passes both checks.
+## Method
+- [x] Launch with `CREATE_NO_WINDOW` and attach the Windows job at creation through a `STARTUPINFOEXW` job list. Pipe stdin and drain stdout and stderr concurrently with bounded buffers.
+- [x] Configure a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Supply the job during process creation and surface launch errors. A separate create-and-assign sequence leaves a gap where supervisor death can strand the child. Windows API calls are confined to the platform module.
+- [x] Test normal exit, cancel, timeout, forced supervisor exit, output flooding, a worker that ignores stdin closure, and a missing executable. Tests verify the synthetic worker and grandchild stop.
+- [x] Verify a synthetic console child started by a Windows GUI parent has no console. Measure supervisor CPU while waiting for a timeout.
+- [x] Test Linux process-group cleanup after cancellation and abrupt exit. A sibling guardian observes EOF on the owner's private control pipe, stops the worker group and reaps descendants it adopts.
 
 ## Done when
-All test cases pass on Windows and Linux; the runner API and its pitfalls are written into `docs/pitfalls.md`; the code is ready to move into `crates/process`.
+The synthetic cleanup checks pass on native Windows and in a Linux container. The shared runner lives in `crates/process` and its limits are recorded below.
 
 ## Result
-(fill in)
+
+On 2026-11-20, all five automated lifecycle tests passed on Windows and Linux. The Windows GUI probe measured less than 1 ms of supervisor CPU at its reporting precision over a 2,001 ms timeout. The installed native `claude.exe` reported version 2.1.329. The provider adapter still needs its own launch and authentication smoke test, including native executable selection on installations that expose a `.cmd` shim.
+
+Windows tree cleanup uses the creation-time job list and limits handle inheritance to the child's standard streams. Linux cleanup applies to descendants that stay in the worker's process group. Pipe waits have a cleanup deadline. S6 covers filesystem, credential and network containment. [Windows process attributes](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)

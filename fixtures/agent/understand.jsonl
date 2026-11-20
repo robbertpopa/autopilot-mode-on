@@ -1,0 +1,3 @@
+{"type":"activity","summary":"Read the sample export ticket."}
+{"type":"fixture_metadata","version":1}
+{"type":"result","result":{"summary":"Add a CSV export for the ticket list.","assumptions":["Include the same tickets visible in the current list."],"needs_design":false}}
