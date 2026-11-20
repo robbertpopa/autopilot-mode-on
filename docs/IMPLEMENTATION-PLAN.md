@@ -91,7 +91,7 @@ Use the milestone checklists above for detailed tasks. The CLI selects the sibli
   There is no per-error exit code. A set `ANTHROPIC_API_KEY` outranks the login in `-p`. `--bare` is key-only and skips CLAUDE.md, hooks and MCP, so API steps should **not** use it.
 - Hooks (33 events) can enforce hard rules (`PreToolUse` deny); an http hook can post events to a URL. Transcripts live in `~/.claude/projects/…jsonl`, format internal: we never parse them.
 - Windows: native `claude.exe` in `%USERPROFILE%\.local\bin`; Git Bash recommended, not required. **No documented way to start it without a console window.**
-- Headless use of the Artifact tool or Claude Design: **not documented**.
+- [S4](spikes/S4-claude-design-headless.md) records the interactive Design template and its account requirements. Headless publishing, revision and audience still need a live trial.
 
 ## 2. Principles for building it (from Anthropic's agent articles and the survey)
 

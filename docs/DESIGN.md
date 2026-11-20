@@ -18,7 +18,7 @@ Decided by the user:
 - Build and Check come from craft-anything's loop (build, check, refine, ready). **No Study step.**
 - No gates. A step asks you whenever it needs a confirmation or more information, and every step has an "Ask me after this step" checkbox.
   The AI decides whether it has anything to clarify.
-- A Design step uses Claude Design and needs approval.
+- A Design step produces a local HTML mockup and needs approval. The remote Claude Design option depends on S4.
 
 Decided later the same day: the name is `autopilot-mode-on`; **subscription is the default auth**; Codex can be used too (section 7a).
 Still open: where the repo lives (own account recommended) and the real-world behaviour of plan limits (spike S2).
@@ -59,7 +59,7 @@ Brackets: the step runs only when the AI (or a rule) says it is needed. Side sta
 | Intake | Rust | Normalised ticket; duplicates flagged | no |
 | Understand | agent, cheap tier | Restated need, files touched, assumptions, `open_questions`, `needs_design` | no |
 | Clarify | agent + you | Batched questions, each with a proposed default | only when it has open questions (the AI decides) |
-| Design | agent using Claude Design + you | A design canvas link, revised until approved | yes: "Ask me after this step" is on by default |
+| Design | agent + you | A local HTML mockup or an enabled remote canvas, revised until approved | yes: "Ask me after this step" is on by default |
 | Plan | agent, top tier | Acceptance criteria (each with how it is verified), test plan, file list | on by default for standard and risky tickets |
 | Build | worker agent in a worktree | Worktree changes, committed by the trusted Git path after Check | no |
 | Check | Rust, then one agent | Ordered checks (section 5) | no |
@@ -81,15 +81,12 @@ Brackets: the step runs only when the AI (or a rule) says it is needed. Side sta
 - **Defaults**: the box is on for Design, Plan and PR, and off for the rest. Trivial tickets may skip optional confirmations if the project allows it. Design approval and publishing approval are required when those actions run.
 - **One inbox** for all of it, with craft-anything's two request kinds: a question (choices, optional free text) and an approval.
 
-### Design step (Claude Design)
-- Runs only when `needs_design` is true (a user-facing UI change). The agent makes a design canvas with Claude Design
-  (the Design artifact type) and returns its link. You open it, then approve, ask for changes or reject in the question inbox.
-  Feedback goes back to the same canvas, so a revision keeps its link.
-- Approval is required whenever the step runs. The approved design is attached to the Plan and becomes the reference for Build.
-- Later idea (borrowed from craft-anything's website check): a visual check that compares the built UI with the approved design.
-- Unverified: publishing artifacts from a headless `claude -p` session, and whether it needs a claude.ai login (subscription) rather than an API key.
-  Test the remote path in S4. M6 can start with static HTML mockups from the worktree and a viewer with scripts and external requests disabled.
-- Privacy: a design canvas lives on claude.ai under your account. Private repos may not want that; make the step switchable per project.
+### Design step
+
+- Runs only when `needs_design` is true. The first M6 path is a static HTML mockup in the worktree. Its viewer disables scripts and external requests.
+- Review the design in the inbox. Approval is required whenever the step runs. The approved design is attached to the Plan and becomes the reference for Build.
+- A remote Claude Design canvas is a per-project opt-in. Claude Code documents an eligible claude.ai login for publishing and revisions to the same URL. The [S4 live trial](spikes/S4-claude-design-headless.md#method) must verify headless publication, revisions and audience before M6 can enable it. The asset is hosted by Anthropic.
+- A later visual check could compare the built UI with the approved design.
 
 ## 5. Build and Check (from craft-anything, without Study)
 
