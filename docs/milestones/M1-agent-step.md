@@ -11,7 +11,8 @@ Demonstrate a replayable Understand run with fixtures, then run one synthetic ti
 - [ ] `agent-claude`: command builder (model, effort, max turns, budget, allowed and disallowed tools, `--settings` with deny hooks, `--session-id`, `--json-schema`, `--append-system-prompt`); stream-json parser from the S1 fixtures; `Result` subtypes; rate-limit and retry detection per S2; record `claude_code_version`.
 - [ ] Per-step auth: build the child environment from scratch. Subscription: remove `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_*`. API: inject the dedicated key only into the provider environment verified for that step. Preflight with `claude auth status` (exit code and `authMethod`); a clear message if not signed in or if the method does not match the step's `auth`.
 - [ ] Cost ledger: API steps use `total_cost_usd`; subscription steps estimate from token usage and a price table (from the pricing page, with cache read and write multipliers), always labelled "estimate".
-- [ ] `tools/fake-agent`: a binary that replays a fixture transcript and injects faults on request (truncated line, partial UTF-8, huge output, hang, crash, rate limit, `error_max_turns`).
+- [x] `tools/fake-agent` replays the synthetic transcript and can emit `truncated`, `partial-utf8`, `oversized`, `hang` and `crash` variants via `replay <fault>`.
+- [ ] Add replay cases for the observed Claude rate-limit and turn-cap outcomes after S1 and S2.
 - [x] Save the fixture result through `engine`. Run `autopilot run-step --step understand --ticket <file> --agent fake` and `autopilot watch <ticket-id>` from separate processes. Add `--after <sequence>` to resume replay.
 - [x] Reuse the S5 subprocess supervisor for the synthetic fixture adapter. The live agent contract and streaming integration remain above.
 - [ ] A `live` feature test, `#[ignore]`, capped at $0.05.
