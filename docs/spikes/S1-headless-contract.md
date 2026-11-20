@@ -23,5 +23,12 @@ Start with a synthetic prompt, a structured response, a resumed response and a t
 ## Done when
 M1's live path needs sanitized fixtures for the minimal invocation, structured output, resume and terminal failure. `docs/headless-contract.md` records the observed flags and output for the tested CLI version. Optional cases can be recorded when a milestone needs them.
 
+## Local preflight
+
+On 2026-11-20, native Windows Claude Code reported version `2.1.329`. Its help listed print mode, stream JSON, structured output, budget, tool selection, session and resume options, and strict MCP configuration. This was a local CLI check. The emitted wire format, credentials used, actual budget behavior and per-error fields still need the dedicated live spike.
+
+Capture from a disposable working directory with synthetic content and the dedicated API workspace. Keep raw output out of the repository. Record the CLI version and launch flags without secrets. Retain the event types and field shapes needed to test the parser. Replace session identifiers consistently and replace local paths and arbitrary text with synthetic values. Scan the sanitized fixture before staging it.
+
 ## Result
-(fill in)
+
+Live fixtures pending.
