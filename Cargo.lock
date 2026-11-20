@@ -65,6 +65,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "autopilot-git"
+version = "0.1.0"
+dependencies = [
+ "autopilot-process",
+ "thiserror",
+]
+
+[[package]]
 name = "autopilot-process"
 version = "0.1.0"
 dependencies = [
