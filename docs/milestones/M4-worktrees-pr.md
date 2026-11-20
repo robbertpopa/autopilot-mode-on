@@ -8,6 +8,7 @@ Two tickets run in parallel on a sample repository and open two draft pull reque
 
 ## Part 1: `git` crate (can start after M0)
 - [ ] Worktree manager over the `git` CLI: create from a base branch under a configurable data folder (not inside the repo), name branches `ticket/<id>`, list, remove with retry on Windows file locks, clean orphans after a crash.
+  - [x] Resolve the exact local base branch and read Git's registered worktrees through the bounded process runner.
 - [ ] Diff and stat helpers; a tree fingerprint for kept check results.
 - [ ] Conflict prediction: which files a ticket will touch (from Understand and Plan) versus the files other running tickets touch.
 
