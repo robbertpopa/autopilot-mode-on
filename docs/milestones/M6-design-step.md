@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # M6: the design step
 
 **Owner crates:** `pipeline` (design step), `ui` (viewer for the fallback). **Depends on:** M3. The local HTML path can ship independently. The remote canvas path needs S4.

@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # M2: understand, ask, inbox, step settings
 
 **Owner crates:** `pipeline`, `policy`. **Depends on:** M1. **Gate for:** M3, M5.

@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # S5: clean up supervised process trees
 
 **Question:** how does the launcher manage the console, pipes and lifetime of a synthetic worker and its descendants? **Gates:** live execution in M1. **Spending:** none. Live provider launch and native executable selection are part of the M1 adapter.

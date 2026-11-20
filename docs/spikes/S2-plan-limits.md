@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # S2: how a plan or rate limit looks, and how to detect it
 
 **Question:** when Claude Code hits a plan or rate limit in headless mode, what appears in the output, and what rule detects it? **Gates:** M1 (detection), the `fallback = api` setting. **Depends on:** S1 fixtures.

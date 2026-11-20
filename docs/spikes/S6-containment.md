@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # S6: how far can we contain an agent on Windows?
 
 **Question:** what can we really stop an agent from doing, and what stays a rule? **Gates:** real repository Build and Check in M3, and publishing in M4. **Depends on:** S1 and S5. Start with local synthetic probes. Any later provider smoke test counts toward the shared live-spike cap.

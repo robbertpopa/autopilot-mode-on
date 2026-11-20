@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/icon-dark.svg">
+  <img src="../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # The window (egui)
 
 The visual design lives in a private Claude Design canvas.

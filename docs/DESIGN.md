@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/icon-dark.svg">
+  <img src="../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # autopilot-mode-on: design
 
 Local Rust program (repo and crate name `autopilot-mode-on`). Input: a codebase plus stories, bugs and wishes. It clarifies the need in plain language (only when it

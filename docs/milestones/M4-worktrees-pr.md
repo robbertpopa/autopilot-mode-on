@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # M4: worktrees, parallelism, pull requests
 
 **Owner crates:** `git` (part 1), `tracker`, `policy`, `pipeline` scheduler (part 2). **Depends on:** M0 for part 1. Part 2 needs M3 and S6. Read S3 before CI repair. **Gate for:** M7.

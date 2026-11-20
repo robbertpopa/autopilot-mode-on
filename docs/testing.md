@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/icon-dark.svg">
+  <img src="../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # Testing standard
 
 Few tests, each worth keeping. The suite must stay small enough to read.

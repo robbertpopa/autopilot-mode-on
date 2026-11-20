@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # Pack: security and supply chain
 
 Sources: OpenSSF Best Practices badge (BP), OpenSSF Scorecard (SC-card), cargo-deny docs (CD), storytold (ST), our threat model (OJ; marked **judgment** where no fetched source states it; OWASP text was not fetched, so OWASP mappings are judgment).

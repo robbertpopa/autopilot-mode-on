@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # Pack: rust-core
 
 Panics, lints, unsafe, errors, input, API shape. Sources: storytold house rules (SC), Rust API Guidelines (API), Rust for Linux (RFL), Clippy docs (CL), craft-anything pitfalls (PF), our judgment (OJ).

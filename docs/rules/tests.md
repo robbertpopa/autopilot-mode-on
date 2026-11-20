@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # Pack: tests
 
 Sources: storytold's testing standard and app-agents rules (SC), craft-anything pitfalls (CA), our testing doc (OJ), recent work on tests before refactoring (R). In a **review** these produce findings (candidates to add or to cut). A review never deletes a test by itself; cuts happen in their own pull request that lists every removed test.

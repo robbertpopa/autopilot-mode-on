@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # The reviewer's lens
 
 What the review agent is told to look at for each unit, how severe things are, and how it must report. Based on Google's Engineering Practices (reviewer guide) plus the verification findings in `docs/REVIEW-PIPELINE.md`.

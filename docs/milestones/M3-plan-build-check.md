@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # M3: plan, build and check loop
 
 **Owner crates:** `checks`, `pipeline` (plan and build steps). **Depends on:** M2. Real Build and Check also require M4 part 1 and S6 for the specific platform, launcher and auth mode. **Gate for:** M4 part 2 and M6.

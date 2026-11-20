@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # S9: how good is a model-only code review, and what does it cost?
 
 **Question:** on a real Rust crate, how many of an agent's findings are real, how many are noise, what does a unit cost, and how much do the mechanical findings and a verifier improve it? **Gates:** the design of M9 (unit size, caps, which steps need the strong model). **Spending:** use the remaining shared $1 live-spike budget, with a dedicated capped workspace and at most $0.05 per call. If the measured experiment needs more, obtain a separate budget first. Prepare a synthetic corpus locally while M1 is in progress.

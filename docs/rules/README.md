@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # Rule packs
 
 Rules the review pipeline checks, each with its source. Packs: `rust-core.md`, `structure-and-comments.md`, `tests.md`, `security-and-supply-chain.md`, `change-shape.md`, and the reviewer's lens in `review-lens.md`. Presets (which rules a project turns on) are listed in `docs/REVIEW-PIPELINE.md`.

@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/icon-dark.svg">
+  <img src="../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # autopilot-mode-on: implementation plan
 
 Companion to `DESIGN.md` (what we build and why). This file says how, in what order, with which parts, and how we know each step works.

@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # S4: can a headless session publish a Claude Design canvas?
 
 **Question:** can `claude -p` use the Artifact tool and the Design artifact type, under which login, and how does feedback reach it? **Gates:** the Claude Design path of M6 only. **Needs:** the user's hands on the subscription (a few minutes).
