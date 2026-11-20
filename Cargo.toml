@@ -43,3 +43,6 @@ expect_used = "deny"
 print_stdout = "deny"
 dbg_macro = "deny"
 todo = "deny"
+
+[profile.xtask]
+inherits = "dev"

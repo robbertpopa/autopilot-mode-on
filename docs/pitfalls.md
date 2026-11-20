@@ -16,6 +16,7 @@ Add an entry whenever something cost time. One line each: the trap, then what to
 
 ## Workspace checks
 
+- Run the CI driver with a separate Cargo profile. Windows locks the running executable while Nextest builds the workspace's copy of `xtask.exe`.
 - Cargo-run binaries inherit package environment variables. Invoke `cargo-machete` directly from `xtask` so it interprets arguments as paths.
 - Lock dependency resolution at the `cargo xtask` alias. An unlocked alias can rewrite `Cargo.lock` before the checks run.
 
