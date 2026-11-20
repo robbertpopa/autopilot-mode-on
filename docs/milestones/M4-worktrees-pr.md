@@ -13,6 +13,7 @@ Two tickets run in parallel on a sample repository and open two draft pull reque
   - [x] Recover a pending checkout at the reserved commit after verifying its Git identity, unlocked index and clean worktree status. Preserve checkouts with changes, submodules or index flags that hide files for inspection.
   - [x] Remove clean owned checkouts and resume interrupted removals. Retry Windows sharing failures while keeping the Git registration. Delete an unchanged ticket branch and preserve any branch with a changed tip.
 - [ ] Diff and stat helpers; a tree fingerprint for kept check results.
+  - [x] Summarize two local commits with repository-relative changed paths and text line counts. Preserve binary entries and report both paths of a rename.
 - [ ] Conflict prediction: which files a ticket will touch (from Understand and Plan) versus the files other running tickets touch.
 
 ## Part 2

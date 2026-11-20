@@ -1,7 +1,9 @@
 //! Host-side, bounded access to a local Git repository.
 
+mod diff;
 mod managed;
 
+pub use diff::{DiffStats, FileStats, LineStats};
 pub use managed::{OwnedWorktree, Removal, WorktreeManager};
 
 use std::{
@@ -39,6 +41,8 @@ pub enum Error {
     Inventory,
     #[error("Git did not return a full object ID")]
     ObjectId,
+    #[error("Git returned invalid or incomplete diff statistics")]
+    InvalidDiff,
     #[error("local branch {0:?} was not found")]
     LocalBranch(String),
     #[error("the managed worktree directory must be outside the Git repository and its checkouts")]
