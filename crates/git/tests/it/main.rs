@@ -4,12 +4,24 @@ use std::{
     env, fs, io,
     os::windows::fs::OpenOptionsExt,
     path::{Path, PathBuf},
-    process::Command,
-    time::{Duration, UNIX_EPOCH},
+    process::{Child, Command},
+    thread,
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
 use autopilot_core::TicketId;
 use autopilot_git::{Error, LineStats, Removal, Repository, WorktreeManager};
+
+const ABANDONED: &str = "abandoned";
+
+struct KillOnDrop(Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 struct Fixture {
     _directory: tempfile::TempDir,
@@ -394,4 +406,80 @@ fn a_worktree_fingerprint_changes_for_untracked_files_and_staged_content() {
     let intent = manager.fingerprint(&ticket).unwrap();
     git(&fixture.program, &native, &["add", "--", "empty"]).unwrap();
     assert_ne!(intent, manager.fingerprint(&ticket).unwrap());
+}
+
+#[test]
+fn a_fresh_manager_removes_the_checkout_and_branch_of_a_killed_worker() {
+    let fixture = Fixture::new().unwrap();
+    let ready = fixture.root.join("worker-ready");
+    let mut worker = KillOnDrop(
+        Command::new(env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "synthetic_worktree_owner"])
+            .env("AUTOPILOT_GIT_FIXTURE_PROGRAM", &fixture.program)
+            .env("AUTOPILOT_GIT_FIXTURE_REPOSITORY", &fixture.repository)
+            .env("AUTOPILOT_GIT_FIXTURE_ROOT", &fixture.root)
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !ready.is_file() {
+        assert!(
+            Instant::now() < deadline && worker.0.try_wait().unwrap().is_none(),
+            "the synthetic owner failed to create its checkout"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let repository = fixture.repository().unwrap();
+    let checkout = repository
+        .worktrees()
+        .unwrap()
+        .into_iter()
+        .find(|worktree| {
+            worktree.branch.as_deref() == Some(std::ffi::OsStr::new("refs/heads/ticket/abandoned"))
+        })
+        .unwrap();
+    assert!(checkout.path.join("item.txt").is_file());
+    worker.0.kill().unwrap();
+    assert!(!worker.0.wait().unwrap().success());
+
+    let ticket = TicketId::from(ABANDONED);
+    assert_eq!(
+        fixture.manager().unwrap().remove(&ticket).unwrap(),
+        Removal::Removed
+    );
+    assert!(!checkout.path.exists());
+    assert!(!checkout.path.with_extension("owner.json").exists());
+    assert!(!checkout.path.with_extension("removing").exists());
+    assert!(matches!(
+        repository.resolve_local_branch("ticket/abandoned"),
+        Err(Error::LocalBranch(_))
+    ));
+    assert_eq!(repository.worktrees().unwrap().len(), 1);
+    assert_eq!(
+        fs::read(fixture.repository.join("item.txt")).unwrap(),
+        b"tracked sample\n"
+    );
+}
+
+#[test]
+#[ignore = "invoked by the killed-worker recovery test"]
+fn synthetic_worktree_owner() {
+    let Some(root) = env::var_os("AUTOPILOT_GIT_FIXTURE_ROOT") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    let repository = Repository::new(
+        env::var_os("AUTOPILOT_GIT_FIXTURE_PROGRAM").unwrap().into(),
+        PathBuf::new(),
+        env::var_os("AUTOPILOT_GIT_FIXTURE_REPOSITORY")
+            .unwrap()
+            .into(),
+    )
+    .unwrap();
+    let manager = WorktreeManager::new(repository, &root).unwrap();
+    manager.create(&TicketId::from(ABANDONED), "base").unwrap();
+    fs::write(root.join("worker-ready"), b"").unwrap();
+    loop {
+        thread::park();
+    }
 }
