@@ -1,22 +1,48 @@
-use autopilot_agent::{Agent, AgentError, UnderstandRun};
-use autopilot_core::{Event, Ticket, TicketId, Understanding};
-use autopilot_engine::{run_understand, watch};
+use std::{
+    io,
+    path::PathBuf,
+    thread,
+    time::{Duration, Instant},
+};
 
-struct Synthetic;
+use autopilot_agent::{Agent, AgentError, AgentRun, StepRequest};
+use autopilot_core::{Event, Ticket, TicketId, Understanding};
+use autopilot_engine::{Error, run_understand, watch};
+
+struct Synthetic {
+    data_dir: PathBuf,
+}
 
 impl Agent for Synthetic {
-    fn understand(&self, ticket: &Ticket) -> Result<UnderstandRun, AgentError> {
-        if ticket.description == "fail" {
-            return Err(std::io::Error::other("fixture exited unexpectedly").into());
-        }
-        Ok(UnderstandRun {
-            activity: vec!["Read the sample ticket.".into()],
-            result: Understanding {
+    fn start(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        let fails = request.ticket.description == "fail";
+        let ticket = request.ticket.id.clone();
+        let data_dir = self.data_dir.clone();
+        Ok(AgentRun::spawn(move |context| {
+            context.message("Read the sample ticket.".into());
+            if fails {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    if watch(&data_dir, &ticket, 0)?
+                        .iter()
+                        .any(|record| matches!(record.event.kind, Event::AgentActivity { .. }))
+                    {
+                        return Err(io::Error::other("fixture exited unexpectedly").into());
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(
+                            io::Error::other("activity was held until the worker exited").into(),
+                        );
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+            Ok(Understanding {
                 summary: "Implement the sample change.".into(),
                 assumptions: vec![],
                 needs_design: false,
-            },
-        })
+            })
+        })?)
     }
 }
 
@@ -29,7 +55,10 @@ fn understand_saves_the_result_and_watch_can_resume_from_a_sequence() {
         description: "Add an export option.".into(),
     };
 
-    let result = run_understand(data.path(), &ticket, &Synthetic).unwrap();
+    let agent = Synthetic {
+        data_dir: data.path().into(),
+    };
+    let result = run_understand(data.path(), &ticket, &agent).unwrap();
     let initial = watch(data.path(), &ticket.id, 0).unwrap();
     let through_start = initial
         .iter()
@@ -43,7 +72,7 @@ fn understand_saves_the_result_and_watch_can_resume_from_a_sequence() {
 }
 
 #[test]
-fn a_failed_understand_run_is_durable_and_cannot_be_reported_as_done() {
+fn a_failed_understand_run_retains_activity_and_cannot_be_reported_as_done() {
     let data = tempfile::tempdir().unwrap();
     let ticket = Ticket {
         id: TicketId::from("fixture-2"),
@@ -51,8 +80,18 @@ fn a_failed_understand_run_is_durable_and_cannot_be_reported_as_done() {
         description: "fail".into(),
     };
 
-    assert!(run_understand(data.path(), &ticket, &Synthetic).is_err());
+    let agent = Synthetic {
+        data_dir: data.path().into(),
+    };
+    assert!(matches!(
+        run_understand(data.path(), &ticket, &agent),
+        Err(Error::Agent(error)) if error.to_string() == "fixture exited unexpectedly"
+    ));
     let events = watch(data.path(), &ticket.id, 0).unwrap();
+    assert!(events.iter().any(|record| matches!(
+        &record.event.kind,
+        Event::AgentActivity { summary } if summary == "Read the sample ticket."
+    )));
     assert!(matches!(
         events.last().unwrap().event.kind,
         Event::Failed { .. }
