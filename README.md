@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/icon-dark.svg">
-    <img src="assets/icon.svg" alt="autopilot-mode-on icon" width="128">
-  </picture>
+  <img src="assets/icon.svg" alt="autopilot-mode-on icon" width="128">
 </p>
 
 # autopilot-mode-on

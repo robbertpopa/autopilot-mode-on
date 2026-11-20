@@ -1,7 +1,4 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
-  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
-</picture>
+<img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
 
 # S8: Codex on a ChatGPT subscription, and switching to an API key
 
