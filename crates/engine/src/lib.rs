@@ -7,7 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use autopilot_agent::{Agent, AgentError};
+use autopilot_agent::{Agent, AgentError, AgentEvent, StepRequest};
 use autopilot_core::{
     AttemptId, Event, NewEvent, RecordedEvent, Step, Ticket, TicketId, Understanding,
 };
@@ -72,28 +72,50 @@ pub fn run_understand(
         Err(StoreError::SequenceConflict { .. }) => return Err(Error::AlreadyStarted),
         result => result?,
     };
-    let last = start.last().map_or(0, |record| record.seq);
+    let mut last = start.last().map_or(0, |record| record.seq);
 
-    let response = agent.understand(ticket);
+    let response = match agent.start(StepRequest {
+        step: Step::Understand,
+        ticket,
+    }) {
+        Ok(mut run) => loop {
+            match run.next() {
+                Some(AgentEvent::Started) => {}
+                Some(AgentEvent::Message { summary }) => {
+                    let committed = store.append(
+                        &ticket.id,
+                        last,
+                        &[event(
+                            timestamp()?,
+                            UNDERSTAND,
+                            Event::AgentActivity { summary },
+                        )],
+                    )?;
+                    last = committed.last().map_or(last, |record| record.seq);
+                }
+                Some(AgentEvent::Result(result)) => break Ok(result),
+                Some(AgentEvent::Failed(error)) => break Err(error),
+                None => break Err(io::Error::other("agent stream ended without a result").into()),
+            }
+        },
+        Err(error) => Err(error),
+    };
     let finished_at = timestamp()?;
     match response {
-        Ok(response) => {
-            let mut terminal = response
-                .activity
-                .into_iter()
-                .map(|summary| event(finished_at, UNDERSTAND, Event::AgentActivity { summary }))
-                .collect::<Vec<_>>();
-            terminal.push(event(
-                finished_at,
-                UNDERSTAND,
-                Event::UnderstandResult {
-                    result: response.result.clone(),
-                },
-            ));
-            terminal.push(event(finished_at, UNDERSTAND, Event::StepFinished));
-            terminal.push(event(finished_at, None, Event::Done));
+        Ok(result) => {
+            let terminal = [
+                event(
+                    finished_at,
+                    UNDERSTAND,
+                    Event::UnderstandResult {
+                        result: result.clone(),
+                    },
+                ),
+                event(finished_at, UNDERSTAND, Event::StepFinished),
+                event(finished_at, None, Event::Done),
+            ];
             store.append(&ticket.id, last, &terminal)?;
-            Ok(response.result)
+            Ok(result)
         }
         Err(error) => {
             store.append(
