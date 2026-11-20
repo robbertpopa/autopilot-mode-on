@@ -3,7 +3,10 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{self, Command, Stdio},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -181,17 +184,47 @@ fn abrupt_supervisor_exit_cleans_up_the_process_tree() {
 #[test]
 fn flooding_both_pipes_hits_the_limit_instead_of_blocking() {
     let data = tempfile::tempdir().unwrap();
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let chunks = Arc::clone(&observed);
     let output = runner()
-        .run(
+        .run_with_stdout(
             &fixture("flood", data.path()).unwrap(),
             b"",
             BASE_LIMITS,
             &AtomicBool::new(false),
+            move |chunk| chunks.lock().unwrap().extend_from_slice(chunk),
         )
         .unwrap();
     assert!(matches!(output.outcome, Outcome::OutputLimit));
-    assert!(output.stdout.len() <= BASE_LIMITS.bytes_per_stream);
+    assert_eq!(output.stdout.len(), BASE_LIMITS.bytes_per_stream);
     assert!(output.stderr.len() <= BASE_LIMITS.bytes_per_stream);
+    assert_eq!(*observed.lock().unwrap(), output.stdout);
+}
+
+#[test]
+fn stdout_can_trigger_cancellation_while_the_process_is_running() {
+    let data = tempfile::tempdir().unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let observer_cancel = Arc::clone(&cancel);
+    let mut observed = Vec::new();
+    let marker = b"ready to stop\n";
+    let output = runner()
+        .run_with_stdout(
+            &fixture("stream", data.path()).unwrap(),
+            b"",
+            BASE_LIMITS,
+            &cancel,
+            move |chunk| {
+                observed.extend_from_slice(chunk);
+                if observed.windows(marker.len()).any(|bytes| bytes == marker) {
+                    observer_cancel.store(true, Ordering::Release);
+                }
+            },
+        )
+        .unwrap();
+    assert!(matches!(output.outcome, Outcome::Cancelled));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("ready to stop\n"));
+    assert_dead(&pids(data.path()).unwrap());
 }
 
 #[test]
@@ -222,7 +255,7 @@ fn fake_child() {
                 .run(&spec, b"", BASE_LIMITS, &AtomicBool::new(false))
                 .unwrap();
         }
-        "finish" | "hold" => {
+        "finish" | "hold" | "stream" => {
             let spec = fixture("grandchild", &path).unwrap();
             #[allow(
                 clippy::zombie_processes,
@@ -247,6 +280,9 @@ fn fake_child() {
                 writeln!(io::stdout(), "stdin bytes: {}", input.len()).unwrap();
                 writeln!(io::stderr(), "stderr reached").unwrap();
             } else {
+                if mode == "stream" {
+                    writeln!(io::stdout(), "ready to stop").unwrap();
+                }
                 thread::sleep(Duration::from_secs(20));
             }
         }
