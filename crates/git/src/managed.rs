@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::{Error, GIT_LIMITS, ObjectId, Repository, Worktree, git_os_value, git_path};
 
 mod cleanup;
+mod fingerprint;
 pub use cleanup::Removal;
+pub use fingerprint::TreeFingerprint;
 
 const OWNERSHIP_LIMIT: u64 = 256 * 1024;
 const CHECKOUT_LIMITS: Limits = Limits {

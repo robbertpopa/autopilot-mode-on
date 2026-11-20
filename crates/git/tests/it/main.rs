@@ -364,3 +364,34 @@ fn a_commit_summary_keeps_both_paths_of_a_rename_from_a_subdirectory() {
             .any(|file| file.path == Path::new("inside/binary.dat") && file.lines.is_none())
     );
 }
+
+#[test]
+fn a_worktree_fingerprint_changes_for_untracked_files_and_staged_content() {
+    let fixture = Fixture::new().unwrap();
+    let manager = fixture.manager().unwrap();
+    let ticket = TicketId::from("42");
+    let created = manager.create(&ticket, "base").unwrap();
+    let native = fixture
+        .root
+        .join(created.checkout.path.file_name().unwrap());
+    let initial = manager.fingerprint(&ticket).unwrap();
+
+    let untracked = native.join("untracked.bin");
+    fs::write(&untracked, [1, 2, 3]).unwrap();
+    assert_ne!(initial, manager.fingerprint(&ticket).unwrap());
+    fs::remove_file(untracked).unwrap();
+    assert_eq!(initial, manager.fingerprint(&ticket).unwrap());
+
+    let tracked = native.join("item.txt");
+    let original = fs::read(&tracked).unwrap();
+    fs::write(&tracked, b"stage these different bytes\n").unwrap();
+    git(&fixture.program, &native, &["add", "--", "item.txt"]).unwrap();
+    fs::write(&tracked, original).unwrap();
+    assert_ne!(initial, manager.fingerprint(&ticket).unwrap());
+
+    fs::write(native.join("empty"), b"").unwrap();
+    git(&fixture.program, &native, &["add", "-N", "--", "empty"]).unwrap();
+    let intent = manager.fingerprint(&ticket).unwrap();
+    git(&fixture.program, &native, &["add", "--", "empty"]).unwrap();
+    assert_ne!(intent, manager.fingerprint(&ticket).unwrap());
+}
