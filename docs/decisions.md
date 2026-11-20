@@ -15,7 +15,7 @@ Newest last. A decision changes only by adding a new line that supersedes it.
 | 2026-11-20 | Default auth is subscription, for Claude Code and Codex; API key per step. | Codex terms and switching: S8. |
 | 2026-11-20 | Claude Code is the main agent and the default (`agent = "claude"` for every step); Codex is the second agent, optional, added in M8. | The pipeline must be complete and useful without Codex. The Codex adapter is built against the same normalised events and can start in its own tab after M1 and S8. |
 | 2026-11-20 | Implementation continues in separate tabs, one file per milestone and spike. | Plan section 8a. |
-
 | 2026-11-20 | Add codebase review after the core ticket workflow. Report-only is the default, each finding has evidence, and approved fixes use normal tickets. | See [M9](milestones/M9-codebase-review.md) and [S9](spikes/S9-review-quality.md). |
+| 2026-11-21 | Use a fixed egui canvas for the pipeline graph. | The probe kept card positions fixed, rendered all six labels and passed the interaction checks on Windows and Linux. [S7](spikes/S7-graph-widget.md#result) |
 
 Open: plan-limit behaviour (S2), Codex auth switching and terms (S8), and review quality and cost (S9).
