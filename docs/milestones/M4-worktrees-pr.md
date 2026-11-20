@@ -19,6 +19,20 @@ Two tickets run in parallel on a sample repository and open two draft pull reque
 - [ ] Diff scan: `.github/**`, lockfiles, scripts, new dependencies, new network calls force a confirmation.
 - [ ] Never merge, never push to a protected branch (enforced in code and in the deny hook).
 
+## Choices from S3
+
+Adopt these three patterns from the [source review](../spikes/S3-read-gru.md#result).
+
+- Keep the checkout separate from runtime metadata and reconcile Git's worktree list with the ownership records after a restart.
+- Match failed check runs to the exact PR head and preserve both ends of a bounded, redacted log excerpt.
+- Cap repair at two attempts and require a new commit, fresh checks and approval before publishing an update.
+
+Guard against three failure modes.
+
+- A stale base after a failed refresh. Resolve an explicit base commit and report when it cannot be verified.
+- Forced cleanup of an unrelated checkout. Require recorded ownership and a canonical path within the managed root before removing anything.
+- Agent-side publishing with broad permissions. Keep tools constrained in the worker and publish through the host-side approval path.
+
 ## Tests that must exist
 - Two tickets touching one file queue and run in order; two independent tickets run in parallel up to the slot limit.
 - A poisoned issue text, with a fake agent that obeys the injection, cannot cause a push, read a secret or edit outside its worktree (end-to-end).
