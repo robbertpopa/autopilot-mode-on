@@ -7,7 +7,7 @@ Reviewed 2026-11-20. The research notes below are dated references. Provider beh
 
 ## 0. Status and next step
 
-**Next session starts here.** Work in `D:\autopilot-mode-on`. M0 and the [S5 synthetic process checks](spikes/S5-windows-process-control.md) passed. The [fixture-backed M1 CLI](milestones/M1-agent-step.md#fixture-verification) runs and replays a ticket and saves streamed activity before exit. The offline S1 preflight is ready. Capture the versioned S1 provider contract once the dedicated workspace and budget are confirmed. The [S3 source review](spikes/S3-read-gru.md#result) and [M4 local worktree operations](milestones/M4-worktrees-pr.md#part-1-git-crate-can-start-after-m0) are verified. The [S7 graph comparison](spikes/S7-graph-widget.md#result) selected a fixed egui canvas. The [S8 documentation and logged-out preflight](spikes/S8-codex-auth.md#result) are recorded. Live auth switching, event capture and the unattended-use decision still gate M8. S9 and M9 add the later codebase-review workflow.
+**Next session starts here.** Work in `D:\autopilot-mode-on`. M0 and the [S5 synthetic process checks](spikes/S5-windows-process-control.md) passed. The [fixture-backed M1 CLI](milestones/M1-agent-step.md#fixture-verification) runs and replays a ticket and saves streamed activity before exit. The offline S1 preflight is ready. The [S2 loopback probe](spikes/S2-plan-limits.md#loopback-probe) recorded 429 and 529 retries, recovery and terminal errors. Live subscription-limit detection is pending. Capture the versioned S1 provider contract once the dedicated workspace and budget are confirmed. The [S3 source review](spikes/S3-read-gru.md#result) and [M4 local worktree operations](milestones/M4-worktrees-pr.md#part-1-git-crate-can-start-after-m0) are verified. The [S7 graph comparison](spikes/S7-graph-widget.md#result) selected a fixed egui canvas. The [S8 documentation and logged-out preflight](spikes/S8-codex-auth.md#result) are recorded. Live auth switching, event capture and the unattended-use decision still gate M8. S9 and M9 add the later codebase-review workflow.
 
 The standalone repository holds the current implementation and milestone status. Record spike results and tick milestone items after running their exit checks.
 
@@ -81,13 +81,13 @@ Use the milestone checklists above for detailed tasks. The CLI selects the sibli
 
 ### Claude Code facts we build on (official docs, fetched 2026-11-20)
 - `claude -p --output-format stream-json --verbose` emits SDK-style messages: system init (`session_id`, `cwd`, `tools`, `model`, `permissionMode`, `claude_code_version`),
-  assistant and user messages, `system/api_retry` (attempt, delay, error such as `rate_limit` or `overloaded`), and a final `result`
+  assistant and user messages, `system/api_retry` (attempt, max retries, delay in milliseconds, HTTP status and error category), and a final `result`
   (`subtype`: `success`, `error_max_turns`, `error_max_budget_usd`, `error_during_execution`, `error_max_structured_output_retries`; `total_cost_usd`,
   `usage` with cache read and creation tokens, `num_turns`, `duration_ms`, `session_id`, `permission_denials`).
 - `--json-schema` returns validated output in `structured_output`. `--max-turns` has no default. `--max-budget-usd` is a client-side estimate and resumed totals do not count.
 - `-p` with no mode set starts in Manual mode from v2.1.302: calls that need approval are denied. `--permission-prompt-tool mcp__<server>__<tool>` exists; its response contract was
   **not retrieved**. `--resume` needs `--mcp-config`, `--add-dir`, `--settings` and permission flags repeated.
-- `claude auth status` prints JSON (`authMethod`) and exits 0 or 1. Limit messages read "You've hit your session limit" or "weekly limit"; retries show as `system/api_retry`.
+- `claude auth status` prints JSON (`authMethod`) and exits 0 or 1. The [S2 loopback evidence](spikes/S2-plan-limits.md#loopback-probe) shows a `success` subtype with `is_error: true` on 429 and 529 failures. Subscription limit messages still need live evidence.
   There is no per-error exit code. A set `ANTHROPIC_API_KEY` outranks the login in `-p`. `--bare` is key-only and skips CLAUDE.md, hooks and MCP, so API steps should **not** use it.
 - Hooks (33 events) can enforce hard rules (`PreToolUse` deny); an http hook can post events to a URL. Transcripts live in `~/.claude/projects/…jsonl`, format internal: we never parse them.
 - Windows: native `claude.exe` in `%USERPROFILE%\.local\bin`; Git Bash recommended, not required. **No documented way to start it without a console window.**
@@ -112,7 +112,7 @@ Budget for all live spikes: **at most $1**, on a dedicated API key with a Consol
 | # | Question | Method | Done when |
 |---|---|---|---|
 | S1 | What exactly does the headless interface emit and accept? | Run real `claude -p` calls and record every event: stream-json, `--json-schema` (does `structured_output` appear in stream-json mode?), `--resume`, `--max-turns`, `--max-budget-usd`, `--permission-prompt-tool` (find the response shape by trial), `--allowedTools`, `--disallowedTools`, `--session-id`, `--settings` with a hook. Save sanitized synthetic transcripts as fixtures. | Versioned fixtures, a contract note and parser replay tests. |
-| S2 | How does a plan or rate limit look, and how do we detect it? | Capture `system/api_retry` and limit text on a throttled key if possible; otherwise read the docs' error page and plan the detector as "api_retry with `rate_limit` for N seconds, or result text matching a limit phrase". | Detector rule written; marked **unverified on a real subscription** until seen. |
+| S2 | How does a plan or rate limit look, and how do we detect it? | Replay versioned 429, 529 and recovery outcomes, then use S1 terminal events and real subscription evidence to validate the proposed detector. | Detector rule written; marked **unverified on a real subscription** until seen. |
 | S3 | What can we learn from Gru? | Read its worktree, stream-stuck and CI-fix code. | A list of pitfalls and 3 ideas to copy (for example pre-assigned `--session-id`). |
 | S4 | Can a headless session publish a Claude Design canvas, and under which login? | Manual test on the subscription: `claude -p` asking for a Design artifact; check the link and permissions. | Yes (and how) or no; if no, the HTML-mockup fallback is the default Design step. |
 | S5 | How do we run `claude.exe` with no window and kill its whole tree on Windows? | Small Rust program: `creation_flags(CREATE_NO_WINDOW)`, a Job Object with kill-on-close, `kill_on_drop`, stdout pipe reading. Test cancel, timeout, parent crash. | No flashing window; no orphan processes after cancel or crash. |
