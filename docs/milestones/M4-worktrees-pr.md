@@ -11,6 +11,7 @@ Two tickets run in parallel on a sample repository and open two draft pull reque
   - [x] Resolve the exact local base branch and read Git's registered worktrees through the bounded process runner.
   - [x] Reserve a host-managed checkout outside the repository before creating its ticket branch from the captured base commit. Reopen a completed checkout only after matching its ownership, branch and path. An incomplete checkout is left available for recovery.
   - [x] Recover a pending checkout at the reserved commit after verifying its Git identity, unlocked index and clean worktree status. Preserve checkouts with changes, submodules or index flags that hide files for inspection.
+  - [x] Remove clean owned checkouts and resume interrupted removals. Retry Windows sharing failures while keeping the Git registration. Delete an unchanged ticket branch and preserve any branch with a changed tip.
 - [ ] Diff and stat helpers; a tree fingerprint for kept check results.
 - [ ] Conflict prediction: which files a ticket will touch (from Understand and Plan) versus the files other running tickets touch.
 

@@ -2,7 +2,7 @@
 
 mod managed;
 
-pub use managed::{OwnedWorktree, WorktreeManager};
+pub use managed::{OwnedWorktree, Removal, WorktreeManager};
 
 use std::{
     env,
@@ -159,6 +159,17 @@ impl Repository {
         arguments: impl IntoIterator<Item = impl Into<OsString>>,
         limits: Limits,
     ) -> Result<Vec<u8>, Error> {
+        self.git_with_index(directory, operation, arguments, limits, None)
+    }
+
+    fn git_with_index(
+        &self,
+        directory: &Path,
+        operation: &'static str,
+        arguments: impl IntoIterator<Item = impl Into<OsString>>,
+        limits: Limits,
+        index: Option<&Path>,
+    ) -> Result<Vec<u8>, Error> {
         let mut args = vec![
             "--no-pager".into(),
             "-c".into(),
@@ -188,6 +199,9 @@ impl Repository {
             ("GIT_OPTIONAL_LOCKS".into(), "0".into()),
             ("GIT_TERMINAL_PROMPT".into(), "0".into()),
         ];
+        if let Some(index) = index {
+            environment.push(("GIT_INDEX_FILE".into(), git_path(index)));
+        }
         if cfg!(windows)
             && let Some(root) = env::var_os("SystemRoot")
         {

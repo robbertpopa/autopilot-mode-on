@@ -29,6 +29,7 @@ Add an entry whenever something cost time. One line each: the trap, then what to
 ## Processes on Windows
 - A child can outlive the parent. Use a Job Object with kill-on-close, and wait with a limit after cancelling.
 - Deleting a worktree can fail on a file lock: retry with backoff.
+- Git can delete the worktree registration after a failed file deletion. Record the removal and move a verified clean checkout aside before dropping its registration. [Git worktree removal](https://github.com/git/git/blob/v2.50.0/builtin/worktree.c#L1293-L1308)
 - Use native backslash paths for external tools; avoid `.cmd` shims without PATHEXT handling.
 
 ## Loops and cost
