@@ -4,7 +4,7 @@ mod diff;
 mod managed;
 
 pub use diff::{DiffStats, FileStats, LineStats};
-pub use managed::{OwnedWorktree, Removal, WorktreeManager};
+pub use managed::{OwnedWorktree, Removal, TreeFingerprint, WorktreeManager};
 
 use std::{
     env,
@@ -43,6 +43,10 @@ pub enum Error {
     ObjectId,
     #[error("Git returned invalid or incomplete diff statistics")]
     InvalidDiff,
+    #[error("the worktree changed during fingerprinting at {0}")]
+    ChangedDuringFingerprint(PathBuf),
+    #[error("the worktree contains an unsupported entry at {0}")]
+    UnsupportedFingerprintEntry(PathBuf),
     #[error("local branch {0:?} was not found")]
     LocalBranch(String),
     #[error("the managed worktree directory must be outside the Git repository and its checkouts")]
