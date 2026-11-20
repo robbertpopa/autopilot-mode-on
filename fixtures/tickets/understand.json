@@ -1,0 +1,5 @@
+{
+  "id": "sample-export",
+  "title": "Add a CSV export",
+  "description": "Let users save the ticket list as a CSV file."
+}

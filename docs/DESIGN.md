@@ -162,7 +162,7 @@ Use the process boundary and containment rules in the implementation plan. The a
 
 A node graph where each step shows its settings, with a profile file as the source of truth. Simple view: four steps (Plan, Build, Check, Ready);
 Advanced view: the full graph. Every step has an "Ask me after this step" checkbox; a step that is asking is amber. Style follows craft-anything's screens: dark shell, ticket sidebar with
-status chips, amber approval cards, progress stepper, cost bar. Canvas: https://claude.ai/artifact/GQnUm1GrwCAr3osKRUa78D (private).
+status chips, amber approval cards, progress stepper, cost bar. See [the UI reference](ui.md) for the local export.
 Pending canvas changes: remove the three gate nodes, add the "Ask me after this step" checkbox to every step, Build and Check as one looping node, a Design node, Simple and Advanced views.
 
 ## 8a. Live status of every ticket

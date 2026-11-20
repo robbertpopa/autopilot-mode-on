@@ -5,9 +5,9 @@ Reviewed 2026-11-20. The research notes below are dated references. Provider beh
 
 ## 0. Status and next step
 
-**Next session starts here:** confirm the standalone repository path (proposed `D:\autopilot-mode-on`), then start M0 with the local Rust workspace and its checks. S5 can start with a local fake process. Run the live portion of S1 only when the dedicated account, budget and fixture-redaction procedure are ready.
+**Next session starts here:** work in `D:\autopilot-mode-on`. M0 and the [S5 synthetic process checks](spikes/S5-windows-process-control.md) passed locally. The first [fixture-backed M1 CLI](milestones/M1-agent-step.md#fixture-verification) can run and replay a ticket. Continue with the versioned S1 provider contract when the dedicated account, budget and fixture-redaction procedure are ready.
 
-The scratch folder contains planning documents. The owner will provide or create the standalone repository. Record spike results and tick milestone items only after their exit checks have run.
+The standalone repository holds the current implementation and milestone status. Record spike results and tick milestone items after running their exit checks.
 
 | Item | File | State |
 |---|---|---|
@@ -15,11 +15,11 @@ The scratch folder contains planning documents. The owner will provide or create
 | S2 plan-limit detection | `docs/spikes/S2-plan-limits.md` | [ ] |
 | S3 read Gru | `docs/spikes/S3-read-gru.md` | [ ] |
 | S4 Claude Design headless | `docs/spikes/S4-claude-design-headless.md` | [ ] |
-| S5 Windows process control | `docs/spikes/S5-windows-process-control.md` | [ ] |
+| S5 synthetic process control | `docs/spikes/S5-windows-process-control.md` | [x] |
 | S6 containment | `docs/spikes/S6-containment.md` | [ ] |
 | S7 graph widget | `docs/spikes/S7-graph-widget.md` | [ ] |
 | S8 Codex auth and terms | `docs/spikes/S8-codex-auth.md` | [ ] |
-| M0 foundation | `docs/milestones/M0-foundation.md` | [ ] |
+| M0 foundation | `docs/milestones/M0-foundation.md` | [x] |
 | M1 one agent step | `docs/milestones/M1-agent-step.md` | [ ] |
 | M2 understand, ask, inbox | `docs/milestones/M2-understand-ask.md` | [ ] |
 | M3 plan, build, check | `docs/milestones/M3-plan-build-check.md` | [ ] |
@@ -38,7 +38,7 @@ The first demo takes a local ticket through Understand and an optional inbox que
 | **M0.1 Workspace** | Create `Cargo.toml`, `rust-toolchain.toml`, `.cargo/config.toml`, `LICENSE`, `deny.toml`, `.github/workflows/ci.yml` and `tools/xtask/src/main.rs`. Verify the pinned compiler and compatible crate versions on both targets. Wire the CI checks from M0. | Workspace checks run on Windows and Linux. The layer check rejects a deliberately inverted dependency. |
 | **M0.2 Event state and profiles** | Define IDs, money, event envelopes and stored step outcomes in `crates/core/src/lib.rs`. Add SQLite migrations, sequence-checked append, replay and snapshots in `crates/store/src/`. Add TOML parsing, diagnostics and resolved settings in `crates/profile/src/`. | Reopen the store after an interrupted transaction. Replay from the beginning and from a snapshot plus its tail, and compare the state and sequence. An invalid profile reports its file, key and location. |
 | **S1, S2, S5. Agent contract** | Start S5 with `tools/fake-agent` and record process-tree behavior on both targets. For S1, capture and sanitize a minimal structured result, resume and failure transcript before adding optional flags. Use S2's local server to exercise retries and keep an explicit unknown-limit case. | Versioned sanitized fixtures and a written provider contract. Process cleanup evidence covers normal completion, cancel, timeout, and abrupt supervisor exit per target. A target without proven tree cleanup stays fixture-only for unattended execution. |
-| **M1. Fixture-backed CLI** | Put supervision in `crates/process/src/`, the provider-neutral `Agent` contract in `crates/agent/src/`, parsing and provider flags in `crates/agent-claude/src/`, and actions in `crates/engine/src/`. Add the CLI and a fixture runner in `crates/cli/src/` and `tools/fake-agent/src/`. | Build with `cargo build -p autopilot-fake-agent -p autopilot-cli`. Run `cargo run -p autopilot-cli -- run-step --step understand --ticket fixtures/tickets/understand.json --agent fake`. It prints a ticket ID and structured result. In a second process, `autopilot watch <ticket-id>` replays the same run and resumes from its event sequence. One manual live smoke test uses a synthetic ticket and no repository tools. |
+| **M1. Fixture-backed CLI** | Put supervision in `crates/process/src/`, the provider-neutral `Agent` contract in `crates/agent/src/`, parsing and provider flags in `crates/agent-claude/src/`, and actions in `crates/engine/src/`. Add the CLI and a fixture runner in `crates/cli/src/` and `tools/fake-agent/src/`. | Build with `cargo build --locked -p autopilot-process -p autopilot-fake-agent -p autopilot-cli`. Run `cargo run -p autopilot-cli -- run-step --step understand --ticket fixtures/tickets/understand.json --agent fake`. It prints a ticket ID and structured result. In a second process, `autopilot watch <ticket-id>` replays the same run and resumes from its event sequence. One manual live smoke test uses a synthetic ticket and no repository tools. |
 | **M2. Inbox and resume** | Add the Understand schema, step machine, policy, durable requests/answers, settings snapshots and CLI status in `crates/pipeline/src/`, `crates/policy/src/`, and the shared engine. Keep the Plan stub local. | Zero questions records a skip reason. A question can be answered after a restart and consumes the answer once. Killing a worker leaves an interrupted attempt that the user can resume. |
 | **M4 part 1 + S6. Worktrees and isolation** | After M0, implement tree ownership, clean base selection, fingerprints and recoverable cleanup in `crates/git/src/`. After S1 and S5, prove the Build and Check isolation contract in S6. Keep a synthetic repository for repeatable tests. | A cancelled run leaves no active worker. The isolated agent and check processes cannot access adjacent fixtures or credentials, mutate the base checkout, or publish. A platform or auth mode without evidence stays fixture-only for repository Build and Check. |
 | **M3. Local Build and Check** | Add Plan analysis and approval, immutable criteria, a sequential check runner and bounded refinement in `crates/pipeline/src/` and `crates/checks/src/`. Land fixture-driven tests while S6 runs. Unlock real Build and Check only after S6 passes for that combination of platform, launcher and auth mode. | A sample ticket goes through one failed check and one successful refine round. Green evidence records actual checks against the final worktree fingerprint. The result is a local commit and summary. |
@@ -48,11 +48,11 @@ Use the milestone checklists above for detailed tasks. The CLI selects the sibli
 
 ### First implementation session
 
-- [ ] Copy the project documents into the standalone repository and start [M0](milestones/M0-foundation.md). Add an `autopilot-core` library and the `xtask` member. Get the workspace checks running before adding dependencies for later milestones.
-- [ ] Add the store tests in `crates/store/tests/it/main.rs`. Have two append attempts use the same expected sequence. Assert that only one succeeds and the event appears once after reopen. Persist a snapshot at sequence 2, append an event at sequence 3, and assert that snapshot-plus-tail and full replay produce the same state.
-- [ ] Add the append and replay implementation in `crates/store/src/`. Use `(ticket_id, seq)` as the event key and store the snapshot's last sequence per ticket. Run `cargo nextest run -p autopilot-store` before and after implementing the store to verify the regression checks.
-- [ ] Add `crates/profile` and its invalid-profile cases, then run `cargo xtask ci` from a clean checkout on Windows and Linux. Record which checks ran in M0.
-- [ ] Use [S5](spikes/S5-windows-process-control.md) to verify the local process launcher. This can proceed independently while the workspace is being prepared.
+- [x] Copy the project documents into the standalone repository and start [M0](milestones/M0-foundation.md). Add an `autopilot-core` library and the `xtask` member. Get the workspace checks running before adding dependencies for later milestones.
+- [x] Add the store tests in `crates/store/tests/it/main.rs`. Have two append attempts use the same expected sequence. Assert that only one succeeds and the event appears once after reopen. Persist a snapshot at sequence 2, append an event at sequence 3, and assert that snapshot-plus-tail and full replay produce the same state.
+- [x] Add the append and replay implementation in `crates/store/src/`. Use `(ticket_id, seq)` as the event key and store the snapshot's last sequence per ticket. The targeted store tests were exercised before and after implementation. The final workspace check also runs them through Nextest.
+- [x] Add `crates/profile` and its invalid-profile cases, then verify `cargo xtask ci` on Windows and Linux. The results are recorded in [M0](milestones/M0-foundation.md#verification).
+- [x] Use [S5](spikes/S5-windows-process-control.md) to verify the local process launcher on Windows and Linux with synthetic processes.
 
 ## 0b. Contracts to settle in the first slices
 
@@ -155,6 +155,7 @@ crates/
   agent       Agent trait, normalised AgentEvent                            (L3)
   checks      Check trait, ordered runner, kept results                     (L3)
   agent-claude  Claude Code headless adapter, stream-json parser            (L4)
+  agent-fixture  synthetic Understand adapter for the CLI demo             (L4)
   agent-codex   Codex CLI adapter, JSONL parser (M8)                         (L4)
   pipeline    step machine, scheduler, inbox, ledger, summaries             (L4)
   engine      one definition per action -> CLI, MCP, UI                     (L5)
@@ -285,9 +286,9 @@ Requests to other tabs: (none yet)
 
 ## 10. Decisions made
 
-1. **Name:** `autopilot-mode-on` (crates.io name free on 2026-11-20; plain `autopilot` is taken by another crate). The repo is created by the user.
+1. **Name:** `autopilot-mode-on` (crates.io name free on 2026-11-20; plain `autopilot` is taken by another crate). The local repository is initialized.
 2. **Licence:** Apache-2.0.
 3. **Default auth: subscription**, for Claude Code and for Codex; API key per step as an option (see `docs/DESIGN.md`, section 7a).
 4. **Work method:** this plan is split into files so separate tabs can continue; see section 8a.
 
-Still open: the repo's location (own account recommended), and the facts behind S2 and S8.
+Remote repository ownership and the S2 and S8 findings are still open.

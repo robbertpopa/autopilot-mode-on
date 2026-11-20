@@ -1,0 +1,7 @@
+[licenses]
+allow = ["Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MIT"]
+unused-allowed-license = "allow"
+
+[[licenses.exceptions]]
+name = "unicode-ident"
+allow = ["Unicode-3.0"]

@@ -14,6 +14,18 @@ Add an entry whenever something cost time. One line each: the trap, then what to
 - The docs do not say how to hide the console window on Windows. Spawn `claude.exe` directly with the no-window flag.
 - Pass long prompts on stdin, not as an argument (Windows limits a command line to about 32,000 characters).
 
+## Workspace checks
+
+- Run the CI driver with a separate Cargo profile. Windows locks the running executable while Nextest builds the workspace's copy of `xtask.exe`.
+- Cargo-run binaries inherit package environment variables. Invoke `cargo-machete` directly from `xtask` so it interprets arguments as paths.
+- Lock dependency resolution at the `cargo xtask` alias. An unlocked alias can rewrite `Cargo.lock` before the checks run.
+
+## Process supervision
+
+- Assign the Windows job during process creation so supervisor death during startup cannot strand a child waiting for a later assignment.
+- On Linux, keep the group leader unreaped until the group receives its stop signal. A reaped leader's ID can be reused. The guardian remains in a separate group to clean up when the owner exits.
+- Bound cleanup waits as well as execution waits. A descendant that retains a pipe can otherwise keep the caller blocked after the worker exits.
+
 ## Processes on Windows
 - A child can outlive the parent. Use a Job Object with kill-on-close, and wait with a limit after cancelling.
 - Deleting a worktree can fail on a file lock: retry with backoff.

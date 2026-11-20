@@ -12,7 +12,8 @@ Demonstrate a replayable Understand run with fixtures, then run one synthetic ti
 - [ ] Per-step auth: build the child environment from scratch. Subscription: remove `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_*`. API: inject the dedicated key only into the provider environment verified for that step. Preflight with `claude auth status` (exit code and `authMethod`); a clear message if not signed in or if the method does not match the step's `auth`.
 - [ ] Cost ledger: API steps use `total_cost_usd`; subscription steps estimate from token usage and a price table (from the pricing page, with cache read and write multipliers), always labelled "estimate".
 - [ ] `tools/fake-agent`: a binary that replays a fixture transcript and injects faults on request (truncated line, partial UTF-8, huge output, hang, crash, rate limit, `error_max_turns`).
-- [ ] `engine` composes the adapter and store. Use `autopilot run-step --step understand --ticket <file> --agent fake` and `autopilot watch <ticket-id>` from separate processes.
+- [x] Save the fixture result through `engine`. Run `autopilot run-step --step understand --ticket <file> --agent fake` and `autopilot watch <ticket-id>` from separate processes. Add `--after <sequence>` to resume replay.
+- [x] Reuse the S5 subprocess supervisor for the synthetic fixture adapter. The live agent contract and streaming integration remain above.
 - [ ] A `live` feature test, `#[ignore]`, capped at $0.05.
 
 ## Tests that must exist
@@ -21,6 +22,10 @@ Demonstrate a replayable Understand run with fixtures, then run one synthetic ti
 - Cancel, timeout and abrupt supervisor exit leave no descendant process on each target enabled for unattended execution. Confirm no console window from a Windows GUI parent.
 - Each `Result` subtype maps to the right normalised result; `error_max_turns` is not an error but a stop.
 - Cost: API cost equals the reported `total_cost_usd`; the subscription estimate equals tokens times the table.
+
+## Fixture verification
+
+On 2026-11-20, the Windows and Linux CLI runs both recorded the `sample-export` Understand result. A second process replayed all six events. `watch --after 3` returned the three later events, including the structured result. The watcher reads committed history and exits. `cargo xtask ci` passed with 19 tests on each platform.
 
 ## Exit criteria
 A fake Understand run replays from a separate CLI process. A manual synthetic Understand call with repository tools disabled returns structured output, tokens and reported or estimated cost on the validated Windows configuration. Keep sanitized fixtures and the versioned contract note.
