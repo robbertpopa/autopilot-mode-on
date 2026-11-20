@@ -46,6 +46,7 @@ fn a_second_reservation_cannot_replace_the_first() {
         base_branch: "main".into(),
         base: "1111111111111111111111111111111111111111".into(),
         ready: false,
+        removing: false,
     };
     write_ownership(&marker, &first).unwrap();
     first.base = "2222222222222222222222222222222222222222".into();

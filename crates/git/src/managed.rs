@@ -12,11 +12,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, GIT_LIMITS, ObjectId, Repository, Worktree, git_os_value, git_path};
 
+mod cleanup;
+pub use cleanup::Removal;
+
 const OWNERSHIP_LIMIT: u64 = 256 * 1024;
 const CHECKOUT_LIMITS: Limits = Limits {
     timeout: Duration::from_secs(120),
     ..GIT_LIMITS
 };
+const STATUS_ARGUMENTS: [&str; 5] = [
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+    "--ignored=matching",
+    "--ignore-submodules=all",
+];
 
 pub struct OwnedWorktree {
     pub checkout: Worktree,
@@ -36,6 +46,8 @@ struct Ownership {
     base_branch: String,
     base: String,
     ready: bool,
+    #[serde(default)]
+    removing: bool,
 }
 
 impl WorktreeManager {
@@ -68,19 +80,7 @@ impl WorktreeManager {
         let reference = format!("refs/heads/{branch}");
         let destination = self.root.join(&key);
         let marker = self.root.join(format!("{key}.owner.json"));
-        if self.root.canonicalize()? != self.root {
-            return Err(Error::ManagedRoot);
-        }
-        let _lock = root_lock(&self.root)?;
-        if repository_path(
-            &self.repository,
-            &self.repository.directory,
-            "--git-common-dir",
-        )? != self.common_directory
-        {
-            return Err(Error::RepositoryChanged);
-        }
-        verify_root(&self.repository, &self.root, &self.common_directory)?;
+        let _lock = self.lock()?;
 
         let repository_identity = self.common_directory.as_os_str().as_encoded_bytes();
         let existing = read_ownership(&marker)?;
@@ -91,6 +91,9 @@ impl WorktreeManager {
                 || owner.base_branch != base_branch
             {
                 return Err(Error::WorktreeConflict(marker));
+            }
+            if owner.removing {
+                return Err(Error::RecoveryRequired(destination));
             }
             if let Some(checkout) = self.exact_checkout(&destination, &reference)? {
                 let base = ObjectId::parse(owner.base.as_bytes())?;
@@ -113,6 +116,7 @@ impl WorktreeManager {
                 base_branch: base_branch.into(),
                 base: base.as_str().into(),
                 ready: false,
+                removing: false,
             }
         };
         match self.require_free(&destination, &branch) {
@@ -132,6 +136,23 @@ impl WorktreeManager {
         Ok(checkout)
     }
 
+    fn lock(&self) -> Result<File, Error> {
+        if self.root.canonicalize()? != self.root {
+            return Err(Error::ManagedRoot);
+        }
+        let lock = root_lock(&self.root)?;
+        if repository_path(
+            &self.repository,
+            &self.repository.directory,
+            "--git-common-dir",
+        )? != self.common_directory
+        {
+            return Err(Error::RepositoryChanged);
+        }
+        verify_root(&self.repository, &self.root, &self.common_directory)?;
+        Ok(lock)
+    }
+
     fn exact_checkout(&self, path: &Path, reference: &str) -> Result<Option<Worktree>, Error> {
         let mut checkout = None;
         for mut tree in self.repository.worktrees()? {
@@ -145,14 +166,19 @@ impl WorktreeManager {
             {
                 return Err(Error::WorktreeConflict(path.into()));
             }
-            self.verify_checkout_identity(path, reference)?;
+            self.verify_checkout_identity(path, path, reference)?;
             tree.path = path.into();
             checkout = Some(tree);
         }
         Ok(checkout)
     }
 
-    fn verify_checkout_identity(&self, path: &Path, reference: &str) -> Result<(), Error> {
+    fn verify_checkout_identity(
+        &self,
+        path: &Path,
+        registered_path: &Path,
+        reference: &str,
+    ) -> Result<(), Error> {
         let administrative = repository_path(&self.repository, path, "--absolute-git-dir")?;
         let branch = self
             .repository
@@ -161,7 +187,8 @@ impl WorktreeManager {
             || repository_path(&self.repository, path, "--git-common-dir")? != self.common_directory
             || administrative.parent() != Some(self.common_directory.join("worktrees").as_path())
             || branch.trim_ascii_end() != reference.as_bytes()
-            || !registered_checkout(&administrative, path)?
+            || !path.join(".git").symlink_metadata()?.is_file()
+            || !registered_checkout(&administrative, registered_path)?
         {
             return Err(Error::WorktreeConflict(path.into()));
         }
@@ -192,14 +219,25 @@ impl WorktreeManager {
     }
 
     fn verify_pending_checkout(&self, checkout: &Worktree, base: &ObjectId) -> Result<(), Error> {
+        if checkout.head.as_ref() != Some(base) {
+            return Err(Error::RecoveryRequired(checkout.path.clone()));
+        }
+        self.require_clean_checkout(checkout)
+    }
+
+    fn require_clean_checkout(&self, checkout: &Worktree) -> Result<(), Error> {
         let path = &checkout.path;
-        if checkout.head.as_ref() != Some(base) || checkout.locked {
+        if checkout.locked {
             return Err(Error::RecoveryRequired(path.clone()));
         }
+        self.verify_checkout_files(path, false)
+    }
+
+    fn verify_checkout_files(&self, path: &Path, allow_deleted: bool) -> Result<(), Error> {
         self.verify_checkout_config(path)?;
         let administrative = repository_path(&self.repository, path, "--absolute-git-dir")?;
         match administrative.join("index.lock").symlink_metadata() {
-            Ok(_) => return Err(Error::RecoveryRequired(path.clone())),
+            Ok(_) => return Err(Error::RecoveryRequired(path.into())),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
@@ -214,24 +252,26 @@ impl WorktreeManager {
                     .get(2..)
                     .is_some_and(|entry| entry.starts_with(b"160000 "))
         }) {
-            return Err(Error::RecoveryRequired(path.clone()));
+            return Err(Error::RecoveryRequired(path.into()));
         }
-        let status = self.repository.git(
+        let status = self
+            .repository
+            .git(path, "status", STATUS_ARGUMENTS, GIT_LIMITS)?;
+        require_safe_status(path, &status, allow_deleted)?;
+
+        // A fresh index avoids cached stat data that can hide timestamp-preserving edits.
+        let temporary = tempfile::tempdir_in(&self.root)?;
+        let index = temporary.path().join("index");
+        self.repository
+            .git_with_index(path, "read-tree", ["HEAD"], GIT_LIMITS, Some(&index))?;
+        let status = self.repository.git_with_index(
             path,
             "status",
-            [
-                "--porcelain=v1",
-                "-z",
-                "--untracked-files=all",
-                "--ignored=matching",
-                "--ignore-submodules=all",
-            ],
+            STATUS_ARGUMENTS,
             GIT_LIMITS,
+            Some(&index),
         )?;
-        if !status.is_empty() {
-            return Err(Error::RecoveryRequired(path.clone()));
-        }
-        Ok(())
+        require_safe_status(path, &status, allow_deleted)
     }
 
     fn verify_checkout_config(&self, path: &Path) -> Result<(), Error> {
@@ -304,9 +344,8 @@ fn git_path_line(bytes: &[u8]) -> Result<PathBuf, Error> {
 }
 
 fn registered_checkout(administrative: &Path, checkout: &Path) -> Result<bool, Error> {
-    let gitfile = checkout.join(".git");
     let backlink = administrative.join("gitdir");
-    if !gitfile.symlink_metadata()?.is_file() || !backlink.symlink_metadata()?.is_file() {
+    if !backlink.symlink_metadata()?.is_file() {
         return Ok(false);
     }
     let mut contents = Vec::new();
@@ -317,10 +356,24 @@ fn registered_checkout(administrative: &Path, checkout: &Path) -> Result<bool, E
         return Ok(false);
     }
     // Git may store this path relative to the administrative directory.
-    let registered = administrative
-        .join(git_path_line(&contents)?)
-        .canonicalize()?;
-    Ok(registered == gitfile)
+    let registered = administrative.join(git_path_line(&contents)?);
+    if registered.file_name() != Some(OsStr::new(".git")) {
+        return Ok(false);
+    }
+    let directory = registered.parent().ok_or(Error::Inventory)?;
+    let parent = directory.parent().ok_or(Error::Inventory)?.canonicalize()?;
+    let name = directory.file_name().ok_or(Error::Inventory)?;
+    Ok(parent.join(name) == checkout)
+}
+
+fn require_safe_status(path: &Path, status: &[u8], allow_deleted: bool) -> Result<(), Error> {
+    let safe = status
+        .split(|&byte| byte == 0)
+        .all(|record| record.is_empty() || (allow_deleted && record.starts_with(b" D ")));
+    if !safe {
+        return Err(Error::RecoveryRequired(path.into()));
+    }
+    Ok(())
 }
 
 fn verify_root(repository: &Repository, root: &Path, common: &Path) -> Result<(), Error> {
@@ -414,7 +467,7 @@ fn write_ownership(path: &Path, owner: &Ownership) -> Result<(), Error> {
     serde_json::to_writer(temporary.as_file_mut(), owner)?;
     temporary.as_file().sync_all()?;
     // Git may start only after the reservation is visible under its final name.
-    if owner.ready {
+    if owner.ready || owner.removing {
         temporary.persist(path)
     } else {
         temporary.persist_noclobber(path)
