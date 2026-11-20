@@ -62,3 +62,18 @@ fn conflicting_checkout_states_cannot_be_used_to_reconcile_worktrees() {
         ));
     }
 }
+
+#[cfg(windows)]
+#[test]
+fn canonical_drive_and_share_paths_are_spelled_for_git_for_windows() {
+    use crate::git_path;
+
+    assert_eq!(
+        git_path(Path::new(r"\\?\C:\with spaces")),
+        r"C:\with spaces"
+    );
+    assert_eq!(
+        git_path(Path::new(r"\\?\UNC\server\share\with spaces")),
+        r"\\server\share\with spaces"
+    );
+}

@@ -1,7 +1,16 @@
 //! Host-side, bounded access to a local Git repository.
 
+mod managed;
+
+pub use managed::{OwnedWorktree, WorktreeManager};
+
 use std::{
-    env, ffi::OsString, io, path::PathBuf, process::ExitStatus, sync::atomic::AtomicBool,
+    env,
+    ffi::OsString,
+    io,
+    path::{Path, PathBuf},
+    process::ExitStatus,
+    sync::atomic::AtomicBool,
     time::Duration,
 };
 
@@ -32,6 +41,22 @@ pub enum Error {
     ObjectId,
     #[error("local branch {0:?} was not found")]
     LocalBranch(String),
+    #[error("the managed worktree directory must be outside the Git repository and its checkouts")]
+    ManagedRoot,
+    #[error("the configured Git repository changed")]
+    RepositoryChanged,
+    #[error("the ticket ID cannot be used as a worktree branch")]
+    InvalidTicket,
+    #[error("another operation owns this worktree directory")]
+    Busy,
+    #[error("the worktree or its ownership conflicts with an existing entry at {0}")]
+    WorktreeConflict(PathBuf),
+    #[error("an unfinished worktree reservation at {0} requires recovery")]
+    RecoveryRequired(PathBuf),
+    #[error("Git checkout has an external filter or config include")]
+    ExternalCheckoutFilter,
+    #[error("invalid worktree ownership record: {0}")]
+    Ownership(#[from] serde_json::Error),
     #[error(transparent)]
     Io(#[from] io::Error),
 }
@@ -119,14 +144,43 @@ impl Repository {
     }
 
     fn read_git(&self, operation: &'static str, arguments: &[&str]) -> Result<Vec<u8>, Error> {
+        self.git(
+            &self.directory,
+            operation,
+            arguments.iter().copied(),
+            GIT_LIMITS,
+        )
+    }
+
+    fn git(
+        &self,
+        directory: &Path,
+        operation: &'static str,
+        arguments: impl IntoIterator<Item = impl Into<OsString>>,
+        limits: Limits,
+    ) -> Result<Vec<u8>, Error> {
         let mut args = vec![
             "--no-pager".into(),
+            "-c".into(),
+            "core.hooksPath=/dev/null".into(),
+            "-c".into(),
+            "core.fsmonitor=false".into(),
+            "-c".into(),
+            "submodule.recurse=false".into(),
+            "-c".into(),
+            "core.longpaths=true".into(),
             "-C".into(),
-            self.directory.as_os_str().into(),
+            git_path(directory),
             operation.into(),
         ];
-        args.extend(arguments.iter().map(OsString::from));
+        args.extend(arguments.into_iter().map(Into::into));
         let mut environment = vec![
+            // A missing object must not turn a local Git operation into a fetch.
+            ("GIT_ALLOW_PROTOCOL".into(), "".into()),
+            ("GIT_NO_LAZY_FETCH".into(), "1".into()),
+            ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+            ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
+            ("GIT_NO_REPLACE_OBJECTS".into(), "1".into()),
             ("GIT_OPTIONAL_LOCKS".into(), "0".into()),
             ("GIT_TERMINAL_PROMPT".into(), "0".into()),
         ];
@@ -142,7 +196,7 @@ impl Repository {
                 env: environment,
             },
             b"",
-            GIT_LIMITS,
+            limits,
             &AtomicBool::new(false),
         )?;
         match output.outcome {
@@ -241,6 +295,35 @@ fn git_os_value(bytes: &[u8]) -> Result<OsString, Error> {
             .map(OsString::from)
             .map_err(|_| Error::Inventory)
     }
+}
+
+fn git_path(path: &Path) -> OsString {
+    #[cfg(windows)]
+    {
+        use std::{
+            os::windows::ffi::{OsStrExt, OsStringExt},
+            path::{Component, Prefix},
+        };
+        // Git for Windows interprets a verbatim prefix as an invalid UNC path.
+        // It handles long paths itself when given a native drive or share path.
+        if let Some(Component::Prefix(prefix)) = path.components().next() {
+            match prefix.kind() {
+                Prefix::VerbatimDisk(_) => {
+                    let native = path.as_os_str().encode_wide().skip(4).collect::<Vec<_>>();
+                    return OsString::from_wide(&native);
+                }
+                Prefix::VerbatimUNC(_, _) => {
+                    let native = [u16::from(b'\\'); 2]
+                        .into_iter()
+                        .chain(path.as_os_str().encode_wide().skip(8))
+                        .collect::<Vec<_>>();
+                    return OsString::from_wide(&native);
+                }
+                _ => {}
+            }
+        }
+    }
+    path.as_os_str().to_os_string()
 }
 
 #[cfg(test)]
