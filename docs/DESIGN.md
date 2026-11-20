@@ -141,21 +141,15 @@ Use the process boundary and containment rules in the implementation plan. The a
 
 ## 7a. Agents and subscriptions (Claude Code and Codex)
 
-- Every step chooses an **agent** (`claude` or `codex`) and an **auth**. **Subscription is the default** for both.
+- Every step chooses an **agent** (`claude` or `codex`) and an **auth**. The schema records the preferred mode for each provider.
   - claude: `subscription` (default) or `api` key.
-  - codex: `chatgpt` (sign in with a ChatGPT plan, the subscription route; default) or `api` key.
-- The tool launches the user's own `claude` or `codex`. Use provider-managed sign-in by default and isolate any API key to the verified provider-only environment. Preflight checks sign-in
-  (`claude auth status`; the Codex equivalent is to be confirmed in spike S8).
-- Codex facts (search of OpenAI's auth pages, 2026-11-20): two sign-in methods exist, ChatGPT sign-in (plan credits) and an API key (standard API pricing);
-  OpenAI's page recommends the API key for scripted and CI use; a key is passed through `codex login --with-api-key` on stdin, not as an argument; the two methods do not switch
-  cleanly because the login is cached. A third-party guide says `CODEX_API_KEY` works only with `codex exec`; official pages did not mention it. **All of this is unverified until S8.**
-- Consequences for the design:
-  - Mixing subscription and API steps for Codex needs separate Codex config directories per auth mode, or a logout between steps (S8 decides).
-  - `codex exec` never prompts: approval requests are rejected. Codex steps therefore run in a sandbox mode (read-only or workspace-write, network off) and
-    "Ask me after this step" works at step boundaries, not in the middle of a tool call.
-  - `codex exec --json` events (thread, turn, item, usage with cached tokens) map onto our normalised `AgentEvent`, so the pipeline never sees which agent ran.
-  - A natural use: a different model family as the independent reviewer in the check list. This is an idea to test in the evaluation, not a known gain.
-  - Whether a ChatGPT subscription may be driven by a local tool is a terms question; S8 reads OpenAI's terms. The same rule as for Claude applies: the user signs in, we never touch credentials.
+  - codex: `chatgpt` (sign in with a ChatGPT plan, the subscription route) or `api` key. S8 gates the enabled modes and their defaults.
+- The tool launches the user's own `claude` or `codex`. Use provider-managed sign-in and isolate any API key to the verified provider-only environment. The preflight commands are `claude auth status` and `codex login status`. Codex status reports credential presence.
+- The [S8 preflight](spikes/S8-codex-auth.md) verified logged-out status in fresh isolated file stores on Windows. OpenAI documents `CODEX_HOME` for file-based credentials and `CODEX_API_KEY` for `codex exec`. API authentication is the candidate for unattended execution. S8 still needs to confirm when the ChatGPT route can be used and whether switching modes preserves isolation.
+- OpenAI documents `codex exec --json` events for threads, turns, items and errors. M8 maps observed events to `AgentEvent` after S8 captures fixtures.
+- Test approval, sandbox and network behavior with the intended launch settings before enabling real repository access. The pipeline asks for user input at step boundaries.
+
+- M9 can measure whether a different model family improves independent review.
 - The profile schema has `agent` and `auth` per step from M0, so adding the Codex adapter later changes no file format.
 
 ## 8. Window (egui) and the Claude Design canvas
