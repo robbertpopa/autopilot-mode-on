@@ -1,4 +1,27 @@
-use super::{Error, Ownership, TicketId, read_ownership, ticket_worktree, write_ownership};
+use std::fs;
+
+use super::{
+    Error, Ownership, TicketId, read_ownership, registered_checkout, ticket_worktree,
+    write_ownership,
+};
+
+#[test]
+fn a_git_administrative_entry_must_link_back_to_the_same_checkout() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let administrative = root.join("admin");
+    let checkout = root.join("checkout");
+    fs::create_dir(&administrative).unwrap();
+    fs::create_dir(&checkout).unwrap();
+    fs::write(checkout.join(".git"), b"fixture").unwrap();
+    fs::write(root.join("different-gitfile"), b"fixture").unwrap();
+
+    let link = administrative.join("gitdir");
+    fs::write(&link, b"../checkout/.git\n").unwrap();
+    assert!(registered_checkout(&administrative, &checkout).unwrap());
+    fs::write(&link, b"../different-gitfile\n").unwrap();
+    assert!(!registered_checkout(&administrative, &checkout).unwrap());
+}
 
 #[test]
 fn ticket_paths_distinguish_case_and_reject_nonportable_branch_names() {
