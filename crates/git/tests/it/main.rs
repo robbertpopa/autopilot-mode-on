@@ -9,7 +9,7 @@ use std::{
 };
 
 use autopilot_core::TicketId;
-use autopilot_git::{Error, Removal, Repository, WorktreeManager};
+use autopilot_git::{Error, LineStats, Removal, Repository, WorktreeManager};
 
 struct Fixture {
     _directory: tempfile::TempDir,
@@ -294,5 +294,73 @@ fn removal_does_not_delete_a_case_alias_used_by_another_worktree() {
             .resolve_local_branch("ticket/ABC")
             .unwrap(),
         created.base
+    );
+}
+
+#[test]
+fn a_commit_summary_keeps_both_paths_of_a_rename_from_a_subdirectory() {
+    let fixture = Fixture::new().unwrap();
+    let subdirectory = fixture.repository.join("inside");
+    fs::create_dir(&subdirectory).unwrap();
+    let repository = Repository::new(
+        fixture.program.clone(),
+        PathBuf::new(),
+        subdirectory.clone(),
+    )
+    .unwrap();
+    let base = repository.resolve_local_branch("base").unwrap();
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["switch", "-c", "edited"],
+    )
+    .unwrap();
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["mv", "item.txt", "moved.txt"],
+    )
+    .unwrap();
+    fs::write(subdirectory.join("binary.dat"), [0, 1, 0]).unwrap();
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["add", "--", "inside/binary.dat"],
+    )
+    .unwrap();
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["commit", "-m", "changes"],
+    )
+    .unwrap();
+    let head = repository.resolve_local_branch("edited").unwrap();
+
+    let summary = repository.diff_stats(&base, &head).unwrap();
+    assert_eq!(
+        summary.lines,
+        LineStats {
+            added: 1,
+            removed: 1
+        }
+    );
+    assert_eq!(summary.files.len(), 3);
+    assert!(
+        summary
+            .files
+            .iter()
+            .any(|file| file.path == Path::new("item.txt"))
+    );
+    assert!(
+        summary
+            .files
+            .iter()
+            .any(|file| file.path == Path::new("moved.txt"))
+    );
+    assert!(
+        summary
+            .files
+            .iter()
+            .any(|file| file.path == Path::new("inside/binary.dat") && file.lines.is_none())
     );
 }

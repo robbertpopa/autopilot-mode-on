@@ -1,0 +1,146 @@
+use std::path::{Component, PathBuf};
+
+use crate::{Error, ObjectId, Repository, git_os_value};
+
+#[derive(Debug, Default, Eq, PartialEq)]
+pub struct DiffStats {
+    pub files: Vec<FileStats>,
+    pub lines: LineStats,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct FileStats {
+    pub path: PathBuf,
+    /// Git does not report line counts for binary changes.
+    pub lines: Option<LineStats>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LineStats {
+    pub added: u64,
+    pub removed: u64,
+}
+
+impl Repository {
+    /// Compare two local commits and report every changed repository-relative path.
+    ///
+    /// Renames are reported as removal and addition so policy checks see both paths.
+    ///
+    /// # Errors
+    /// Returns an error if Git fails or cannot return a complete, bounded summary.
+    pub fn diff_stats(&self, base: &ObjectId, head: &ObjectId) -> Result<DiffStats, Error> {
+        let output = self.read_git(
+            "diff",
+            &[
+                "--numstat",
+                "-z",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-relative",
+                "--no-renames",
+                "--ignore-submodules=none",
+                base.as_str(),
+                head.as_str(),
+                "--",
+            ],
+        )?;
+        parse_numstat(&output)
+    }
+}
+
+fn parse_numstat(bytes: &[u8]) -> Result<DiffStats, Error> {
+    let mut result = DiffStats::default();
+    if bytes.is_empty() {
+        return Ok(result);
+    }
+    let records = bytes.strip_suffix(b"\0").ok_or(Error::InvalidDiff)?;
+    for record in records.split(|&byte| byte == 0) {
+        let mut fields = record.splitn(3, |&byte| byte == b'\t');
+        let added = fields.next().ok_or(Error::InvalidDiff)?;
+        let removed = fields.next().ok_or(Error::InvalidDiff)?;
+        let file = fields.next().ok_or(Error::InvalidDiff)?;
+        if file
+            .split(|&byte| byte == b'/')
+            .any(|component| matches!(component, b"" | b"." | b".."))
+        {
+            return Err(Error::InvalidDiff);
+        }
+        let path = PathBuf::from(git_os_value(file).map_err(|_| Error::InvalidDiff)?);
+        if !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+        {
+            return Err(Error::InvalidDiff);
+        }
+        let lines = match (added, removed) {
+            (b"-", b"-") => None,
+            (added, removed) => Some(LineStats {
+                added: line_count(added)?,
+                removed: line_count(removed)?,
+            }),
+        };
+        if let Some(lines) = lines {
+            result.lines.added = result
+                .lines
+                .added
+                .checked_add(lines.added)
+                .ok_or(Error::InvalidDiff)?;
+            result.lines.removed = result
+                .lines
+                .removed
+                .checked_add(lines.removed)
+                .ok_or(Error::InvalidDiff)?;
+        }
+        result.files.push(FileStats { path, lines });
+    }
+    Ok(result)
+}
+
+fn line_count(bytes: &[u8]) -> Result<u64, Error> {
+    if !bytes.iter().all(u8::is_ascii_digit) {
+        return Err(Error::InvalidDiff);
+    }
+    let number = std::str::from_utf8(bytes).map_err(|_| Error::InvalidDiff)?;
+    number.parse().map_err(|_| Error::InvalidDiff)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{Error, LineStats, parse_numstat};
+
+    #[test]
+    fn numstat_keeps_unusual_names_and_binary_files_without_guessing_counts() {
+        let result =
+            parse_numstat(b"12\t3\tdirectory/file with\tand\nseparator\0-\t-\tbinary.dat\0")
+                .unwrap();
+        assert_eq!(
+            result.lines,
+            LineStats {
+                added: 12,
+                removed: 3
+            }
+        );
+        assert_eq!(result.files.len(), 2);
+        assert_eq!(
+            result.files[0].path,
+            Path::new("directory/file with\tand\nseparator")
+        );
+        assert_eq!(result.files[0].lines, Some(result.lines));
+        assert_eq!(result.files[1].path, Path::new("binary.dat"));
+        assert_eq!(result.files[1].lines, None);
+    }
+
+    #[test]
+    fn malformed_stats_cannot_appear_as_a_partial_successful_diff() {
+        for bad in [
+            b"1\t2\ta\0-\t2\tb\0".as_slice(),
+            b"1\t2\ta",
+            b"1\t2\t../outside\0",
+            b"18446744073709551615\t0\ta\x001\t0\tb\0",
+        ] {
+            assert!(matches!(parse_numstat(bad), Err(Error::InvalidDiff)));
+        }
+    }
+}
