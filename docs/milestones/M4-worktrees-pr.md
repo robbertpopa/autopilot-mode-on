@@ -16,7 +16,7 @@ Two tickets run in parallel on a sample repository and open two draft pull reque
 - [x] Diff and stat helpers; a tree fingerprint for kept check results.
   - [x] Summarize two local commits with repository-relative changed paths and text line counts. Preserve binary entries and report both paths of a rename.
   - [x] Fingerprint a verified worktree after its workers stop. Include Git's commit and index, working files, untracked and ignored entries, supported permission bits and in-tree symlink destinations. An external or unresolved link prevents reuse. Keep the base, approved plan and check settings as separate evidence.
-- [ ] Conflict prediction: which files a ticket will touch (from Understand and Plan) versus the files other running tickets touch.
+- [x] Conflict prediction: compare the files predicted by Understand and Plan against running tickets. Report equal paths and directory overlaps, including case variants on Windows. The scheduler consumes the comparison in part 2.
 
 ## Part 2
 - [ ] Scheduler: slot limit, queue with the reason ("waits for #128: both change routes.rs"), fairness, pause and resume of the whole queue.

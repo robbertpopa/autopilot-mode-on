@@ -1,8 +1,10 @@
 //! Host-side, bounded access to a local Git repository.
 
+mod conflicts;
 mod diff;
 mod managed;
 
+pub use conflicts::{PathOverlap, overlapping_paths};
 pub use diff::{DiffStats, FileStats, LineStats};
 pub use managed::{OwnedWorktree, Removal, TreeFingerprint, WorktreeManager};
 
@@ -43,6 +45,8 @@ pub enum Error {
     ObjectId,
     #[error("Git returned invalid or incomplete diff statistics")]
     InvalidDiff,
+    #[error("planned path is not a valid repository-relative path: {0}")]
+    InvalidPlannedPath(PathBuf),
     #[error("the worktree changed during fingerprinting at {0}")]
     ChangedDuringFingerprint(PathBuf),
     #[error("the worktree contains an unsupported entry at {0}")]
