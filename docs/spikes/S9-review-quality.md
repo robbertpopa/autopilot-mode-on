@@ -6,8 +6,9 @@
 **Start prompt:** "Read `AGENTS.md`, `docs/REVIEW-PIPELINE.md` and `docs/rules/`, then do `docs/spikes/S9-review-quality.md`."
 
 ## Method
-- [ ] Select a synthetic or approved public Rust sample of about 2,000 to 5,000 lines, then record its size in tokens. Obtain project permission before sending private source to a provider.
-- [ ] **Seed a copy** with about 10 known defects across the packs (an `unwrap` on parsed input, an undocumented `unsafe`, a shell-interpolated command, a path join with untrusted input, a restating comment, a `#[allow]` that hides a lint, an unpinned action, a secret-looking string, a test that sleeps, a dead function) and about 5 pieces of **bait** (code that looks wrong but is guarded or intentional).
+- [x] Pin a public Rust sample of about 2,000 to 5,000 lines and record the files to review.
+- [ ] Record the exact model input token count. Obtain project permission before sending private source to a provider.
+- [x] Seed an isolated copy with ten known issues and record five existing false-positive cases. The first corpus covers correctness, comment and documentation accuracy, unused code, lint suppression and redundant tests.
 - [ ] Run three variants and record findings, true positives, false positives, missed defects, tokens, dollars and time:
   1. model-only review with the lens, no mechanical findings;
   2. the same with the mechanical findings (Clippy with the pack lints, `cargo deny`, grep patterns) given to the agent;
@@ -19,5 +20,9 @@
 ## Done when
 `docs/REVIEW-PIPELINE.md` is updated with: the recommended unit size and cap; whether the mechanical findings are given to the finder; whether the verifier is worth its cost and which model; measured precision and recall on the seeded repository; cost per verified finding; and the rules to demote or tighten. The seeded repository is kept as the M9 test fixture.
 
+## Local corpus preparation
+
+The [S9 corpus](../../fixtures/review/s9/README.md) pins a public Apache-2.0 revision and records the 14 Rust files to review. The seeded copy has 2,154 lines, ten known issues and five false-positive cases. The seed compiles. Existing profile and fixture-agent tests detect the planted diagnostic positions and altered activity text. The ground truth and scoring procedure are ready for offline preparation of review units. Provider token counts and the comparative experiment are pending.
+
 ## Result
-(fill in)
+The corpus and scoring procedure are ready. S9 remains open until the model runs and their measurements are recorded.

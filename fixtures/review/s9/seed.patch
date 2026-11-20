@@ -1,0 +1,68 @@
+diff --git a/crates/agent-fixture/src/lib.rs b/crates/agent-fixture/src/lib.rs
+index ba2ec51..ce7c725 100644
+--- a/crates/agent-fixture/src/lib.rs
++++ b/crates/agent-fixture/src/lib.rs
+@@ -171 +171 @@ impl Decoder {
+-            Ok(Frame::Activity { summary }) => report(summary),
++            Ok(Frame::Activity { summary }) => report(summary.to_uppercase()),
+diff --git a/crates/agent/src/lib.rs b/crates/agent/src/lib.rs
+index c4565c7..10f4d68 100644
+--- a/crates/agent/src/lib.rs
++++ b/crates/agent/src/lib.rs
+@@ -108,0 +109 @@ impl AgentRun {
++    #[allow(clippy::needless_return)]
+@@ -110 +111 @@ impl AgentRun {
+-        self.cancel.clone()
++        return self.cancel.clone();
+diff --git a/crates/cli/src/main.rs b/crates/cli/src/main.rs
+index 581bdb4..4315994 100644
+--- a/crates/cli/src/main.rs
++++ b/crates/cli/src/main.rs
+@@ -34 +34 @@ enum Command {
+-    /// Replay committed events from the ticket's local history.
++    /// Replay committed events as YAML.
+@@ -69,0 +70 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
++            // Read the ticket.
+diff --git a/crates/core/src/lib.rs b/crates/core/src/lib.rs
+index 97dc417..51d064a 100644
+--- a/crates/core/src/lib.rs
++++ b/crates/core/src/lib.rs
+@@ -89 +89 @@ impl Step {
+-            Self::Design => "design",
++            Self::Design => "Design",
+diff --git a/crates/profile/src/lib.rs b/crates/profile/src/lib.rs
+index 76672d2..c6fe429 100644
+--- a/crates/profile/src/lib.rs
++++ b/crates/profile/src/lib.rs
+@@ -256 +256 @@ fn diagnostic(
+-        line: prefix.split('\n').count(),
++        line: prefix.split('\n').count() + 1,
+@@ -260 +260 @@ fn diagnostic(
+-            .map_or(1, |line| line.chars().count() + 1),
++            .map_or(1, |line| line.chars().count()),
+diff --git a/crates/profile/tests/it/main.rs b/crates/profile/tests/it/main.rs
+index dd0486f..d444c9a 100644
+--- a/crates/profile/tests/it/main.rs
++++ b/crates/profile/tests/it/main.rs
+@@ -5,0 +6,5 @@ use autopilot_profile::Profile;
++#[test]
++fn all_steps_has_six_entries() {
++    assert_eq!(Step::ALL.len(), 6);
++}
++
+diff --git a/crates/store/src/replay.rs b/crates/store/src/replay.rs
+index aa0c511..c5536f0 100644
+--- a/crates/store/src/replay.rs
++++ b/crates/store/src/replay.rs
+@@ -75 +75 @@ impl TicketState {
+-        self.title.as_deref()
++        self.title.as_deref().map(str::trim)
+diff --git a/tools/fake-agent/src/main.rs b/tools/fake-agent/src/main.rs
+index 4e8d123..cb9cd42 100644
+--- a/tools/fake-agent/src/main.rs
++++ b/tools/fake-agent/src/main.rs
+@@ -23,0 +24,4 @@ fn main() -> ExitCode {
++fn replay_label() -> &'static str {
++    "replay"
++}
++

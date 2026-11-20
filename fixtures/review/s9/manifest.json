@@ -1,0 +1,288 @@
+{
+  "base": "632347cd3106f5cfd8cd22f0bb317f857a236fc5",
+  "source_url": "https://github.com/robbertpopa/autopilot-mode-on",
+  "license": "Apache-2.0",
+  "sources": [
+    {
+      "file": "crates/agent/src/lib.rs",
+      "lines": 181,
+      "bytes_utf8_lf": 5354,
+      "sha256_utf8_lf": "3a49d93f25183d932227501db751f1309f4f683fb7508f4f4c6fa16a45cf81b7"
+    },
+    {
+      "file": "crates/agent-fixture/src/lib.rs",
+      "lines": 271,
+      "bytes_utf8_lf": 8974,
+      "sha256_utf8_lf": "96bc8bde951029571f11b275f83d603627ea3858b221679e9c60638f9cbf633b"
+    },
+    {
+      "file": "crates/cli/src/main.rs",
+      "lines": 98,
+      "bytes_utf8_lf": 2502,
+      "sha256_utf8_lf": "32cccbd81c22d98a998664e71815b134d6d5bfe20b3c99a66072118462df3290"
+    },
+    {
+      "file": "crates/core/src/lib.rs",
+      "lines": 197,
+      "bytes_utf8_lf": 4617,
+      "sha256_utf8_lf": "4f3de913bb47d116bff0ba5f0766f1a27512ba0ba0fc970d24db7f13170d8b94"
+    },
+    {
+      "file": "crates/engine/src/lib.rs",
+      "lines": 174,
+      "bytes_utf8_lf": 5638,
+      "sha256_utf8_lf": "f3b76c0669393eb8acd21620b835c0c54d646864f170812e61764c10feed2ce1"
+    },
+    {
+      "file": "crates/engine/tests/it/main.rs",
+      "lines": 104,
+      "bytes_utf8_lf": 3618,
+      "sha256_utf8_lf": "5bf641d33e3e187931f9481bb655fe90b80268102a30412f47b5a851b5c06ce7"
+    },
+    {
+      "file": "crates/profile/src/lib.rs",
+      "lines": 264,
+      "bytes_utf8_lf": 7515,
+      "sha256_utf8_lf": "1351439fd84519f7eef76d9da1f3daa6c152f606c18d5710ff5f417788a2c713"
+    },
+    {
+      "file": "crates/profile/tests/it/main.rs",
+      "lines": 43,
+      "bytes_utf8_lf": 1173,
+      "sha256_utf8_lf": "97e0f3b1fb808db00511b26b506634068151d067cd12eb418ca39ec48f343813"
+    },
+    {
+      "file": "crates/store/src/lib.rs",
+      "lines": 78,
+      "bytes_utf8_lf": 2979,
+      "sha256_utf8_lf": "02324e1cc99d7f3ee02217668788ae55bbc0c8c2e99d995ef7b665f42ada6de1"
+    },
+    {
+      "file": "crates/store/src/replay.rs",
+      "lines": 221,
+      "bytes_utf8_lf": 6656,
+      "sha256_utf8_lf": "2c6463d016f1a61dfc387c7d4bfad4091663288da7541aaa6a8c7a0b054c0ba7"
+    },
+    {
+      "file": "crates/store/src/sqlite.rs",
+      "lines": 201,
+      "bytes_utf8_lf": 7796,
+      "sha256_utf8_lf": "0e1c6c770262ac2f28899f156cd511fd9287e058351670b5a00ca7f9cb48d4b6"
+    },
+    {
+      "file": "crates/store/tests/it/main.rs",
+      "lines": 179,
+      "bytes_utf8_lf": 6019,
+      "sha256_utf8_lf": "13a15ba623c7c2d5c1bd4c4545d6201f7d5b582ceebfc5c4d290465a15848d00"
+    },
+    {
+      "file": "tools/fake-agent/src/main.rs",
+      "lines": 75,
+      "bytes_utf8_lf": 2249,
+      "sha256_utf8_lf": "d64dbf8b537abb6d85165ff2a19069c9f9b4c2be8ff02b38cb729c3fd4c86e43"
+    },
+    {
+      "file": "tools/fake-agent/tests/it/main.rs",
+      "lines": 68,
+      "bytes_utf8_lf": 2232,
+      "sha256_utf8_lf": "2a934487db5eafd1123d9693e83e35f7cddfd0f5af8256571014de506cd6ee3b"
+    }
+  ],
+  "cases": [
+    {
+      "id": "D01",
+      "rule": "correctness",
+      "expected": "defect",
+      "where": {
+        "file": "crates/core/src/lib.rs",
+        "lines": [
+          89,
+          89
+        ]
+      },
+      "evidence": "The expected lowercase design key fails to deserialize. The enum serializes with snake_case."
+    },
+    {
+      "id": "D02",
+      "rule": "correctness",
+      "expected": "defect",
+      "where": {
+        "file": "crates/profile/src/lib.rs",
+        "lines": [
+          256,
+          256
+        ]
+      },
+      "evidence": "A problem on line 2 is shown on line 3. Both diagnostic integration tests cover this line field."
+    },
+    {
+      "id": "D03",
+      "rule": "correctness",
+      "expected": "defect",
+      "where": {
+        "file": "crates/profile/src/lib.rs",
+        "lines": [
+          260,
+          260
+        ]
+      },
+      "evidence": "One-based columns become zero-based. The budget diagnostic expects column 19."
+    },
+    {
+      "id": "D04",
+      "rule": "correctness",
+      "expected": "defect",
+      "where": {
+        "file": "crates/agent-fixture/src/lib.rs",
+        "lines": [
+          171,
+          171
+        ]
+      },
+      "evidence": "The replay alters the recorded text, including case-sensitive names."
+    },
+    {
+      "id": "D05",
+      "rule": "correctness",
+      "expected": "defect",
+      "where": {
+        "file": "crates/store/src/replay.rs",
+        "lines": [
+          75,
+          75
+        ]
+      },
+      "evidence": "The title accessor drops whitespace even though the recorded title and fold preserve it."
+    },
+    {
+      "id": "D06",
+      "rule": "CM-05",
+      "expected": "defect",
+      "where": {
+        "file": "crates/cli/src/main.rs",
+        "lines": [
+          34,
+          34
+        ]
+      },
+      "evidence": "The command writes JSON objects with serde_json and a newline after each record."
+    },
+    {
+      "id": "D07",
+      "rule": "CM-01",
+      "expected": "defect",
+      "where": {
+        "file": "crates/cli/src/main.rs",
+        "lines": [
+          70,
+          70
+        ]
+      },
+      "evidence": "The comment repeats the function call without explaining the reason for it."
+    },
+    {
+      "id": "D08",
+      "rule": "ST-06",
+      "expected": "defect",
+      "where": {
+        "file": "tools/fake-agent/src/main.rs",
+        "lines": [
+          24,
+          24
+        ]
+      },
+      "evidence": "The private helper has no callers. The command still matches the string directly."
+    },
+    {
+      "id": "D09",
+      "rule": "RC-02",
+      "expected": "defect",
+      "where": {
+        "file": "crates/agent/src/lib.rs",
+        "lines": [
+          109,
+          109
+        ]
+      },
+      "evidence": "The suppression hides a needless return. A plain tail expression already works."
+    },
+    {
+      "id": "D10",
+      "rule": "TS-01",
+      "expected": "defect",
+      "where": {
+        "file": "crates/profile/tests/it/main.rs",
+        "lines": [
+          7,
+          7
+        ]
+      },
+      "evidence": "The fixed array length is enforced by its type. The new test adds no behavior coverage."
+    },
+    {
+      "id": "B01",
+      "rule": "correctness",
+      "expected": "bait",
+      "where": {
+        "file": "crates/profile/src/lib.rs",
+        "lines": [
+          253,
+          253
+        ]
+      },
+      "evidence": "The slice endpoint is clamped and moved to a UTF-8 boundary before the slice. An oversized or mid-character byte offset cannot panic."
+    },
+    {
+      "id": "B02",
+      "rule": "correctness",
+      "expected": "bait",
+      "where": {
+        "file": "crates/agent-fixture/src/lib.rs",
+        "lines": [
+          172,
+          172
+        ]
+      },
+      "evidence": "The following result arm records an error for a duplicate. finish returns that error."
+    },
+    {
+      "id": "B03",
+      "rule": "correctness",
+      "expected": "bait",
+      "where": {
+        "file": "crates/cli/src/main.rs",
+        "lines": [
+          93,
+          93
+        ]
+      },
+      "evidence": "The extra byte distinguishes exact-limit from oversized input. The length check runs before parsing."
+    },
+    {
+      "id": "B04",
+      "rule": "RC-01",
+      "expected": "bait",
+      "where": {
+        "file": "crates/core/src/lib.rs",
+        "lines": [
+          117,
+          117
+        ]
+      },
+      "evidence": "Addition returns Option and propagates overflow without panicking or wrapping."
+    },
+    {
+      "id": "B05",
+      "rule": "TS-02",
+      "expected": "bait",
+      "where": {
+        "file": "tools/fake-agent/src/main.rs",
+        "lines": [
+          64,
+          64
+        ]
+      },
+      "evidence": "This executable deliberately simulates a hanging fixture worker. The sleep is stimulus for external timeout and cleanup checks."
+    }
+  ]
+}
