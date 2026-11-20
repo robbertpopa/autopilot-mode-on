@@ -1,7 +1,4 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
-  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
-</picture>
+<img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
 
 # M1: one agent step from the CLI
 
