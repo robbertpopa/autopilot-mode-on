@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # M1: one agent step from the CLI
 
 **Owner crates:** `process`, `agent`, `agent-claude`, `tools/fake-agent`, `engine`, `cli` (first commands). **Depends on:** M0. Live execution needs S1 and S5. Automatic limit classification needs S2. **Gate for:** M2 and M8.

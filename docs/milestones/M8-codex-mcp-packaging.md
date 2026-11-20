@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # M8: Codex adapter, MCP server, packaging
 
 **Owner crates:** `agent-codex`, `mcp`, packaging. **Depends on:** M1 (adapter trait stable) and S8 for Codex; the MCP server needs `engine` from M5. The Codex adapter can start in its own tab as soon as M1 and S8 are done.

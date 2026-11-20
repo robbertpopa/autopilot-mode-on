@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # S1: the headless contract of Claude Code
 
 **Question:** what exactly does `claude -p` emit and accept? **Gates:** M1. **Budget:** within the shared $1, Haiku, `--max-budget-usd 0.05` per call, dedicated API key with a Console workspace limit.

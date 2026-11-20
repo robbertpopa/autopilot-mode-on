@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/icon-dark.svg">
+  <img src="../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # Pitfalls: past mistakes and traps found in other projects
 
 Add an entry whenever something cost time. One line each: the trap, then what to do.

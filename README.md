@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/icon-dark.svg">
+    <img src="assets/icon.svg" alt="autopilot-mode-on icon" width="128">
+  </picture>
+</p>
+
 # autopilot-mode-on
 
 A local program, written in Rust, that takes a codebase and a pile of stories, bugs and wishes, and runs each one through a pipeline of coding agents

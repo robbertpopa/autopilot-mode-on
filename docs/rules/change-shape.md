@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # Pack: change shape (rules for the fix pull requests themselves)
 
 These rules govern the changes the pipeline makes, not the code it reviews. They are checks on every fix ticket. Sources: Google Engineering Practices (GG) incl. large-scale changes (LSC), Linux kernel submitting-patches (KP), storytold pull-request rules (SC), craft-anything pitfalls (CA), recent tests-first refactoring studies (R), our settings (OJ).

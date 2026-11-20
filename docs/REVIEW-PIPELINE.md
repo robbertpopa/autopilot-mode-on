@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/icon-dark.svg">
+  <img src="../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # Codebase review and fix pipeline
 
 A second kind of run next to the ticket pipeline. Input: a repository (and optionally paths, a git ref and rule presets). Output: a verified list of findings, and, when you ask, small fix pull requests that resolve them. It reuses the ticket pipeline for every fix, so nothing here bypasses the checks, the inbox or the budgets.

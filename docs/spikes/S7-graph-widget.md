@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # S7: egui-snarl or our own graph?
 
 **Question:** can `egui-snarl` (0.12, updated August 2026) host our step nodes (settings forms inside nodes, a checkbox, status pills, arrows with labels, a selected state, a loop node) or is a small custom canvas simpler? **Gates:** M5. **Spending:** none.

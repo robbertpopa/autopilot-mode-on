@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # M5: the window (egui)
 
 **Owner crates:** `ui`, `engine` (actions it needs). **Depends on:** M2 (events and inbox). The graph needs S7. The full demo needs M3 and M4.

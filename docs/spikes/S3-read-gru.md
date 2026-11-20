@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # S3: what we can learn from Gru
 
 **Question:** which parts of Gru's design and code do we copy, and which pitfalls did it already hit? **Gates:** M4 design. No spending, no product code.

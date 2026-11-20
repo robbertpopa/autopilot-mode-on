@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # S8: Codex on a ChatGPT subscription, and switching to an API key
 
 **Question:** can `codex exec` run on a ChatGPT subscription, how do we switch between subscription and API key without the cached login interfering, and what do OpenAI's terms say about driving Codex from a local tool? **Gates:** the Codex adapter (M8). **Spending:** a few cents on the API key route; the subscription route costs plan usage.

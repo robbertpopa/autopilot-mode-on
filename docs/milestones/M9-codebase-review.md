@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # M9: codebase review and fix
 
 **Owner crates:** `rules` (pack loader), `review` (units, findings, verification, triage, batching). **Depends on:** M1 through M3 and S9 for report-only. Apply the validated S6 runtime when executing repository code or agents on a real project. Fixes and draft PRs also need M4. **Design:** `docs/REVIEW-PIPELINE.md`; rules in `docs/rules/`.

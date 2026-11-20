@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/icon-dark.svg">
+  <img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+</picture>
+
 # M0: foundation
 
 **Owner crates:** `core`, `store`, `profile`, `tools/xtask`, repository config. **Depends on:** nothing. **Gate for:** everything.
