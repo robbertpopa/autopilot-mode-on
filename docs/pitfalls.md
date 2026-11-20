@@ -33,7 +33,7 @@ Add an entry whenever something cost time. One line each: the trap, then what to
 
 ## Loops and cost
 - A failed build is a normal result, not an error: cap loops on the result's `ok` flag, not on exceptions. (craft-anything)
-- Stop an agent whose stream has been silent too long (Gru uses 15 minutes) and turn it into "Needs you".
+- Give a quiet agent an explicit idle deadline and turn it into "Needs you". Gru's five-minute per-read deadline can fire before its 15-minute inactivity check. [S3 findings](spikes/S3-read-gru.md#result)
 - Two turns that change nothing in the worktree stop the build.
 - After two failed refine rounds, start a fresh session with a summary of what failed.
 - Switching model mid-session throws away the prompt cache: route per session.
@@ -43,6 +43,8 @@ Add an entry whenever something cost time. One line each: the trap, then what to
 - The UI must not write files or launch programs; it only calls engine actions.
 
 ## Other tools' traps
-- Gru's older design text and its current docs disagree on retry counts: trust the code and the newest docs. Its default uses `--dangerously-skip-permissions`; we do not.
+- Gru's older design gives a larger lifecycle retry count than its two-attempt CI repair cap. Verify the specific loop in code. [S3 findings](spikes/S3-read-gru.md#result)
+- A process can stop after Git adds a worktree and before the registry records it. Reserve ownership first and reconcile it against Git after restart. [S3 findings](spikes/S3-read-gru.md#result)
+- A stale registry path can point outside the managed root. Canonicalize it and reconcile the record without removing the external directory. [S3 findings](spikes/S3-read-gru.md#result)
 - Vibe Kanban's sustaining plans changed after its company shut down: do not depend on a project in transition.
 - oven-cli's dates and counts did not line up between docs.rs and GitHub: verify before relying on a version.
