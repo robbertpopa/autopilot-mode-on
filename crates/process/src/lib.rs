@@ -78,6 +78,26 @@ impl Runner {
         limits: Limits,
         cancel: &AtomicBool,
     ) -> io::Result<Output> {
+        self.run_with_stdout(spec, input, limits, cancel, |_| {})
+    }
+
+    /// Run an absolute executable and observe stdout as it arrives. Chunks can
+    /// split lines and UTF-8 characters. They are delivered in order, up to the
+    /// same byte limit as the returned output.
+    ///
+    /// The observer runs on the stdout reader thread. It must return promptly
+    /// so the reader can keep draining the pipe.
+    ///
+    /// # Errors
+    /// Returns an error if the arguments, launch, pipes or cleanup fail.
+    pub fn run_with_stdout(
+        &self,
+        spec: &CommandSpec,
+        input: &[u8],
+        limits: Limits,
+        cancel: &AtomicBool,
+        observe: impl FnMut(&[u8]) + Send + 'static,
+    ) -> io::Result<Output> {
         if !spec.program.is_absolute() || input.len() > MAX_INPUT {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -96,15 +116,20 @@ impl Runner {
         let started = Instant::now();
         let (mut child, pipes) = platform::start(&self.guardian, spec, input)?;
         let overflow = Arc::new(AtomicBool::new(false));
-        let stdout = capture(pipes.stdout, limits.bytes_per_stream, &overflow)?;
-        let stderr = capture(pipes.stderr, limits.bytes_per_stream, &overflow)?;
+        let stdout = capture(pipes.stdout, limits.bytes_per_stream, &overflow, observe)?;
+        let stderr = capture(pipes.stderr, limits.bytes_per_stream, &overflow, |_| {})?;
 
         let finished = loop {
             if overflow.load(Ordering::Acquire) {
                 break Ok(Outcome::OutputLimit);
             }
             if cancel.load(Ordering::Acquire) {
-                break Ok(Outcome::Cancelled);
+                // An observer may cancel after the reader has reported overflow.
+                break Ok(if overflow.load(Ordering::Acquire) {
+                    Outcome::OutputLimit
+                } else {
+                    Outcome::Cancelled
+                });
             }
             match child.try_wait() {
                 Ok(Some(status)) => break Ok(Outcome::Exited(status)),
@@ -152,15 +177,32 @@ fn capture(
     pipe: Box<dyn Read + Send>,
     limit: usize,
     overflow: &Arc<AtomicBool>,
+    mut observe: impl FnMut(&[u8]) + Send + 'static,
 ) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
     let overflow = Arc::clone(overflow);
     thread::Builder::new().spawn(move || {
+        let mut pipe = pipe.take((limit as u64).saturating_add(1));
         let mut bytes = Vec::new();
-        pipe.take((limit as u64).saturating_add(1))
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > limit {
-            overflow.store(true, Ordering::Release);
-            bytes.truncate(limit);
+        let mut chunk = [0; 8192];
+        loop {
+            let read = match pipe.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            };
+            let accepted = read.min(limit - bytes.len());
+            let exceeded = accepted < read;
+            if exceeded {
+                overflow.store(true, Ordering::Release);
+            }
+            if accepted != 0 {
+                bytes.extend_from_slice(&chunk[..accepted]);
+                observe(&chunk[..accepted]);
+            }
+            if exceeded {
+                break;
+            }
         }
         Ok(bytes)
     })
