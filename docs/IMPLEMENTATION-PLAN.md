@@ -5,7 +5,7 @@ Reviewed 2026-11-20. The research notes below are dated references. Provider beh
 
 ## 0. Status and next step
 
-**Next session starts here:** work in `D:\autopilot-mode-on`. M0 and the [S5 synthetic process checks](spikes/S5-windows-process-control.md) passed locally. The first [fixture-backed M1 CLI](milestones/M1-agent-step.md#fixture-verification) can run and replay a ticket. The offline S1 preflight and synthetic M1 fault fixtures are ready. Capture the versioned S1 provider contract once the dedicated workspace and budget are confirmed. S9 and M9 add the later codebase-review workflow.
+**Next session starts here.** Work in `D:\autopilot-mode-on`. M0 and the [S5 synthetic process checks](spikes/S5-windows-process-control.md) passed. The [fixture-backed M1 CLI](milestones/M1-agent-step.md#fixture-verification) runs and replays a ticket and saves streamed activity before exit. The offline S1 preflight is ready. Capture the versioned S1 provider contract once the dedicated workspace and budget are confirmed. The [S3 source review](spikes/S3-read-gru.md#result) and [M4 local worktree operations](milestones/M4-worktrees-pr.md#part-1-git-crate-can-start-after-m0) are verified. File-overlap prediction is the next offline M4 task. S9 and M9 add the later codebase-review workflow.
 
 The standalone repository holds the current implementation and milestone status. Record spike results and tick milestone items after running their exit checks.
 
