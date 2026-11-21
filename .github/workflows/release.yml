@@ -51,12 +51,12 @@ jobs:
         run: |
           $version = "$env:TAG".TrimStart('v')
           New-Item -ItemType Directory -Force dist | Out-Null
-          makensis /V2 "/DVERSION=$version" "/DEXE=$PWD\target\release\autopilot-ui.exe" "/DICON=$PWD\assets\icon.ico" "/DOUT=$PWD\dist\pipeline-setup-x64.exe" packaging\windows\installer.nsi
-          if (-not (Test-Path dist\pipeline-setup-x64.exe)) { throw "the installer was not built" }
+          makensis /V2 "/DVERSION=$version" "/DEXE=$PWD\target\release\autopilot-ui.exe" "/DICON=$PWD\assets\icon.ico" "/DOUT=$PWD\dist\autopilot-mode-on-setup-x64.exe" packaging\windows\installer.nsi
+          if (-not (Test-Path dist\autopilot-mode-on-setup-x64.exe)) { throw "the installer was not built" }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: dist/pipeline-setup-x64.exe
+          path: dist/autopilot-mode-on-setup-x64.exe
           if-no-files-found: error
 
   macos:
@@ -101,11 +101,11 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           mkdir dist
-          packaging/macos/build-dmg.sh "${TAG#v}" target/release/autopilot-ui assets/icon-512.png "dist/pipeline-macos-${{ matrix.arch }}.dmg"
+          packaging/macos/build-dmg.sh "${TAG#v}" target/release/autopilot-ui assets/icon-512.png "dist/autopilot-mode-on-macos-${{ matrix.arch }}.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
-          path: dist/pipeline-macos-${{ matrix.arch }}.dmg
+          path: dist/autopilot-mode-on-macos-${{ matrix.arch }}.dmg
           if-no-files-found: error
 
   publish:

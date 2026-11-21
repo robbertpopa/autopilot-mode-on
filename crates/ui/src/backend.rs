@@ -182,7 +182,7 @@ pub fn install_update(
 ) {
     thread::spawn(move || {
         let guardian = guardian();
-        let directory = std::env::temp_dir().join("pipeline-updates");
+        let directory = std::env::temp_dir().join("autopilot-mode-on-updates");
         let outcome = autopilot_update::download(&guardian, &update, &directory)
             .and_then(|file| autopilot_update::open_installer(&guardian, &file));
         let _ = sender.send(Message::Installing(outcome));

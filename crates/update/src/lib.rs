@@ -297,7 +297,7 @@ mod tests {
 
     use super::*;
 
-    const MANIFEST: &str = r#"{"version":"0.2.0","notes":"n","assets":{"windows-x64":{"url":"https://github.com/robbertpopa/autopilot-mode-on/releases/download/v0.2.0/pipeline-setup-x64.exe","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}}}"#;
+    const MANIFEST: &str = r#"{"version":"0.2.0","notes":"n","assets":{"windows-x64":{"url":"https://github.com/robbertpopa/autopilot-mode-on/releases/download/v0.2.0/autopilot-mode-on-setup-x64.exe","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}}}"#;
 
     fn signed(manifest: &str) -> (String, String) {
         let signing = SigningKey::from_bytes(&[7; 32]);

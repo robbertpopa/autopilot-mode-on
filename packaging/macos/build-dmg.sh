@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Pipeline.app and a .dmg from a release binary.
+# Build Autopilot Mode On.app and a .dmg from a release binary.
 #
 #   build-dmg.sh <version> <path to autopilot-ui> <path to icon-512.png> <output.dmg>
 #
@@ -16,13 +16,13 @@ icon="$3"
 out="$4"
 
 work="$(mktemp -d)"
-app="$work/Pipeline.app"
+app="$work/Autopilot Mode On.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/autopilot-ui"
 chmod +x "$app/Contents/MacOS/autopilot-ui"
 
 # The icon: every size macOS asks for, made from the 512 px picture.
-iconset="$work/Pipeline.iconset"
+iconset="$work/Autopilot Mode On.iconset"
 mkdir "$iconset"
 for size in 16 32 64 128 256 512; do
   sips -z "$size" "$size" "$icon" --out "$iconset/icon_${size}x${size}.png" >/dev/null
@@ -33,18 +33,18 @@ for size in 16 32 128 256; do
 done
 cp "$icon" "$iconset/icon_512x512@2x.png"
 rm "$iconset/icon_64x64.png"
-iconutil -c icns "$iconset" -o "$app/Contents/Resources/Pipeline.icns"
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/Autopilot Mode On.icns"
 
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Pipeline</string>
-  <key>CFBundleDisplayName</key><string>Pipeline</string>
+  <key>CFBundleName</key><string>Autopilot Mode On</string>
+  <key>CFBundleDisplayName</key><string>Autopilot Mode On</string>
   <key>CFBundleIdentifier</key><string>io.github.robbertpopa.pipeline</string>
   <key>CFBundleExecutable</key><string>autopilot-ui</string>
-  <key>CFBundleIconFile</key><string>Pipeline</string>
+  <key>CFBundleIconFile</key><string>Autopilot Mode On</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
   <key>CFBundleVersion</key><string>${version}</string>
@@ -64,7 +64,7 @@ stage="$work/dmg"
 mkdir "$stage"
 cp -R "$app" "$stage/"
 ln -s /Applications "$stage/Applications"
-hdiutil create -volname "Pipeline" -srcfolder "$stage" -ov -format UDZO "$out"
+hdiutil create -volname "Autopilot Mode On" -srcfolder "$stage" -ov -format UDZO "$out"
 
 if [ -n "${APPLE_SIGNING_IDENTITY:-}" ] && [ -n "${APPLE_ID:-}" ]; then
   codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$out"
