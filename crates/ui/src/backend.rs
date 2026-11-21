@@ -283,19 +283,48 @@ fn beside(name: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("{file} is missing next to the window"))
 }
 
-fn chosen_agent(options: &Options) -> Result<Chosen, String> {
+/// The Claude settings for a step: the profile's model, effort, turn cap,
+/// time limit and auth for it, and the shipped defaults for what it leaves out.
+fn claude_config(options: &Options, step: Step) -> autopilot_agent_claude::ClaudeConfig {
+    let settings = autopilot_engine::load_profile(&options.profile)
+        .ok()
+        .and_then(|profile| profile.step(step).cloned());
+    let Some(settings) = settings else {
+        return autopilot_agent_claude::ClaudeConfig {
+            auth: autopilot_profile::Auth::Subscription,
+            model: "haiku".to_owned(),
+            effort: None,
+            max_turns: 4,
+            max_budget_usd: None,
+            executable: None,
+            timeout: Duration::from_secs(300),
+        };
+    };
+    let api = settings.auth == autopilot_profile::Auth::Api;
+    autopilot_agent_claude::ClaudeConfig {
+        auth: settings.auth,
+        model: settings.model.unwrap_or_else(|| "haiku".to_owned()),
+        effort: settings.effort,
+        // Structured output needs a turn after the answer.
+        max_turns: settings.limits.turns.max(2),
+        // Only an API run has a per-call dollar cap; a subscription has none.
+        max_budget_usd: api.then(|| {
+            let micro = settings
+                .limits
+                .budget_microusd
+                .map_or(50_000, |money| money.as_microusd());
+            format!("{}.{:06}", micro / 1_000_000, micro % 1_000_000)
+        }),
+        executable: None,
+        timeout: Duration::from_secs(u64::from(settings.limits.wall_seconds.max(30))),
+    }
+}
+
+fn chosen_agent(options: &Options, step: Step) -> Result<Chosen, String> {
     match AgentChoice::read(&options.data_dir) {
         AgentChoice::Practice => fixture_agent().map(Chosen::Practice),
         AgentChoice::Claude => {
-            let config = autopilot_agent_claude::ClaudeConfig {
-                auth: autopilot_profile::Auth::Subscription,
-                model: "haiku".to_owned(),
-                effort: None,
-                max_turns: 4,
-                max_budget_usd: None,
-                executable: None,
-                timeout: Duration::from_secs(300),
-            };
+            let config = claude_config(options, step);
             let agent = autopilot_agent_claude::ClaudeAgent::new(
                 config,
                 beside("autopilot-process-guardian")?,
@@ -378,7 +407,7 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             Ok("Used the recommended answers".to_owned())
         }
         Action::RerunUnderstand(ticket) => {
-            let agent = chosen_agent(options)?;
+            let agent = chosen_agent(options, Step::Understand)?;
             let ask = autopilot_engine::load_profile(&options.profile)
                 .ok()
                 .and_then(|profile| {
@@ -391,7 +420,7 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                 .map_err(|error| error.to_string())
         }
         Action::MakePlan(ticket) => {
-            let agent = chosen_agent(options)?;
+            let agent = chosen_agent(options, Step::Plan)?;
             autopilot_engine::plan_ticket(directory, ticket, &agent)
                 .map(|plan| format!("Plan ready: {} criteria", plan.criteria.len()))
                 .map_err(|error| error.to_string())
@@ -415,7 +444,7 @@ fn start(
     attachments: &[PathBuf],
 ) -> Result<String, String> {
     let directory = options.data_dir.as_path();
-    let agent = chosen_agent(options)?;
+    let agent = chosen_agent(options, Step::Understand)?;
     let id = TicketId::from(format!("t-{}", now_ms()));
     let ticket = Ticket {
         id: id.clone(),

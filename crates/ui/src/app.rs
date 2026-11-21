@@ -447,6 +447,9 @@ impl App {
     }
 
     fn notice_bar(&mut self, ui: &mut egui::Ui) {
+        if self.options.data_dir.join(crate::demo::MARKER).exists() {
+            banner(ui, "Sample data: these tickets are not real work.", false);
+        }
         let problem = self.snapshot.problem.clone();
         if let Some(text) = problem {
             banner(ui, &format!("Could not read every ticket: {text}"), false);

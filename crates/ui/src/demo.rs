@@ -224,6 +224,9 @@ fn failed(store: &mut SqliteStore, at: u64) -> io::Result<()> {
     run.put(Some(Step::Understand), Event::Failed { reason }, 45_000)
 }
 
+/// A file that marks a data folder as holding sample tickets.
+pub const MARKER: &str = "sample-data.txt";
+
 /// Write three sample tickets: one mid-build, one waiting for approval and one
 /// that failed. `now_ms` is the current time, so the timeline looks recent.
 /// A data directory that already has tickets is left alone.
@@ -236,6 +239,11 @@ pub fn seed(directory: &Path, now_ms: u64) -> io::Result<()> {
     if !store.tickets().map_err(failure)?.is_empty() {
         return Ok(());
     }
+    std::fs::write(
+        directory.join(MARKER),
+        "sample tickets, not real work
+",
+    )?;
     let ago = |minutes: u64| now_ms.saturating_sub(minutes * MINUTE);
     building(&mut store, ago(17))?;
     waiting(&mut store, directory, ago(25))?;
