@@ -377,6 +377,46 @@ fn a_commit_summary_keeps_both_paths_of_a_rename_from_a_subdirectory() {
     );
 }
 
+// Invariant: the scan sees the lines the agent added, in new and changed text
+// files, and nothing for a binary file.
+#[test]
+fn added_lines_come_from_the_commit_and_skip_binary_files() {
+    let fixture = Fixture::new().unwrap();
+    let repository = fixture.repository().unwrap();
+    let base = repository.resolve_local_branch("base").unwrap();
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["switch", "-c", "scan"],
+    )
+    .unwrap();
+    fs::write(
+        fixture.repository.join("Cargo.toml"),
+        "[dependencies]
+serde = \"1\"
+",
+    )
+    .unwrap();
+    fs::write(fixture.repository.join("blob.dat"), [0, 1, 0]).unwrap();
+    git(&fixture.program, &fixture.repository, &["add", "."]).unwrap();
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["commit", "-m", "scan"],
+    )
+    .unwrap();
+    let head = repository.resolve_local_branch("scan").unwrap();
+
+    let added = repository.added_lines(&base, &head).unwrap();
+    let cargo = added.iter().find(|file| file.path == "Cargo.toml").unwrap();
+    assert_eq!(cargo.lines, ["[dependencies]", "serde = \"1\""]);
+    assert!(
+        added
+            .iter()
+            .all(|file| file.path != "blob.dat" || file.lines.is_empty())
+    );
+}
+
 #[test]
 fn a_worktree_fingerprint_changes_for_untracked_files_and_staged_content() {
     let fixture = Fixture::new().unwrap();
