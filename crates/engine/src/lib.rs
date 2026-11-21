@@ -27,7 +27,7 @@ mod settings;
 pub use autopilot_checks::resolve_executable;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
 pub use plan::{approved_plan, run_plan};
-pub use publish::{PublishSetup, prepare_publish, run_publish};
+pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use settings::{effective_overrides, override_settings, project_overrides};
 
 pub(crate) const DATABASE: &str = "events.sqlite3";
