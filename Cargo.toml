@@ -12,6 +12,7 @@ members = [
     "crates/notify",
     "crates/pipeline",
     "crates/policy",
+    "crates/rules",
     "crates/process",
     "crates/profile",
     "crates/store",

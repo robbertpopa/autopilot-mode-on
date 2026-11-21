@@ -12,7 +12,7 @@ fn layer(name: &str) -> Option<u8> {
     match name.strip_prefix("autopilot-")? {
         "core" => Some(0),
         "store" | "profile" | "process" => Some(1),
-        "git" | "tracker" | "policy" | "accounts" | "update" | "notify" => Some(2),
+        "git" | "tracker" | "policy" | "accounts" | "update" | "notify" | "rules" => Some(2),
         "agent" | "checks" => Some(3),
         "agent-claude" | "agent-codex" | "agent-fixture" | "pipeline" => Some(4),
         "engine" => Some(5),
