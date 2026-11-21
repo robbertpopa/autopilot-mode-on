@@ -9,6 +9,7 @@ members = [
     "crates/core",
     "crates/engine",
     "crates/git",
+    "crates/mcp",
     "crates/notify",
     "crates/pipeline",
     "crates/policy",

@@ -1,0 +1,23 @@
+[package]
+name = "autopilot-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "autopilot-mcp"
+path = "src/main.rs"
+
+[dependencies]
+autopilot-core.workspace = true
+autopilot-engine = { path = "../engine" }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

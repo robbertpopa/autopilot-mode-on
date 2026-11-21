@@ -32,6 +32,10 @@ fn why_it_ran(step: Step) -> &'static str {
 }
 
 impl App {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one screen drawn top to bottom; the sections share the same card"
+    )]
     pub(crate) fn step_screen(&mut self, ui: &mut egui::Ui, id: &TicketId, step: Step) {
         let Some(view) = self.ticket(id).cloned() else {
             return;

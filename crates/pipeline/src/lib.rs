@@ -88,6 +88,10 @@ impl TicketState {
         Ok(())
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one flat match over the event kinds; splitting it would hide the state machine"
+    )]
     fn transition(&mut self, event: &NewEvent) -> Result<(), TransitionError> {
         use TransitionError as E;
         if self.done {

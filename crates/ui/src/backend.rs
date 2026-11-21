@@ -352,7 +352,7 @@ fn claude_config(options: &Options, step: Step) -> autopilot_agent_claude::Claud
             let micro = settings
                 .limits
                 .budget_microusd
-                .map_or(50_000, |money| money.as_microusd());
+                .map_or(50_000, autopilot_core::Money::as_microusd);
             format!("{}.{:06}", micro / 1_000_000, micro % 1_000_000)
         }),
         executable: None,
@@ -408,6 +408,10 @@ pub fn run(options: Options, action: Action, context: egui::Context, sender: Sen
 ///
 /// # Errors
 /// Returns the reason in plain words.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one flat match over every window action"
+)]
 pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
     let directory = options.data_dir.as_path();
     match action {

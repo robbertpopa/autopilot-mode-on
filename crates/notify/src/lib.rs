@@ -32,7 +32,7 @@ $texts.Item(1).AppendChild($xml.CreateTextNode($env:AUTOPILOT_NOTIFY_TEXT)) | Ou
 $toast = New-Object Windows.UI.Notifications.ToastNotification $xml; \
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show($toast)";
 
-/// A fixed AppleScript. The title and text arrive as its two arguments.
+/// A fixed `AppleScript`. The title and text arrive as its two arguments.
 const MACOS_SCRIPT: &str = "on run argv\n\
 display notification (item 2 of argv) with title (item 1 of argv)\n\
 end run";

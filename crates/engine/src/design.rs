@@ -133,24 +133,37 @@ pub fn run_design(
         context: &notes,
     });
     let (pumped, last) = pump(&mut store, &ticket.id, DESIGN, last, run)?;
+    settle(directory, &mut store, &ticket.id, last, pumped)
+}
+
+/// Record what the agent's run came to: save and ask about a good design,
+/// record the failure for a design that must not be saved or a run that broke.
+fn settle(
+    directory: &Path,
+    store: &mut SqliteStore,
+    ticket_id: &TicketId,
+    last: u64,
+    pumped: Pumped,
+) -> Result<Option<Design>, Error> {
     let at = timestamp()?;
+    let ticket = ticket_id;
     match pumped {
         Pumped::Design(design) => {
             if let Err(reason) = design.validate() {
                 let failed = Event::Failed {
                     reason: format!("the design is not allowed: {reason}"),
                 };
-                store.append(&ticket.id, last, &[event(at, DESIGN, failed)])?;
+                store.append(ticket, last, &[event(at, DESIGN, failed)])?;
                 return Err(Error::NotReady(format!(
                     "the design is not allowed: {reason}"
                 )));
             }
-            save(directory, &ticket.id, &design)?;
+            save(directory, ticket, &design)?;
             let asked = Event::Asked {
                 request: RequestId::from(REQUEST),
             };
             store.append(
-                &ticket.id,
+                ticket,
                 last,
                 &[
                     event(
@@ -163,21 +176,21 @@ pub fn run_design(
                     event(at, DESIGN, asked),
                 ],
             )?;
-            Inbox::in_data_dir(directory).write_request(&request(&ticket.id, &design))?;
+            Inbox::in_data_dir(directory).write_request(&request(ticket, &design))?;
             Ok(Some(design))
         }
         Pumped::Stopped(reason) => {
             let interrupted = Event::Interrupted {
                 reason: reason.clone(),
             };
-            store.append(&ticket.id, last, &[event(at, DESIGN, interrupted)])?;
+            store.append(ticket, last, &[event(at, DESIGN, interrupted)])?;
             Err(Error::Stopped(reason))
         }
         Pumped::Failed(error) => {
             let failed = Event::Failed {
                 reason: "Design step failed".into(),
             };
-            store.append(&ticket.id, last, &[event(at, DESIGN, failed)])?;
+            store.append(ticket, last, &[event(at, DESIGN, failed)])?;
             Err(Error::Agent(error))
         }
         Pumped::Understanding(_) | Pumped::Plan(_) => Err(Error::NotReady(
