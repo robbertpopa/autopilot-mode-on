@@ -120,18 +120,25 @@ mod tests {
     fn untrusted_text_stays_out_of_the_script() {
         let nasty = "x'; Remove-Item -Recurse C:\\ #\n\"$(calc)";
         let spec = command(nasty, &"a".repeat(1000)).unwrap();
-        let script_args: Vec<String> = spec
+        // Every value the command carries: arguments and environment.
+        let values: Vec<String> = spec
             .args
             .iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
+            .chain(spec.env.iter().map(|(_, value)| value))
+            .map(|value| value.to_string_lossy().into_owned())
             .collect();
-        for arg in &script_args {
-            assert!(!arg.contains("Remove-Item"), "{arg}");
+        let mut carried = false;
+        for value in &values {
+            if value == WINDOWS_SCRIPT || value == MACOS_SCRIPT {
+                // The fixed script never holds the text.
+                assert!(!value.contains("Remove-Item"), "{value}");
+            } else {
+                // Anything else is data: one line and no longer than the cap.
+                assert!(!value.contains('\n'), "{value}");
+                assert!(value.chars().count() <= MAX_TEXT, "{value}");
+                carried |= value.contains("Remove-Item");
+            }
         }
-        for (_, value) in &spec.env {
-            let value = value.to_string_lossy();
-            assert!(!value.contains('\n'));
-            assert!(value.chars().count() <= MAX_TEXT);
-        }
+        assert!(carried, "the text must still reach the notification");
     }
 }
