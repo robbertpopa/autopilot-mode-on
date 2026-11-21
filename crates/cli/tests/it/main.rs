@@ -107,3 +107,19 @@ fn a_turn_limit_exits_with_an_error_but_is_stored_as_interrupted() {
     assert_eq!(kinds.last().map(String::as_str), Some("interrupted"));
     assert!(!kinds.iter().any(|kind| kind == "failed" || kind == "done"));
 }
+
+// The command reads real local state, so only its shape is asserted: three
+// named statuses, and nothing credential-like in the output.
+#[test]
+fn accounts_prints_three_statuses_and_no_credentials() {
+    let scratch = tempfile::tempdir().unwrap();
+    let output = autopilot(&["accounts", "--json"], scratch.path());
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let value: Value = serde_json::from_str(&text).unwrap();
+    for tool in ["claude", "github", "azure"] {
+        assert!(value[tool]["state"].is_string(), "{tool}");
+    }
+    let lower = text.to_lowercase();
+    assert!(!lower.contains("token") && !lower.contains("sk-ant") && !lower.contains("gho_"));
+}
