@@ -16,6 +16,7 @@ autopilot-agent-claude = { path = "../agent-claude" }
 autopilot-agent-fixture = { path = "../agent-fixture" }
 autopilot-core.workspace = true
 autopilot-engine = { path = "../engine" }
+autopilot-notify = { path = "../notify" }
 autopilot-pipeline = { path = "../pipeline" }
 autopilot-profile = { path = "../profile" }
 autopilot-store = { path = "../store" }

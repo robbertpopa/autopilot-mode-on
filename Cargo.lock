@@ -264,6 +264,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "autopilot-notify"
+version = "0.1.0"
+dependencies = [
+ "autopilot-process",
+]
+
+[[package]]
 name = "autopilot-pipeline"
 version = "0.1.0"
 dependencies = [
@@ -345,6 +352,7 @@ dependencies = [
  "autopilot-agent-fixture",
  "autopilot-core",
  "autopilot-engine",
+ "autopilot-notify",
  "autopilot-pipeline",
  "autopilot-profile",
  "autopilot-store",

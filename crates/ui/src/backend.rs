@@ -220,6 +220,29 @@ pub enum AgentChoice {
 }
 
 const AGENT_FILE: &str = "ui-agent.txt";
+const NOTIFY_FILE: &str = "ui-notify.txt";
+
+/// Whether the window may show desktop notifications. On unless turned off.
+#[must_use]
+pub fn notifications_on(data_dir: &Path) -> bool {
+    std::fs::read_to_string(data_dir.join(NOTIFY_FILE)).map_or(true, |text| text.trim() != "off")
+}
+
+pub fn save_notifications(data_dir: &Path, on: bool) {
+    let _ = std::fs::create_dir_all(data_dir);
+    let _ = std::fs::write(data_dir.join(NOTIFY_FILE), if on { "on" } else { "off" });
+}
+
+/// Show a desktop notification without blocking the window. A failure is
+/// ignored: a missing system tool must never disturb a run.
+pub fn notify(title: String, text: String) {
+    let Ok(guardian) = beside("autopilot-process-guardian") else {
+        return;
+    };
+    let _ = thread::Builder::new().name("notify".into()).spawn(move || {
+        let _ = autopilot_notify::send(&guardian, &title, &text);
+    });
+}
 
 impl AgentChoice {
     #[must_use]

@@ -67,6 +67,9 @@ pub struct App {
     pub(crate) agent: backend::AgentChoice,
     /// "Do not ask again after this kind of step" on an approval.
     pub(crate) always: bool,
+    pub(crate) notify: bool,
+    announced: bool,
+    last_badges: std::collections::HashMap<TicketId, Badge>,
     update: Option<autopilot_update::Update>,
     installing: bool,
     home: NewTicket,
@@ -87,6 +90,7 @@ impl App {
     pub fn new(context: &egui::Context, options: Options, watch: bool) -> Self {
         let light = read_theme(&options);
         let agent = backend::AgentChoice::read(&options.data_dir);
+        let notify = backend::notifications_on(&options.data_dir);
         theme::apply(context, light);
         let (sender, receiver) = mpsc::channel();
         if watch {
@@ -116,6 +120,9 @@ impl App {
             light,
             agent,
             always: false,
+            notify,
+            announced: false,
+            last_badges: std::collections::HashMap::new(),
             update: None,
             installing: false,
             home: NewTicket::default(),
@@ -131,8 +138,35 @@ impl App {
     }
 
     /// Show a snapshot as if the watcher had just sent it.
+    /// Tell the owner, with a desktop notification, about a ticket that just
+    /// started waiting for them, failed or finished, when the window is not
+    /// in front. The first snapshot only records what is already there.
+    fn announce(&mut self, snapshot: &Snapshot) {
+        let started = self.announced;
+        let focused = self.context.input(|input| input.focused);
+        for view in &snapshot.tickets {
+            let before = self.last_badges.insert(view.id.clone(), view.badge);
+            if !self.notify || focused || !started || before == Some(view.badge) {
+                continue;
+            }
+            let message = match view.badge {
+                Badge::NeedsYou => "is waiting for you",
+                Badge::Failed => "failed",
+                Badge::Done => "is done",
+                _ => continue,
+            };
+            backend::notify(
+                "Autopilot Mode On".to_owned(),
+                format!("{} {message}", view.title),
+            );
+        }
+        // After the first snapshot every change counts.
+        self.announced = true;
+    }
+
     pub fn set_snapshot(&mut self, snapshot: Snapshot) {
         let first = self.snapshot.tickets.is_empty() && !snapshot.tickets.is_empty();
+        self.announce(&snapshot);
         self.snapshot = snapshot;
         if first {
             self.apply_start_view();
