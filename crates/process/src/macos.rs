@@ -37,9 +37,12 @@ impl Active {
 
     pub(crate) fn shutdown(&mut self) -> io::Result<()> {
         // A leader that already exited can leave members behind, so the group is
-        // signalled either way. An empty group is not an error.
+        // signalled either way. macOS answers EPERM, not ESRCH, when the only
+        // member left is the exited leader waiting to be reaped, and every
+        // process in the group is our own descendant, so both mean "nothing
+        // alive to signal".
         match kill_process_group(self.group, Signal::KILL) {
-            Ok(()) | Err(Errno::SRCH) => {}
+            Ok(()) | Err(Errno::SRCH | Errno::PERM) => {}
             Err(error) => return Err(error.into()),
         }
         self.child.wait()?;
