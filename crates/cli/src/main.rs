@@ -85,6 +85,32 @@ enum Command {
         #[arg(long)]
         agent: Agent,
     },
+    /// Ask to publish a built ticket as a draft pull request, or publish it
+    /// once the request has been approved in the inbox.
+    Publish {
+        #[arg(long)]
+        ticket: PathBuf,
+        #[arg(long)]
+        repo: PathBuf,
+        #[arg(long)]
+        base: String,
+        #[arg(long)]
+        worktrees: PathBuf,
+        #[arg(long)]
+        profile: PathBuf,
+        /// The Git remote that points at the GitHub repository.
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        /// The GitHub repository, as owner/name.
+        #[arg(long)]
+        github: String,
+        /// `prepare` asks the owner; `run` pushes and opens the draft after approval.
+        #[arg(long)]
+        step: PublishStep,
+        /// Absolute path to gh. Defaults to a PATH search.
+        #[arg(long)]
+        gh_path: Option<PathBuf>,
+    },
     /// Show which Claude, GitHub and Azure accounts this machine is signed in to.
     Accounts {
         /// Print machine-readable JSON instead of text.
@@ -169,6 +195,12 @@ enum Step {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
+enum PublishStep {
+    Prepare,
+    Run,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
 enum ScopeArg {
     Ticket,
     Project,
@@ -196,6 +228,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "one arm per subcommand")]
 fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     let mut out = io::stdout().lock();
     match cli.command {
@@ -257,6 +290,33 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             };
             let outcome = build_command(&cli.data_dir, &ticket, &profile, agent, &places)?;
             serde_json::to_writer(&mut out, &outcome)?;
+            writeln!(out)?;
+        }
+        Command::Publish {
+            ticket,
+            repo,
+            base,
+            worktrees,
+            profile,
+            remote,
+            github,
+            step,
+            gh_path,
+        } => {
+            let request = PublishRequest {
+                ticket: &ticket,
+                profile: &profile,
+                places: BuildPlaces {
+                    repo: &repo,
+                    base: &base,
+                    worktrees: &worktrees,
+                },
+                remote: &remote,
+                github: &github,
+                gh_path,
+            };
+            let result = publish_command(&cli.data_dir, step, &request)?;
+            serde_json::to_writer(&mut out, &result)?;
             writeln!(out)?;
         }
         Command::Hook => run_hook(&mut out)?,
@@ -351,6 +411,69 @@ fn run_hook(out: &mut impl Write) -> Result<(), Box<dyn Error>> {
     let verdict = autopilot_policy::hook::decide(&input);
     writeln!(out, "{}", autopilot_policy::hook::response(&verdict))?;
     Ok(())
+}
+
+struct PublishRequest<'a> {
+    ticket: &'a Path,
+    profile: &'a Path,
+    places: BuildPlaces<'a>,
+    remote: &'a str,
+    github: &'a str,
+    gh_path: Option<PathBuf>,
+}
+
+fn publish_command(
+    data_dir: &Path,
+    step: PublishStep,
+    request: &PublishRequest<'_>,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let ticket = read_ticket(request.ticket)?;
+    let source = std::fs::read_to_string(request.profile)?;
+    let profile = autopilot_profile::Profile::parse(request.profile, &source)?;
+    let repo = autopilot_tracker::Repo::parse(request.github)?;
+    let exe = env::current_exe()?;
+    let guardian = exe.with_file_name(format!(
+        "autopilot-process-guardian{}",
+        env::consts::EXE_SUFFIX
+    ));
+    let setup = autopilot_engine::PublishSetup {
+        repository: request.places.repo,
+        base_branch: request.places.base,
+        worktrees: request.places.worktrees,
+        git: PathBuf::from("git"),
+        guardian: guardian.clone(),
+        profile: &profile,
+        remote: request.remote,
+        repo: &repo,
+    };
+    match step {
+        PublishStep::Prepare => {
+            let id = autopilot_engine::prepare_publish(data_dir, &ticket, &setup)?;
+            Ok(serde_json::json!({"publish": "asked", "request": id}))
+        }
+        PublishStep::Run => {
+            let program = match &request.gh_path {
+                Some(path) => path.clone(),
+                None => autopilot_engine::resolve_executable(
+                    "gh",
+                    &env::var_os("PATH").unwrap_or_default(),
+                )
+                .ok_or("gh was not found on PATH; pass --gh-path")?,
+            };
+            let gh = autopilot_tracker::Gh::new(program, guardian, repo.clone(), env::vars_os())?;
+            let published = autopilot_engine::run_publish(data_dir, &ticket, &setup, &gh)?;
+            let pr = published.pull_request();
+            let how = match published {
+                autopilot_tracker::Published::Created(_) => "created",
+                autopilot_tracker::Published::Existing(_) => "existing",
+                autopilot_tracker::Published::Reconciled(_) => "reconciled",
+            };
+            Ok(serde_json::json!({
+                "publish": "opened", "how": how,
+                "pull_request": pr.number, "url": pr.url, "draft": pr.draft
+            }))
+        }
+    }
 }
 
 fn build_command(

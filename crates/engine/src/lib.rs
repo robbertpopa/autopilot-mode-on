@@ -24,6 +24,7 @@ mod build;
 mod plan;
 mod publish;
 mod settings;
+pub use autopilot_checks::resolve_executable;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
 pub use plan::{approved_plan, run_plan};
 pub use publish::{PublishSetup, prepare_publish, run_publish};

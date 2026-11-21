@@ -19,6 +19,7 @@ autopilot-engine = { path = "../engine" }
 autopilot-pipeline = { path = "../pipeline" }
 autopilot-policy = { path = "../policy" }
 autopilot-profile = { path = "../profile" }
+autopilot-tracker = { path = "../tracker" }
 clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 serde_json.workspace = true
 
