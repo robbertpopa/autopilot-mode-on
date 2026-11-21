@@ -24,14 +24,21 @@ use autopilot_store::{SqliteStore, Store, StoreError};
 mod build;
 mod control;
 mod plan;
+mod profile_edit;
 mod publish;
 mod settings;
+mod view;
 pub use autopilot_checks::resolve_executable;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
 pub use control::{request_pause, request_resume, request_stop};
 pub use plan::{approved_plan, run_plan};
+pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use settings::{effective_overrides, override_settings, project_overrides};
+pub use view::{
+    Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView, TimelineLine, dollars,
+    load_ticket, spent_since, step_name, ticket_view, tickets,
+};
 
 pub(crate) const DATABASE: &str = "events.sqlite3";
 const UNDERSTAND: Option<Step> = Some(Step::Understand);

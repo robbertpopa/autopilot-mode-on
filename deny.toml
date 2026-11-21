@@ -1,7 +1,13 @@
 [licenses]
-allow = ["Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MIT"]
+# BSL-1.0, Unicode-3.0 and Zlib are permissive licences that the window (egui) pulls in.
+allow = ["Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "BSL-1.0", "ISC", "MIT", "Unicode-3.0", "Zlib"]
 unused-allowed-license = "allow"
 
 [[licenses.exceptions]]
 name = "unicode-ident"
 allow = ["Unicode-3.0"]
+
+# The fonts egui ships are under their own open font licences. Only this crate.
+[[licenses.exceptions]]
+name = "epaint_default_fonts"
+allow = ["Apache-2.0", "MIT", "OFL-1.1", "Ubuntu-font-1.0"]

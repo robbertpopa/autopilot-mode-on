@@ -849,6 +849,10 @@ fn write_accounts(out: &mut impl Write, accounts: &Accounts) -> io::Result<()> {
         }
         other => writeln!(out, "Claude  {}", unavailable(other))?,
     }
+    match &accounts.codex {
+        Status::SignedIn(account) => writeln!(out, "Codex   signed in with {}", account.method)?,
+        other => writeln!(out, "Codex   {}", unavailable(other))?,
+    }
     match &accounts.github {
         Status::SignedIn(list) => {
             for (index, account) in list.iter().enumerate() {

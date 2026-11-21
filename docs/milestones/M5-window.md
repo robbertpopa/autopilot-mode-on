@@ -14,14 +14,14 @@ A ticket can be run, watched, answered and made merge-ready entirely from the wi
 ## Tasks
 - [ ] `engine` crate (done: run steps, answer, approve, pause, resume, stop through flags a run checks between turns, publish, CI; open: re-run, re-run from here, apply pipeline change, open worktree, open terminal, explain): one definition per action (run, pause, stop, re-run, re-run from here, answer, approve, apply pipeline change, open worktree, open terminal, explain) exposed to CLI, MCP and UI.
 - [x] Event subscription with replay: `engine::follow` replays from a sequence number, then delivers new events by polling the store (so a writer in another process is seen); `autopilot watch --follow`. Tested late-open plus live. A broadcast channel was not needed.
-- [ ] Shell: titlebar, ticket sidebar with live chips, notifications (`notify-rust`).
-- [ ] Pipeline view: nodes with settings and the "Ask me after this step" checkbox, Simple and Advanced views, forced-confirmation badges, validation warnings (for example a dollar budget on a subscription step). Edits go to `profile.toml` through `engine`.
-- [ ] Run view: live strip with skip reasons, Build ⟲ Check panel, timeline, cost bars (API exact, subscription estimate shown apart).
-- [ ] Step detail: tabs Overview, Input, Prompt, Output, Log, Changes, Cost, Settings; the actions; "In short" and "Explain in plain words".
-- [ ] Inbox cards for questions and approvals.
+- [x] Shell: titlebar, ticket sidebar with live chips and inline approve/reject, accounts (GitHub, Claude, Codex, Azure), dark and light theme, Ctrl+N. Open: desktop notifications (`notify-rust`).
+- [x] Pipeline view (settings, ask-after, Simple and Advanced, validation from the profile; edits go to `profile.toml` through `engine::edit_step`). Open: forced-confirmation badges. Original item: nodes with settings and the "Ask me after this step" checkbox, Simple and Advanced views, forced-confirmation badges, validation warnings (for example a dollar budget on a subscription step). Edits go to `profile.toml` through `engine`.
+- [x] Run view (strip, Build ⟲ Check panel, timeline, cost split). Open: turns/tokens/cache and the time estimate, which are not recorded yet. Original item: live strip with skip reasons, Build ⟲ Check panel, timeline, cost bars (API exact, subscription estimate shown apart).
+- [~] Step detail (tabs built; Input, Prompt and Changes say they are not recorded yet; re-run, explain, open worktree and terminal are shown off with the reason). Original item: tabs Overview, Input, Prompt, Output, Log, Changes, Cost, Settings; the actions; "In short" and "Explain in plain words".
+- [x] Inbox cards for questions and approvals (sidebar and run screen).
 - [ ] "Ask for a change": three targets, a typed pipeline patch shown as a diff, apply to this ticket or all future ones; rule changes rejected with the reason.
-- [ ] Graph widget as decided in S7 (egui-snarl or custom).
-- [ ] Repaint on events only; keyboard navigation and accessible names on controls.
+- [x] Graph widget: custom painter (arrows between step cards).
+- [~] Repaint on events only (done: a watcher repaints when a ticket changes). Open: full keyboard navigation and accessible names.
 
 ## Tests that must exist
 - View-model tests in `engine` (no egui): state to display model for each step state, including skipped with reason and asking.
@@ -30,3 +30,6 @@ A ticket can be run, watched, answered and made merge-ready entirely from the wi
 
 ## Exit criteria
 Run a ticket from the window: watch it live, answer a question, approve a plan, see the checks tick, and open the draft PR.
+
+## Try it
+`cargo build --workspace`, then `cargo run -p autopilot-ui -- --data-dir <dir> --profile <file>`. Add `--demo` to fill an empty data directory with three sample tickets. `--view design|run|step|cost|accounts` opens on a screen.

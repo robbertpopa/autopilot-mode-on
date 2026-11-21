@@ -41,6 +41,24 @@ impl SqliteStore {
     }
 }
 
+impl SqliteStore {
+    /// Every ticket that has at least one event, oldest first.
+    ///
+    /// # Errors
+    /// Returns an error if the database cannot be read.
+    pub fn tickets(&self) -> Result<Vec<TicketId>, crate::StoreError> {
+        let mut select = self
+            .connection
+            .prepare("SELECT ticket_id FROM events GROUP BY ticket_id ORDER BY MIN(rowid)")?;
+        let rows = select.query_map([], |row| row.get::<_, String>(0))?;
+        let mut tickets = Vec::new();
+        for row in rows {
+            tickets.push(TicketId::from(row?));
+        }
+        Ok(tickets)
+    }
+}
+
 impl Store for SqliteStore {
     fn append(
         &mut self,
