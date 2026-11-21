@@ -288,6 +288,93 @@ mod tests {
         assert_eq!(read(&options).tickets.len(), 1);
     }
 
+    // Invariant: from the window a ticket goes Understand, Clarify (recommended
+    // answers), then "Make the plan", and the plan waits for approval; approving
+    // it settles the step. A ticket that is not ready is refused with a reason.
+    #[test]
+    fn a_plan_can_be_made_and_approved_from_the_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        perform(
+            &options,
+            &Action::Start {
+                title: "Plan me".into(),
+                description: "Add an export option".into(),
+                attachments: Vec::new(),
+            },
+        )
+        .unwrap();
+        let id = read(&options).tickets[0].id.clone();
+        if read(&options).tickets[0].asking.is_some() {
+            perform(&options, &Action::AcceptDefaults { ticket: id.clone() }).unwrap();
+        }
+        let outcome = perform(&options, &Action::MakePlan(id.clone()));
+        assert!(outcome.is_ok(), "{outcome:?}");
+        let view = read(&options).tickets[0].clone();
+        assert!(matches!(
+            view.step(Step::Plan).unwrap().state,
+            autopilot_pipeline::StepState::Asking(_)
+        ));
+        perform(
+            &options,
+            &Action::Decide {
+                ticket: id,
+                approve: true,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            read(&options).tickets[0].step(Step::Plan).unwrap().state,
+            autopilot_pipeline::StepState::Passed
+        ));
+    }
+
+    // Invariant: with the Claude choice saved, starting a ticket from the window
+    // runs the real agent and the ticket reflects an attached file. Needs a
+    // signed-in Claude Code and spends subscription quota, so it only runs on
+    // request: `cargo test -p autopilot-ui -- --ignored real_claude`.
+    #[test]
+    #[ignore = "uses a real Claude Code subscription"]
+    fn real_claude_reads_the_attached_file_from_the_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Claude.save(&options.data_dir);
+        let spec = directory.path().join("spec.md");
+        std::fs::write(&spec, "The storage key MUST be \"zebra-todos-v7\".").unwrap();
+        let outcome = perform(
+            &options,
+            &Action::Start {
+                title: "Offline to-do app".into(),
+                description: "Build the offline to-do app from the attached spec.".into(),
+                attachments: vec![spec],
+            },
+        );
+        assert!(outcome.is_ok(), "{outcome:?}");
+        let id = read(&options).tickets[0].id.clone();
+        let events = autopilot_engine::watch(&options.data_dir, &id, 0).unwrap();
+        let text = format!("{events:?}");
+        assert!(text.contains("zebra-todos-v7"), "{text}");
+        if read(&options).tickets[0].asking.is_some() {
+            perform(&options, &Action::AcceptDefaults { ticket: id.clone() }).unwrap();
+        }
+        let planned = perform(&options, &Action::MakePlan(id));
+        assert!(planned.is_ok(), "{planned:?}");
+        assert!(matches!(
+            read(&options).tickets[0].step(Step::Plan).unwrap().state,
+            autopilot_pipeline::StepState::Asking(_)
+        ));
+    }
+
     // Invariant: the theme choice is kept for the next start.
     #[test]
     fn the_theme_choice_is_remembered() {

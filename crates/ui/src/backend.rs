@@ -79,6 +79,9 @@ pub enum Action {
     },
     /// Run Understand again for a ticket, with the words it started with.
     RerunUnderstand(TicketId),
+    /// Make the plan once Understand and Clarify are settled. The plan then
+    /// waits for the owner's approval.
+    MakePlan(TicketId),
     Pause(TicketId),
     Resume(TicketId),
     Stop(TicketId),
@@ -201,6 +204,111 @@ pub fn install_update(
 
 /// The fixture agent sits beside this program, or one folder up when the
 /// program is a test binary in `deps`.
+/// Which agent the window runs a ticket's steps with.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AgentChoice {
+    /// The built-in agent that answers from fixed text. Free and offline.
+    #[default]
+    Practice,
+    /// Claude Code, billed to the signed-in subscription.
+    Claude,
+}
+
+const AGENT_FILE: &str = "ui-agent.txt";
+
+impl AgentChoice {
+    #[must_use]
+    pub fn read(data_dir: &Path) -> Self {
+        match std::fs::read_to_string(data_dir.join(AGENT_FILE)) {
+            Ok(text) if text.trim() == "claude" => Self::Claude,
+            _ => Self::Practice,
+        }
+    }
+
+    pub fn save(self, data_dir: &Path) {
+        let _ = std::fs::create_dir_all(data_dir);
+        let _ = std::fs::write(
+            data_dir.join(AGENT_FILE),
+            if self == Self::Claude {
+                "claude"
+            } else {
+                "practice"
+            },
+        );
+    }
+}
+
+/// The agent a window action runs with, built from the saved choice.
+enum Chosen {
+    Practice(FixtureAgent),
+    Claude(autopilot_agent_claude::ClaudeAgent),
+}
+
+impl autopilot_agent::Agent for Chosen {
+    fn start(
+        &self,
+        request: autopilot_agent::StepRequest<'_>,
+    ) -> Result<autopilot_agent::AgentRun, autopilot_agent::AgentError> {
+        match self {
+            Self::Practice(agent) => agent.start(request),
+            Self::Claude(agent) => agent.start(request),
+        }
+    }
+
+    fn start_plan(
+        &self,
+        request: autopilot_agent::StepRequest<'_>,
+    ) -> Result<autopilot_agent::AgentRun, autopilot_agent::AgentError> {
+        match self {
+            Self::Practice(agent) => agent.start_plan(request),
+            Self::Claude(agent) => agent.start_plan(request),
+        }
+    }
+}
+
+/// A helper binary that sits next to the window, or one folder up when the
+/// window runs from `target/debug/deps` in a test.
+fn beside(name: &str) -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    let near = exe.with_file_name(&file);
+    if near.exists() {
+        return Ok(near);
+    }
+    let up = exe
+        .parent()
+        .and_then(Path::parent)
+        .map(|folder| folder.join(&file));
+    up.filter(|path| path.exists())
+        .ok_or_else(|| format!("{file} is missing next to the window"))
+}
+
+fn chosen_agent(options: &Options) -> Result<Chosen, String> {
+    match AgentChoice::read(&options.data_dir) {
+        AgentChoice::Practice => fixture_agent().map(Chosen::Practice),
+        AgentChoice::Claude => {
+            let config = autopilot_agent_claude::ClaudeConfig {
+                auth: autopilot_profile::Auth::Subscription,
+                model: "haiku".to_owned(),
+                effort: None,
+                max_turns: 4,
+                max_budget_usd: None,
+                executable: None,
+                timeout: Duration::from_secs(300),
+            };
+            let agent = autopilot_agent_claude::ClaudeAgent::new(
+                config,
+                beside("autopilot-process-guardian")?,
+            )
+            .map_err(|error| error.to_string())?;
+            agent
+                .preflight()
+                .map_err(|error| format!("Claude Code is not ready: {error}"))?;
+            Ok(Chosen::Claude(agent))
+        }
+    }
+}
+
 fn fixture_agent() -> Result<FixtureAgent, String> {
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let first = FixtureAgent::beside(&executable);
@@ -270,7 +378,7 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             Ok("Used the recommended answers".to_owned())
         }
         Action::RerunUnderstand(ticket) => {
-            let agent = fixture_agent()?;
+            let agent = chosen_agent(options)?;
             let ask = autopilot_engine::load_profile(&options.profile)
                 .ok()
                 .and_then(|profile| {
@@ -280,6 +388,12 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                 });
             autopilot_engine::rerun_understand(directory, ticket, &agent, ask)
                 .map(|_| "Understand ran again".to_owned())
+                .map_err(|error| error.to_string())
+        }
+        Action::MakePlan(ticket) => {
+            let agent = chosen_agent(options)?;
+            autopilot_engine::plan_ticket(directory, ticket, &agent)
+                .map(|plan| format!("Plan ready: {} criteria", plan.criteria.len()))
                 .map_err(|error| error.to_string())
         }
         Action::Pause(ticket) => autopilot_engine::request_pause(directory, ticket)
@@ -301,7 +415,7 @@ fn start(
     attachments: &[PathBuf],
 ) -> Result<String, String> {
     let directory = options.data_dir.as_path();
-    let agent = fixture_agent()?;
+    let agent = chosen_agent(options)?;
     let id = TicketId::from(format!("t-{}", now_ms()));
     let ticket = Ticket {
         id: id.clone(),

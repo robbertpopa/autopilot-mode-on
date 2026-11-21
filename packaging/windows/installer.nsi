@@ -1,5 +1,7 @@
 ; Autopilot Mode On installer for Windows. Build with:
-;   makensis /DVERSION=0.1.0 /DEXE=path\to\autopilot-ui.exe /DICON=path\to\icon.ico /DOUT=autopilot-mode-on-setup-x64.exe installer.nsi
+;   makensis /DVERSION=0.1.0 /DEXE=path\to\autopilot-ui.exe /DGUARDIAN=path\to\autopilot-process-guardian.exe /DPRACTICE=path\to\autopilot-fake-agent.exe /DICON=path\to\icon.ico /DOUT=autopilot-mode-on-setup-x64.exe installer.nsi
+; The window starts agents through the guardian and the practice agent, and
+; looks for both next to itself, so they ship in the same folder.
 ;
 ; It installs for the current user only, so it never asks for administrator
 ; rights and an in-app update can run it without a prompt. Running it again
@@ -37,6 +39,8 @@ Section "Install"
   ; A running copy keeps its file locked. The update flow closes the window
   ; first, so this only matters for a manual re-install.
   File "/oname=autopilot-ui.exe" "${EXE}"
+  File "/oname=autopilot-process-guardian.exe" "${GUARDIAN}"
+  File "/oname=autopilot-fake-agent.exe" "${PRACTICE}"
   File "/oname=icon.ico" "${ICON}"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
@@ -57,6 +61,8 @@ SectionEnd
 ; removing the program removes no work.
 Section "Uninstall"
   Delete "$INSTDIR\autopilot-ui.exe"
+  Delete "$INSTDIR\autopilot-process-guardian.exe"
+  Delete "$INSTDIR\autopilot-fake-agent.exe"
   Delete "$INSTDIR\icon.ico"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"

@@ -8,7 +8,7 @@ use std::{
 };
 
 use autopilot_agent::{Agent, AgentContext, AgentError, AgentRun, StepRequest};
-use autopilot_core::{Step, Understanding};
+use autopilot_core::{Criterion, Plan, Step, Understanding, Verify};
 use autopilot_process::{CommandSpec, Limits, Outcome, Runner};
 use serde::Deserialize;
 
@@ -70,6 +70,25 @@ impl Agent for FixtureAgent {
         let runner = Runner::new(self.guardian.clone());
         Ok(AgentRun::spawn(move |context| {
             run_fixture(&runner, &spec, &input, &context)
+        })?)
+    }
+
+    /// A canned plan for the practice agent: one criterion built from the
+    /// ticket's title, checked by hand. It reads no files and runs no process.
+    fn start_plan(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        let title = request.ticket.title.clone();
+        Ok(AgentRun::spawn_plan(move |context| {
+            context.message("practice plan".to_owned());
+            Ok(Plan {
+                criteria: vec![Criterion {
+                    id: "AC-1".into(),
+                    text: format!("{title} works as described in the ticket."),
+                    verify: Verify::Unknown,
+                    verification_id: String::new(),
+                }],
+                test_plan: vec!["Check it by hand (practice plan).".into()],
+                files: Vec::new(),
+            })
         })?)
     }
 }

@@ -39,7 +39,7 @@ jobs:
           ref: ${{ env.TAG }}
       - name: Install the pinned Rust toolchain
         run: rustup show
-      - run: cargo build --release -p autopilot-ui
+      - run: cargo build --release -p autopilot-ui -p autopilot-process -p autopilot-fake-agent
       - name: Install NSIS if the image lacks it
         shell: pwsh
         run: |
@@ -51,7 +51,7 @@ jobs:
         run: |
           $version = "$env:TAG".TrimStart('v')
           New-Item -ItemType Directory -Force dist | Out-Null
-          makensis /V2 "/DVERSION=$version" "/DEXE=$PWD\target\release\autopilot-ui.exe" "/DICON=$PWD\assets\icon.ico" "/DOUT=$PWD\dist\autopilot-mode-on-setup-x64.exe" packaging\windows\installer.nsi
+          makensis /V2 "/DVERSION=$version" "/DEXE=$PWD\target\release\autopilot-ui.exe" "/DGUARDIAN=$PWD\target\release\autopilot-process-guardian.exe" "/DPRACTICE=$PWD\target\release\autopilot-fake-agent.exe" "/DICON=$PWD\assets\icon.ico" "/DOUT=$PWD\dist\autopilot-mode-on-setup-x64.exe" packaging\windows\installer.nsi
           if (-not (Test-Path dist\autopilot-mode-on-setup-x64.exe)) { throw "the installer was not built" }
       - uses: actions/upload-artifact@v4
         with:
@@ -76,7 +76,7 @@ jobs:
           ref: ${{ env.TAG }}
       - name: Install the pinned Rust toolchain
         run: rustup show
-      - run: cargo build --release -p autopilot-ui
+      - run: cargo build --release -p autopilot-ui -p autopilot-process -p autopilot-fake-agent
       - name: Import the signing certificate, if there is one
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -101,7 +101,7 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           mkdir dist
-          packaging/macos/build-dmg.sh "${TAG#v}" target/release/autopilot-ui assets/icon-512.png "dist/autopilot-mode-on-macos-${{ matrix.arch }}.dmg"
+          packaging/macos/build-dmg.sh "${TAG#v}" target/release/autopilot-ui assets/icon-512.png "dist/autopilot-mode-on-macos-${{ matrix.arch }}.dmg" target/release/autopilot-process-guardian target/release/autopilot-fake-agent
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
