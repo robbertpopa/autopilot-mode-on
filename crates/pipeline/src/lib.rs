@@ -122,6 +122,21 @@ impl TicketState {
                 }
                 self.steps.insert(step, StepState::Skipped(reason.clone()));
             }
+            Event::StepReset { and_after } => {
+                let step = Self::need_step(event)?;
+                if let Some(active) = self.active() {
+                    return Err(E::StepBusy { active });
+                }
+                if matches!(self.step(step), StepState::Idle) {
+                    return Err(E::NothingToReset(step));
+                }
+                // `Step` is ordered like the pipeline, so "later" is `>`.
+                for each in Step::ALL {
+                    if each == step || (*and_after && each > step) {
+                        self.steps.remove(&each);
+                    }
+                }
+            }
             Event::AgentActivity { .. }
             | Event::UnderstandResult { .. }
             | Event::PlanResult { .. }
@@ -168,9 +183,10 @@ impl TicketState {
                 let step = self.require(event, StepState::is_active)?;
                 self.steps.insert(step, StepState::Failed(reason.clone()));
             }
-            // Recorded for the log. A change applies when the next step starts,
-            // so it does not alter any state here.
-            Event::SettingsOverridden { .. } => {}
+            // Recorded for the log. A settings change applies when the next step
+            // starts, and the ticket text is only kept for a later re-run, so
+            // neither alters any state here.
+            Event::SettingsOverridden { .. } | Event::Described { .. } => {}
             Event::Done => {
                 if let Some(active) = self.active() {
                     return Err(E::StepBusy { active });
@@ -216,6 +232,8 @@ pub enum TransitionError {
     NotRestartable(Step),
     #[error("{0:?} was not idle, so it cannot be skipped")]
     NotIdle(Step),
+    #[error("{0:?} has not run, so there is nothing to reset")]
+    NothingToReset(Step),
     #[error("the event is not allowed while {0:?} is in its current state")]
     WrongState(Step),
     #[error("the answer is for a different request than the one being asked")]

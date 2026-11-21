@@ -317,3 +317,74 @@ fn every_prefix_of_a_valid_history_folds_and_replays_identically() {
     let error = fold(&broken).unwrap_err();
     assert!(error.seq >= 4, "{error}");
 }
+
+fn reset(step: Step, and_after: bool) -> NewEvent {
+    ev(Some(step), Event::StepReset { and_after })
+}
+
+fn finished(step: Step) -> NewEvent {
+    ev(Some(step), Event::StepFinished)
+}
+
+// Invariant: a settled step can be run again only through an explicit reset,
+// the reset reaches exactly the steps it names, and the ticket keeps what it
+// already spent. A change that let a Passed step restart on its own, or that
+// reset earlier steps, would break the history's meaning.
+#[test]
+fn a_reset_sends_a_settled_step_and_optionally_the_later_ones_back_to_idle() {
+    let history = vec![
+        created(),
+        started(U),
+        ev(
+            Some(U),
+            Event::CostTick {
+                amount: Money::from_microusd(5),
+                estimated: false,
+            },
+        ),
+        finished(U),
+        ev(
+            Some(Step::Clarify),
+            Event::StepSkipped {
+                reason: "nothing to ask".into(),
+            },
+        ),
+        started(Step::Plan),
+        finished(Step::Plan),
+    ];
+
+    let only_plan = state_after(&plus(history.clone(), vec![reset(Step::Plan, false)])).unwrap();
+    assert_eq!(only_plan.step(Step::Plan), &StepState::Idle);
+    assert_eq!(only_plan.step(U), &StepState::Passed);
+
+    let from_understand = state_after(&plus(history.clone(), vec![reset(U, true)])).unwrap();
+    assert_eq!(from_understand.step(U), &StepState::Idle);
+    assert_eq!(from_understand.step(Step::Clarify), &StepState::Idle);
+    assert_eq!(from_understand.step(Step::Plan), &StepState::Idle);
+    assert_eq!(from_understand.cost().0, Money::from_microusd(5));
+
+    let again = plus(history, vec![reset(Step::Plan, false), started(Step::Plan)]);
+    assert_eq!(
+        state_after(&again).unwrap().step(Step::Plan),
+        &StepState::Running
+    );
+}
+
+// Invariant: nothing resets while a step holds the ticket, and a step that
+// never ran has nothing to reset.
+#[test]
+fn a_reset_is_refused_while_a_step_is_active_or_when_nothing_ran() {
+    assert_eq!(
+        state_after(&plus(running(), vec![reset(U, false)])),
+        Err(TransitionError::StepBusy { active: U })
+    );
+    let settled = plus(running(), vec![finished(U)]);
+    assert_eq!(
+        state_after(&plus(settled, vec![reset(Step::Plan, false)])),
+        Err(TransitionError::NothingToReset(Step::Plan))
+    );
+    assert_eq!(
+        state_after(&[created(), reset(U, false)]),
+        Err(TransitionError::NothingToReset(U))
+    );
+}

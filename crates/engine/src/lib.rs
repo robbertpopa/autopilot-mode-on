@@ -27,6 +27,7 @@ mod control;
 mod plan;
 mod profile_edit;
 mod publish;
+mod rerun;
 mod settings;
 mod view;
 pub use autopilot_checks::resolve_executable;
@@ -36,6 +37,7 @@ pub use control::{request_pause, request_resume, request_stop};
 pub use plan::{approved_plan, run_plan};
 pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
+pub use rerun::{rerun_understand, reset_step};
 pub use settings::{effective_overrides, override_settings, project_overrides};
 pub use view::{
     Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView, TimelineLine, dollars,
@@ -129,6 +131,13 @@ pub fn run_understand_with(
         ),
         event(
             started_at,
+            None,
+            Event::Described {
+                text: ticket.description.clone(),
+            },
+        ),
+        event(
+            started_at,
             UNDERSTAND,
             Event::StepStarted {
                 attempt: AttemptId::from("understand-1"),
@@ -142,12 +151,25 @@ pub fn run_understand_with(
     };
     let last = start.last().map_or(0, |record| record.seq);
 
+    run_attempt(directory, &mut store, ticket, last, ask_after, agent)
+}
+
+/// Run the Understand agent for an attempt that is already recorded as
+/// started, and record how it ended.
+pub(crate) fn run_attempt(
+    directory: &Path,
+    store: &mut SqliteStore,
+    ticket: &Ticket,
+    last: u64,
+    ask_after: bool,
+    agent: &impl Agent,
+) -> Result<Understanding, Error> {
     let started = agent.start(StepRequest {
         step: Step::Understand,
         ticket,
         context: "",
     });
-    let (response, last) = match pump(&mut store, &ticket.id, UNDERSTAND, last, started)? {
+    let (response, last) = match pump(store, &ticket.id, UNDERSTAND, last, started)? {
         (Pumped::Understanding(result), last) => (Ok(result), last),
         (Pumped::Plan(_), last) => (
             Err(Outcome::Failed(
@@ -159,7 +181,7 @@ pub fn run_understand_with(
         (Pumped::Failed(error), last) => (Err(Outcome::Failed(error)), last),
     };
     let asked = response.is_ok() && ask_after;
-    let result = conclude(&mut store, &ticket.id, last, response, ask_after)?;
+    let result = conclude(store, &ticket.id, last, response, ask_after)?;
     if asked {
         Inbox::in_data_dir(directory).write_request(&approval_request(
             &ticket.id,

@@ -268,16 +268,41 @@ impl App {
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
             ui.set_width(ui.available_width() - 34.0);
             ui.label(theme::muted("Run"));
-            ui.add_enabled(false, button("Re-run this step")).on_disabled_hover_text(
-                "Not built yet: a finished step cannot restart until the history has a step-reset event",
+            // Only Understand runs for real today: the other steps need a
+            // real agent, which stays refused until S6.
+            let settled = matches!(
+                card,
+                Some(
+                    StepState::Passed
+                        | StepState::Failed(_)
+                        | StepState::Interrupted(_)
+                        | StepState::Skipped(_)
+                )
             );
-            ui.add_enabled(false, button("Re-run from here")).on_disabled_hover_text(
-                "Not built yet: it needs the same step-reset event, and it must ask first",
-            );
-            if matches!(card, Some(StepState::Skipped(_))) {
-                ui.add_enabled(false, button("Run it anyway")).on_disabled_hover_text(
-                    "Not built yet: it needs the same step-reset event",
+            let busy = view.steps.iter().any(|other| other.state.is_active());
+            if step == Step::Understand && settled && !busy {
+                let rerun = ui.add(button("Re-run this step")).on_hover_text(
+                    "Runs Understand again with the same words. Later steps that ran are reset with it.",
                 );
+                if rerun.clicked() {
+                    self.act(Action::RerunUnderstand(view.id.clone()));
+                }
+            } else {
+                let why = if step == Step::Understand {
+                    "Understand has not finished, or another step is running or waiting for you"
+                } else {
+                    "Coming soon: only Understand can run again until real agents are allowed (S6)"
+                };
+                ui.add_enabled(false, button("Re-run this step"))
+                    .on_disabled_hover_text(why);
+            }
+            if step != Step::Understand {
+                ui.add_enabled(false, button("Re-run from here"))
+                    .on_disabled_hover_text("Coming soon: it needs the later steps to run for real (S6)");
+            }
+            if matches!(card, Some(StepState::Skipped(_))) {
+                ui.add_enabled(false, button("Run it anyway"))
+                    .on_disabled_hover_text("Coming soon: it needs that step to run for real (S6)");
             }
         });
         ui.add_space(8.0);

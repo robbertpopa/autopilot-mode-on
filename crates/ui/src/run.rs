@@ -89,15 +89,11 @@ impl App {
                     for (text, why) in [
                         (
                             "Open the worktree",
-                            "coming soon: the window cannot open a folder yet",
+                            "coming soon: no run has made a worktree yet (needs S6)",
                         ),
                         (
                             "Open in a terminal",
                             "coming soon: it needs the real agent session (S6)",
-                        ),
-                        (
-                            "Run a step again",
-                            "coming soon: the history needs a step-reset event first",
                         ),
                     ] {
                         ui.add_enabled(false, egui::Button::new(text))
@@ -194,12 +190,18 @@ impl App {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width() - 34.0);
                 ui.label(RichText::new(text).size(16.0).strong().color(color));
-                if problem.is_some() {
-                    ui.add_enabled(false, egui::Button::new("Try again"))
-                        .on_disabled_hover_text(
-                            "coming soon: a failed step cannot restart until the history has a step-reset event",
-                        );
-                    ui.label(theme::muted("Try again is coming soon."));
+                if let Some(card) = problem {
+                    if card.step == Step::Understand {
+                        if ui.add(theme::primary("Try again")).clicked() {
+                            self.act(Action::RerunUnderstand(view.id.clone()));
+                        }
+                    } else {
+                        ui.add_enabled(false, egui::Button::new("Try again"))
+                            .on_disabled_hover_text(
+                                "coming soon: only Understand can run again until real agents are allowed (S6)",
+                            );
+                        ui.label(theme::muted("Try again is coming soon for this step."));
+                    }
                 }
             });
         ui.add_space(14.0);
