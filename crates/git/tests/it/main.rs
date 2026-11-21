@@ -417,6 +417,93 @@ serde = \"1\"
     );
 }
 
+// Invariant: the host pushes one commit to one named branch and never
+// forces: a diverged branch is refused by the remote and a name that could
+// change the refspec is refused before Git runs.
+#[test]
+fn a_push_sends_one_commit_and_never_forces() {
+    let fixture = Fixture::new().unwrap();
+    let repository = fixture.repository().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    git(&fixture.program, remote.path(), &["init", "-q", "--bare"]).unwrap();
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    )
+    .unwrap();
+    assert_eq!(
+        repository.remote_url("origin").unwrap(),
+        remote.path().to_str().unwrap()
+    );
+    assert!(repository.remote_url("--evil").is_err());
+
+    let base = repository.resolve_local_branch("base").unwrap();
+    repository
+        .push_commit("origin", &base, "ticket/one")
+        .unwrap();
+    let pushed = Command::new(&fixture.program)
+        .args([
+            "-C",
+            remote.path().to_str().unwrap(),
+            "rev-parse",
+            "refs/heads/ticket/one",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&pushed.stdout).trim(),
+        base.as_str()
+    );
+
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["switch", "-c", "other", "base~0"],
+    )
+    .unwrap();
+    fs::write(fixture.repository.join("other.txt"), "x").unwrap();
+    git(&fixture.program, &fixture.repository, &["add", "."]).unwrap();
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["commit", "-m", "other"],
+    )
+    .unwrap();
+    let other = repository.resolve_local_branch("other").unwrap();
+    // `other` descends from base, so it fast-forwards; a sibling does not.
+    repository
+        .push_commit("origin", &other, "ticket/one")
+        .unwrap();
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["switch", "-c", "sibling", "base"],
+    )
+    .unwrap();
+    fs::write(fixture.repository.join("sibling.txt"), "y").unwrap();
+    git(&fixture.program, &fixture.repository, &["add", "."]).unwrap();
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["commit", "-m", "sibling"],
+    )
+    .unwrap();
+    let sibling = repository.resolve_local_branch("sibling").unwrap();
+    assert!(
+        repository
+            .push_commit("origin", &sibling, "ticket/one")
+            .is_err()
+    );
+
+    for bad in ["+ticket/x", "a:b", "-x", "ticket/../main", "/abs"] {
+        assert!(
+            repository.push_commit("origin", &base, bad).is_err(),
+            "{bad}"
+        );
+    }
+}
+
 #[test]
 fn a_worktree_fingerprint_changes_for_untracked_files_and_staged_content() {
     let fixture = Fixture::new().unwrap();

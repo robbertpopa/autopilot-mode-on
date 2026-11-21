@@ -22,9 +22,11 @@ use autopilot_store::{SqliteStore, Store, StoreError};
 
 mod build;
 mod plan;
+mod publish;
 mod settings;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
 pub use plan::{approved_plan, run_plan};
+pub use publish::{PublishSetup, prepare_publish, run_publish};
 pub use settings::{effective_overrides, override_settings, project_overrides};
 
 pub(crate) const DATABASE: &str = "events.sqlite3";
@@ -60,6 +62,10 @@ pub enum Error {
     Git(#[from] autopilot_git::Error),
     #[error(transparent)]
     Check(#[from] autopilot_checks::Error),
+    #[error(transparent)]
+    Tracker(#[from] autopilot_tracker::Error),
+    #[error(transparent)]
+    PushRefused(#[from] autopilot_policy::PushRefusal),
     #[error(transparent)]
     Io(#[from] io::Error),
 }
@@ -546,6 +552,9 @@ fn waiting_request(
     if step == Step::BuildCheck && request.as_str() == build::STUCK_REQUEST {
         return Ok(build::stuck_request(ticket, history));
     }
+    if step == Step::PullRequest && request.as_str() == publish::PUBLISH_REQUEST {
+        return publish::request(ticket, history);
+    }
     if step == Step::Plan {
         let plan =
             plan::latest_plan(history).ok_or_else(|| Error::History("no Plan result".into()))?;
@@ -588,7 +597,7 @@ fn commit_approval(
         }
         // A stuck build is not finished by an approval. The answer sends it
         // back to Running, and the next build run continues with more rounds.
-        if step != Step::BuildCheck {
+        if !matches!(step, Step::BuildCheck | Step::PullRequest) {
             events.push(event(at, Some(step), Event::StepFinished));
         }
     }

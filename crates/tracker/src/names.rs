@@ -35,6 +35,30 @@ impl Repo {
     }
 }
 
+impl Repo {
+    /// Whether a remote address points at this repository on github.com, in
+    /// the https, scp-like or ssh spelling, with or without `.git`. Anything
+    /// else, including another host or a lookalike prefix, is not a match.
+    #[must_use]
+    pub fn matches_remote(&self, url: &str) -> bool {
+        let url = url.trim();
+        let path = [
+            "https://github.com/",
+            "git@github.com:",
+            "ssh://git@github.com/",
+        ]
+        .iter()
+        .find_map(|prefix| url.strip_prefix(prefix));
+        path.map(|path| path.strip_suffix(".git").unwrap_or(path))
+            .is_some_and(|path| {
+                let mut parts = path.split('/');
+                matches!((parts.next(), parts.next(), parts.next()),
+                    (Some(owner), Some(name), None)
+                        if owner.eq_ignore_ascii_case(&self.owner) && name.eq_ignore_ascii_case(&self.name))
+            })
+    }
+}
+
 impl fmt::Display for Repo {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}/{}", self.owner, self.name)
@@ -60,6 +84,31 @@ pub fn valid_branch(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Invariant: a push goes only to the approved repository on github.com.
+    #[test]
+    fn a_remote_must_be_the_approved_repository() {
+        let repo = Repo::parse("Owner/name").unwrap();
+        for good in [
+            "https://github.com/owner/name",
+            "https://github.com/Owner/name.git",
+            "git@github.com:owner/name.git",
+            "ssh://git@github.com/owner/name",
+        ] {
+            assert!(repo.matches_remote(good), "{good}");
+        }
+        for bad in [
+            "https://github.com/owner/name-other",
+            "https://github.com/owner/name/extra",
+            "https://evil.example/owner/name",
+            "https://github.com.evil.example/owner/name",
+            "https://github.com/other/name",
+            "/local/path/name",
+            "",
+        ] {
+            assert!(!repo.matches_remote(bad), "{bad}");
+        }
+    }
 
     // Invariant: a name from outside can never become an option or leave its slot.
     #[test]

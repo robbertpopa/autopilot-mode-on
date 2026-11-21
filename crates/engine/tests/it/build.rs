@@ -324,3 +324,217 @@ fn build_waits_for_the_design_when_the_ticket_needs_one() {
     let world = world("b-design", "plain", true);
     assert!(matches!(build(&world, NEEDS_FIX), Err(Error::NotReady(_))));
 }
+
+// ---- publishing ----
+
+use autopilot_engine::{PublishSetup, prepare_publish, run_publish};
+use autopilot_git::WorktreeManager;
+use autopilot_tracker::{Gh, Published, Repo};
+
+const GITHUB: &str = "https://github.com/owner/name";
+
+/// A bare repository standing in for GitHub: the remote keeps its GitHub
+/// address, and Git rewrites it to the local folder when it pushes.
+fn remote(world: &World, address: &str) -> tempfile::TempDir {
+    let bare = tempfile::tempdir().unwrap();
+    git(bare.path(), &["init", "-q", "--bare"]);
+    let repository = world.repository.path();
+    git(repository, &["remote", "add", "origin", address]);
+    let rewrite = format!("url.{}.insteadOf", bare.path().to_str().unwrap());
+    git(repository, &["config", &rewrite, address]);
+    bare
+}
+
+fn fake_gh() -> PathBuf {
+    let exe = std::env::current_exe().unwrap();
+    let fake = exe
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(format!("autopilot-fake-gh{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        fake.is_file(),
+        "build the workspace first: cargo build --workspace"
+    );
+    fake
+}
+
+fn rev_parse(directory: &Path, name: &str) -> String {
+    let output = Command::new("git")
+        .args(["-C", directory.to_str().unwrap(), "rev-parse", name])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+struct Publishing {
+    profile: Profile,
+    repo: Repo,
+    state: PathBuf,
+    _state_dir: tempfile::TempDir,
+}
+
+fn publishing(world: &World) -> Publishing {
+    let branch = WorktreeManager::ticket_branch(&world.ticket.id).unwrap();
+    let head = rev_parse(world.repository.path(), &branch);
+    let state_dir = tempfile::tempdir().unwrap();
+    let state = state_dir.path().join("state.json");
+    std::fs::write(
+        &state,
+        serde_json::json!({"issues": {}, "heads": {branch: head}, "prs": [],
+                           "runs": {}, "create": "ok", "calls": []})
+        .to_string(),
+    )
+    .unwrap();
+    Publishing {
+        profile: Profile::parse("p.toml", ALWAYS_PASS).unwrap(),
+        repo: Repo::parse("owner/name").unwrap(),
+        state,
+        _state_dir: state_dir,
+    }
+}
+
+fn setup<'a>(world: &'a World, p: &'a Publishing) -> PublishSetup<'a> {
+    PublishSetup {
+        repository: world.repository.path(),
+        base_branch: "main",
+        worktrees: world.worktrees.path(),
+        git: PathBuf::from("git"),
+        guardian: PathBuf::new(),
+        profile: &p.profile,
+        remote: "origin",
+        repo: &p.repo,
+    }
+}
+
+fn gh_for(p: &Publishing) -> Gh {
+    Gh::new(fake_gh(), PathBuf::new(), p.repo.clone(), Vec::new())
+        .unwrap()
+        .with_extra_env([("FAKE_GH_STATE".into(), p.state.clone().into())])
+}
+
+fn built(id: &str) -> World {
+    let world = world(id, "plain", false);
+    assert_eq!(build(&world, ALWAYS_PASS).unwrap(), BuildOutcome::Ready);
+    world
+}
+
+// Invariant: a built ticket is published only after the owner approves one
+// exact commit; then that commit is on the remote's ticket branch and one
+// draft pull request exists for it, with the step finished.
+#[test]
+fn an_approved_commit_is_pushed_and_opened_as_a_draft() {
+    let world = built("p-ok");
+    let bare = remote(&world, GITHUB);
+    let p = publishing(&world);
+    let id = prepare_publish(world.data.path(), &world.ticket, &setup(&world, &p)).unwrap();
+    assert_eq!(id.as_str(), "pull_request-publish");
+    // Nothing has left the machine yet.
+    assert_eq!(rev_parse(bare.path(), "HEAD"), "HEAD");
+    let waiting = Inbox::in_data_dir(world.data.path()).requests().unwrap();
+    let text = format!("{:?}", waiting[0].body);
+    assert!(
+        text.contains("forced: true") && text.contains("owner/name"),
+        "{text}"
+    );
+
+    assert!(matches!(
+        run_publish(
+            world.data.path(),
+            &world.ticket,
+            &setup(&world, &p),
+            &gh_for(&p)
+        ),
+        Err(Error::NotReady(_))
+    ));
+    answer(world.data.path(), &world.ticket.id, Decision::Approve);
+    let published = run_publish(
+        world.data.path(),
+        &world.ticket,
+        &setup(&world, &p),
+        &gh_for(&p),
+    )
+    .unwrap();
+    assert!(matches!(published, Published::Created(ref pr) if pr.draft));
+
+    let branch = WorktreeManager::ticket_branch(&world.ticket.id).unwrap();
+    assert_eq!(
+        rev_parse(bare.path(), &format!("refs/heads/{branch}")),
+        rev_parse(world.repository.path(), &branch)
+    );
+    let state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&p.state).unwrap()).unwrap();
+    assert_eq!(state["prs"].as_array().unwrap().len(), 1);
+    assert!(
+        state["prs"][0]["body"]
+            .as_str()
+            .unwrap()
+            .contains("- build: passed")
+    );
+    assert!(matches!(kinds(&world).last(), Some(Event::StepFinished)));
+}
+
+// Invariant: if the branch moved after the owner approved, nothing is pushed
+// or opened and the step is interrupted, because the approval covered a
+// different commit.
+#[test]
+fn a_branch_that_moved_after_approval_is_not_published() {
+    let world = built("p-moved");
+    let bare = remote(&world, GITHUB);
+    let p = publishing(&world);
+    prepare_publish(world.data.path(), &world.ticket, &setup(&world, &p)).unwrap();
+    answer(world.data.path(), &world.ticket.id, Decision::Approve);
+    let branch = WorktreeManager::ticket_branch(&world.ticket.id).unwrap();
+    let earlier = rev_parse(world.repository.path(), "main");
+    git(
+        world.repository.path(),
+        &["update-ref", &format!("refs/heads/{branch}"), &earlier],
+    );
+    let error = run_publish(
+        world.data.path(),
+        &world.ticket,
+        &setup(&world, &p),
+        &gh_for(&p),
+    )
+    .unwrap_err();
+    assert!(matches!(error, Error::Tracker(_)), "{error}");
+    assert!(matches!(
+        kinds(&world).last(),
+        Some(Event::Interrupted { .. })
+    ));
+    assert_eq!(
+        rev_parse(bare.path(), &format!("refs/heads/{branch}")),
+        format!("refs/heads/{branch}")
+    );
+}
+
+// Invariant: a remote that is not the approved repository is refused before
+// the owner is even asked.
+#[test]
+fn a_remote_for_another_repository_is_refused_up_front() {
+    let world = built("p-remote");
+    let _bare = remote(&world, "https://github.com/someone/else");
+    let p = publishing(&world);
+    let error = prepare_publish(world.data.path(), &world.ticket, &setup(&world, &p)).unwrap_err();
+    assert!(matches!(error, Error::NotReady(_)), "{error}");
+    assert_eq!(
+        Inbox::in_data_dir(world.data.path())
+            .requests()
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+// Invariant: an unbuilt ticket cannot be offered for publishing.
+#[test]
+fn publishing_waits_for_a_passed_build() {
+    let world = world("p-early", "plain", false);
+    let _bare = remote(&world, GITHUB);
+    let p = publishing(&world);
+    assert!(matches!(
+        prepare_publish(world.data.path(), &world.ticket, &setup(&world, &p)),
+        Err(Error::NotReady(_))
+    ));
+}
