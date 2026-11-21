@@ -9,8 +9,13 @@ use autopilot_agent::{Agent, AgentError, AgentRun, StepRequest, Stopped};
 use autopilot_core::{
     Ambiguity, Clarity, Event, Money, OpenQuestion, Ticket, TicketId, Understanding,
 };
-use autopilot_engine::{ClarifyStart, Error, answer_clarify, run_understand, start_clarify, watch};
-use autopilot_pipeline::clarify::Choice;
+use autopilot_engine::{
+    ClarifyStart, Error, answer_clarify, run_understand, start_clarify, sync_inbox, watch,
+};
+use autopilot_pipeline::{
+    clarify::Choice,
+    inbox::{Decision, Inbox, Reply},
+};
 
 struct Synthetic {
     data_dir: PathBuf,
@@ -224,4 +229,81 @@ fn clarify_asks_then_records_the_recommended_answer_once() {
         answer_clarify(data.path(), &ticket, &request, &[Choice::Recommended]),
         Err(Error::NotReady(_))
     ));
+}
+
+fn answered_count(data: &std::path::Path, ticket: &TicketId) -> usize {
+    let history = watch(data, ticket, 0).unwrap_or_default();
+    history
+        .iter()
+        .filter(|record| matches!(record.event.kind, Event::Answered { .. }))
+        .count()
+}
+
+// Invariant: request written, process lost, answer file dropped in later:
+// the answer is applied exactly once, even if the files outlive the commit.
+// A double apply would record two answers or fail the step machine.
+#[test]
+fn an_answer_file_is_applied_exactly_once_across_restarts() {
+    let (data, ticket) = understood("ask").unwrap();
+    let ClarifyStart::Asking { request, .. } = start_clarify(data.path(), &ticket).unwrap() else {
+        panic!("expected a question");
+    };
+    let inbox = Inbox::in_data_dir(data.path());
+    assert_eq!(inbox.requests().unwrap().len(), 1);
+
+    // Nothing answered yet: syncing changes nothing.
+    assert_eq!(sync_inbox(data.path(), &ticket).unwrap(), vec![]);
+    // The request file was lost in a crash: syncing mirrors it again.
+    inbox.clean_up(&request).unwrap();
+    assert_eq!(sync_inbox(data.path(), &ticket).unwrap(), vec![]);
+    assert_eq!(inbox.requests().unwrap().len(), 1);
+
+    let reply = Reply::Question {
+        choices: vec![Choice::Option(0)],
+    };
+    inbox.write_answer(&request, &reply).unwrap();
+    assert_eq!(
+        sync_inbox(data.path(), &ticket).unwrap(),
+        vec![request.clone()]
+    );
+    assert_eq!(answered_count(data.path(), &ticket), 1);
+    assert_eq!(inbox.requests().unwrap(), vec![]);
+
+    // Crash after the commit but before cleanup: the files come back stale.
+    inbox.write_answer(&request, &reply).unwrap();
+    assert_eq!(sync_inbox(data.path(), &ticket).unwrap(), vec![]);
+    assert_eq!(answered_count(data.path(), &ticket), 1);
+    assert!(inbox.read_answer(&request).unwrap().is_none());
+}
+
+// Invariant: a wrong-kind or malformed answer is refused and leaves the
+// question waiting, so the owner can replace the file.
+#[test]
+fn a_bad_answer_file_leaves_the_question_waiting() {
+    let (data, ticket) = understood("ask").unwrap();
+    let ClarifyStart::Asking { request, .. } = start_clarify(data.path(), &ticket).unwrap() else {
+        panic!("expected a question");
+    };
+    let inbox = Inbox::in_data_dir(data.path());
+    let approve = Reply::Approval {
+        decision: Decision::Approve,
+        allow_for_project: false,
+    };
+    inbox.write_answer(&request, &approve).unwrap();
+    assert!(sync_inbox(data.path(), &ticket).is_err());
+    let out_of_range = Reply::Question {
+        choices: vec![Choice::Option(9)],
+    };
+    inbox.write_answer(&request, &out_of_range).unwrap();
+    assert!(sync_inbox(data.path(), &ticket).is_err());
+    assert_eq!(answered_count(data.path(), &ticket), 0);
+    inbox
+        .write_answer(
+            &request,
+            &Reply::Question {
+                choices: vec![Choice::Recommended],
+            },
+        )
+        .unwrap();
+    assert_eq!(sync_inbox(data.path(), &ticket).unwrap().len(), 1);
 }

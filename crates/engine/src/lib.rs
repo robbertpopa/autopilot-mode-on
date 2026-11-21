@@ -16,6 +16,7 @@ use autopilot_pipeline::{
     StepState,
     clarify::{self, Choice, ClarifyPlan, QaPair},
     fold,
+    inbox::{Inbox, InboxError, Reply, Request, RequestBody, check_reply},
 };
 use autopilot_store::{SqliteStore, Store, StoreError};
 
@@ -34,6 +35,8 @@ pub enum Error {
     NotReady(String),
     #[error(transparent)]
     Answer(#[from] clarify::ClarifyError),
+    #[error(transparent)]
+    Inbox(#[from] InboxError),
     #[error("the recorded history is invalid: {0}")]
     History(String),
     #[error("ticket has no recorded run")]
@@ -252,6 +255,13 @@ pub fn start_clarify(directory: &Path, ticket: &TicketId) -> Result<ClarifyStart
                 last,
                 &[event(at, CLARIFY, started), event(at, CLARIFY, asked)],
             )?;
+            Inbox::in_data_dir(directory).write_request(&Request {
+                id: request.clone(),
+                ticket: ticket.clone(),
+                body: RequestBody::Question {
+                    questions: questions.clone(),
+                },
+            })?;
             Ok(ClarifyStart::Asking { request, questions })
         }
     }
@@ -272,14 +282,26 @@ pub fn answer_clarify(
     let _owner = lock_run(directory)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(ticket, 0)?;
+    let pairs = commit_clarify_answer(&mut store, ticket, &history, request, choices)?;
+    Inbox::in_data_dir(directory).clean_up(request)?;
+    Ok(pairs)
+}
+
+fn commit_clarify_answer(
+    store: &mut SqliteStore,
+    ticket: &TicketId,
+    history: &[RecordedEvent],
+    request: &RequestId,
+    choices: &[Choice],
+) -> Result<Vec<QaPair>, Error> {
     let last = history.last().ok_or(Error::UnknownTicket)?.seq;
-    let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
+    let state = fold(history).map_err(|error| Error::History(error.to_string()))?;
     if state.step(Step::Clarify) != &StepState::Asking(request.clone()) {
         return Err(Error::NotReady(
             "Clarify is not waiting on that request".into(),
         ));
     }
-    let understanding = latest_understanding(&history)
+    let understanding = latest_understanding(history)
         .ok_or_else(|| Error::History("no Understand result".into()))?;
     let pairs = clarify::resolve(&understanding.open_questions, choices)?;
     let answer =
@@ -301,6 +323,70 @@ pub fn answer_clarify(
         ],
     )?;
     Ok(pairs)
+}
+
+/// Reconcile the inbox folder with the event log for one ticket.
+///
+/// A waiting question gets its request file back if it is missing. A valid
+/// answer file is committed once, and only then are the files removed. Files
+/// for requests that are no longer waiting (a crash after the commit) are
+/// removed without being applied.
+///
+/// # Errors
+/// Returns an error for an invalid history or an unusable answer file. An
+/// invalid answer leaves its files in place for the owner to replace.
+pub fn sync_inbox(directory: &Path, ticket: &TicketId) -> Result<Vec<RequestId>, Error> {
+    let _owner = lock_run(directory)?;
+    let mut store = SqliteStore::open(directory.join(DATABASE))?;
+    let inbox = Inbox::in_data_dir(directory);
+    let history = store.events(ticket, 0)?;
+    if history.is_empty() {
+        return Err(Error::UnknownTicket);
+    }
+    let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
+    let mut applied = Vec::new();
+    if let StepState::Asking(request) = state.step(Step::Clarify) {
+        let understanding = latest_understanding(&history)
+            .ok_or_else(|| Error::History("no Understand result".into()))?;
+        let mirror = Request {
+            id: request.clone(),
+            ticket: ticket.clone(),
+            body: RequestBody::Question {
+                questions: understanding.open_questions.clone(),
+            },
+        };
+        if inbox.read_request(request)?.is_none() {
+            inbox.write_request(&mirror)?;
+        }
+        if let Some(reply) = inbox.read_answer(request)? {
+            check_reply(&mirror, &reply)?;
+            let Reply::Question { choices } = reply else {
+                return Err(Error::NotReady("the reply is not a question answer".into()));
+            };
+            commit_clarify_answer(&mut store, ticket, &history, request, &choices)?;
+            inbox.clean_up(request)?;
+            applied.push(request.clone());
+        }
+    }
+    let state =
+        fold(&store.events(ticket, 0)?).map_err(|error| Error::History(error.to_string()))?;
+    for request in inbox.requests()? {
+        let waiting = state.step(Step::Clarify) == &StepState::Asking(request.id.clone());
+        if request.ticket == *ticket && !waiting {
+            inbox.clean_up(&request.id)?;
+        }
+    }
+    // The request file is removed first, so a crash can leave a lone answer
+    // file. It is only safe to delete when the log proves it was applied.
+    for id in inbox.answer_ids()? {
+        let committed = history.iter().any(|record| {
+            matches!(&record.event.kind, Event::Answered { request, .. } if *request == id)
+        });
+        if committed {
+            inbox.clean_up(&id)?;
+        }
+    }
+    Ok(applied)
 }
 
 fn latest_understanding(history: &[RecordedEvent]) -> Option<&Understanding> {

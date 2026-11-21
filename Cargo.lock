@@ -130,6 +130,7 @@ dependencies = [
  "autopilot-core",
  "autopilot-engine",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]
