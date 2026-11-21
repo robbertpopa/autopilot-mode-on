@@ -23,7 +23,7 @@ The standalone repository holds the current implementation and milestone status.
 | S8 Codex auth and terms | `docs/spikes/S8-codex-auth.md` | [ ] |
 | S9 review quality and cost | `docs/spikes/S9-review-quality.md` | [ ] |
 | M0 foundation | `docs/milestones/M0-foundation.md` | [x] |
-| M1 one agent step | `docs/milestones/M1-agent-step.md` | [ ] |
+| M1 one agent step | `docs/milestones/M1-agent-step.md` | [x] |
 | M2 understand, ask, inbox | `docs/milestones/M2-understand-ask.md` | [ ] |
 | M3 plan, build, check | `docs/milestones/M3-plan-build-check.md` | [ ] |
 | M4 worktrees, parallel, PR | `docs/milestones/M4-worktrees-pr.md` | [ ] |
