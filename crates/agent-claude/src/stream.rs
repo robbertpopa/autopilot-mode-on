@@ -154,7 +154,18 @@ fn usage(value: &Value) -> Usage {
 fn system(frame: &Value, report: &mut impl FnMut(String)) {
     match frame.get("subtype").and_then(Value::as_str) {
         // The provider's session identifier is deliberately not reported.
-        Some("init") => report("session started".into()),
+        // Version and model go into the history so a surprising result can be
+        // tied to the release that produced it. The session id stays out.
+        Some("init") => {
+            let part = |key| frame.get(key).and_then(Value::as_str).map(bounded);
+            let version = part("claude_code_version").map(|v| format!("claude code {v}"));
+            let identity: Vec<String> = [version, part("model")].into_iter().flatten().collect();
+            report(if identity.is_empty() {
+                "session started".into()
+            } else {
+                format!("session started ({})", identity.join(", "))
+            });
+        }
         Some("api_retry") => {
             let number = |key| frame.get(key).and_then(Value::as_u64);
             let status = number("error_status").map_or_else(|| "unknown".into(), |n| n.to_string());
@@ -221,7 +232,11 @@ mod tests {
     #[test]
     fn the_synthetic_transcript_yields_activity_cost_and_structured_output() {
         let (activity, finish) = decode(SUCCESS, true);
-        assert!(activity.iter().any(|a| a == "session started"));
+        assert!(
+            activity
+                .iter()
+                .any(|a| a == "session started (synthetic-model)")
+        );
         assert!(activity.iter().any(|a| a.starts_with("assistant:")));
         let finish = finish.unwrap();
         assert_eq!(finish.subtype, "success");
@@ -246,6 +261,23 @@ mod tests {
             (200, 100, 7)
         );
         assert_eq!(super::usage(&serde_json::json!("junk")), Usage::default());
+    }
+
+    // Invariant: the history names the Claude Code release and model of a run,
+    // and never the provider session id.
+    #[test]
+    fn the_init_frame_records_version_and_model_but_not_the_session_id() {
+        let init = br#"{"type":"system","subtype":"init","claude_code_version":"2.1.330","model":"claude-haiku-5-5","session_id":"abc-secret-id"}"#;
+        let (activity, _) = decode(&[init.as_slice(), b"\n"].concat(), true);
+        assert_eq!(
+            activity,
+            ["session started (claude code 2.1.330, claude-haiku-5-5)"]
+        );
+        let bare = br#"{"type":"system","subtype":"init","session_id":"abc-secret-id"}"#;
+        assert_eq!(
+            decode(&[bare.as_slice(), b"\n"].concat(), true).0,
+            ["session started"]
+        );
     }
 
     #[test]

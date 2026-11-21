@@ -42,6 +42,9 @@ enum Command {
         /// Structured output needs a turn after the answer, so keep this above 1.
         #[arg(long, default_value_t = 4)]
         max_turns: u32,
+        /// Reasoning effort: low, medium, high, xhigh or max. Omit for the model default.
+        #[arg(long)]
+        effort: Option<String>,
         /// Dollar cap per call. Applies to --auth api only.
         #[arg(long, default_value = "0.05")]
         max_budget_usd: String,
@@ -103,6 +106,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             auth,
             model,
             max_turns,
+            effort,
             max_budget_usd,
             claude_path,
             timeout_seconds,
@@ -126,7 +130,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                                 AuthArg::Api => Auth::Api,
                             },
                             model,
-                            effort: None,
+                            effort,
                             max_turns,
                             max_budget_usd: Some(max_budget_usd),
                             executable: claude_path,
