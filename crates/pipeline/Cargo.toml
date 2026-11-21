@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 autopilot-checks = { path = "../checks" }
 autopilot-core.workspace = true
+autopilot-git = { path = "../git" }
 autopilot-profile = { path = "../profile" }
 serde.workspace = true
 serde_json.workspace = true
