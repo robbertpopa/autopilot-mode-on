@@ -94,6 +94,39 @@ impl ClaudeAgent {
     }
 }
 
+impl ClaudeAgent {
+    /// Ask the model to explain a prompt in plain words and return its text.
+    /// One call, no tools, no session kept.
+    ///
+    /// # Errors
+    /// Returns an error if Claude Code cannot start, fails, or answers with
+    /// something that is not the expected JSON.
+    pub fn explain(&self, prompt: &str) -> Result<String, AgentError> {
+        let spec = CommandSpec {
+            program: self.executable.clone(),
+            args: command::explain_args(&self.config),
+            env: child_env(self.config.auth, process_env::vars_os())?,
+            cwd: None,
+        };
+        let limits = Limits {
+            timeout: self.config.timeout,
+            bytes_per_stream: 1024 * 1024,
+        };
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let output =
+            Runner::new(self.guardian.clone()).run(&spec, prompt.as_bytes(), limits, &cancel)?;
+        if !matches!(&output.outcome, Outcome::Exited(status) if status.success()) {
+            return Err(io::Error::other("Claude Code did not finish the explanation").into());
+        }
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        value
+            .get("result")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| io::Error::other("Claude Code returned no text").into())
+    }
+}
+
 impl Agent for ClaudeAgent {
     fn start(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
         if request.step != Step::Understand {

@@ -83,12 +83,54 @@ impl App {
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
             ui.set_width(ui.available_width() - 38.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("IN SHORT").size(13.0).strong().color(theme::TEXT_MUTED()));
-                theme::pill(ui, "made from the run · free", theme::GREEN_FILL(), theme::GREEN());
+                ui.label(
+                    RichText::new("IN SHORT")
+                        .size(13.0)
+                        .strong()
+                        .color(theme::TEXT_MUTED()),
+                );
+                theme::pill(
+                    ui,
+                    "made from the run · free",
+                    theme::GREEN_FILL(),
+                    theme::GREEN(),
+                );
             });
-            ui.label(RichText::new(card.in_short.clone().unwrap_or_else(|| state_text(&card.state))).size(17.0));
-            ui.add_enabled(false, egui::Button::new("Explain in plain words"))
-                .on_disabled_hover_text("Not built yet: it asks a small model once, which arrives with the agent step (S6)");
+            ui.label(
+                RichText::new(
+                    card.in_short
+                        .clone()
+                        .unwrap_or_else(|| state_text(&card.state)),
+                )
+                .size(17.0),
+            );
+            let explained = view
+                .explained
+                .iter()
+                .find(|(kept, _)| *kept == step)
+                .map(|(_, text)| text.clone());
+            if let Some(text) = explained {
+                ui.label(theme::muted("In plain words"));
+                ui.label(text);
+            } else {
+                let has_result = view.outputs.iter().any(|(kept, _)| *kept == step);
+                if ui
+                    .add_enabled(
+                        has_result && !self.busy,
+                        egui::Button::new("Explain in plain words"),
+                    )
+                    .on_hover_text(
+                        "Asks a small model once, with the step's result, and keeps the answer",
+                    )
+                    .on_disabled_hover_text("This step has no result to explain yet")
+                    .clicked()
+                {
+                    self.act(Action::Explain {
+                        ticket: view.id.clone(),
+                        step,
+                    });
+                }
+            }
         });
         ui.add_space(6.0);
         let mut tab = self.tab;

@@ -224,6 +224,7 @@ impl TicketState {
             | Event::CheckResult { .. }
             | Event::Described { .. }
             | Event::Attached { .. }
+            | Event::Explained { .. }
             | Event::SettingsOverridden { .. } => {}
         }
         self.last_seq = record.seq;

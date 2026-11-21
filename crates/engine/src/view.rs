@@ -130,6 +130,8 @@ pub struct TicketView {
     /// The recorded result of a step, as readable JSON.
     pub outputs: Vec<(Step, String)>,
     pub attachments: Vec<AttachmentView>,
+    /// Plain-words explanations kept in the history, by step.
+    pub explained: Vec<(Step, String)>,
     /// Exact spend through an API key.
     pub api: Money,
     /// Estimated spend on a subscription. Never added to `api`.
@@ -197,6 +199,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     let mut costs = Vec::new();
     let mut outputs: Vec<(Step, String)> = Vec::new();
     let mut attachments = Vec::new();
+    let mut explained: Vec<(Step, String)> = Vec::new();
     for record in history {
         let at_ms = record.event.at_ms;
         let step = record.event.step;
@@ -210,6 +213,12 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
                 keep_output(&mut outputs, Step::Understand, result);
             }
             Event::PlanResult { plan } => keep_output(&mut outputs, Step::Plan, plan),
+            Event::Explained { text } => {
+                if let Some(step) = record.event.step {
+                    explained.retain(|(kept, _)| *kept != step);
+                    explained.push((step, text.clone()));
+                }
+            }
             Event::Attached {
                 name,
                 kind,
@@ -320,6 +329,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         costs,
         outputs,
         attachments,
+        explained,
         api,
         subscription,
         started_ms: first.event.at_ms,

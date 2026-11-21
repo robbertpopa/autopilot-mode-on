@@ -87,6 +87,11 @@ pub enum Action {
     MakePlan(TicketId),
     /// Make the plan again, replacing the one that was made or approved.
     RerunPlan(TicketId),
+    /// Explain a step's result in plain words, once; the answer is kept.
+    Explain {
+        ticket: TicketId,
+        step: Step,
+    },
     Pause(TicketId),
     Resume(TicketId),
     Stop(TicketId),
@@ -456,6 +461,19 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             autopilot_engine::plan_ticket(directory, ticket, &agent)
                 .map(|plan| format!("Plan ready: {} criteria", plan.criteria.len()))
                 .map_err(|error| error.to_string())
+        }
+        Action::Explain { ticket, step } => {
+            let chosen = chosen_agent(options, Step::Understand)?;
+            autopilot_engine::explain_step(directory, ticket, *step, |prompt| match &chosen {
+                Chosen::Claude(agent) => agent.explain(prompt).map_err(|error| error.to_string()),
+                Chosen::Practice(_) => Ok(
+                    "Practice agent: this is where a plain-words explanation from Claude appears. \
+                     Switch the agent to Claude to get a real one."
+                        .to_owned(),
+                ),
+            })
+            .map(|_| "Explanation kept".to_owned())
+            .map_err(|error| error.to_string())
         }
         Action::RerunPlan(ticket) => {
             let agent = chosen_agent(options, Step::Plan)?;

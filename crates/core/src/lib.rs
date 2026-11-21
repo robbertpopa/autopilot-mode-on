@@ -400,6 +400,11 @@ pub enum Event {
         sha256: String,
         stored: String,
     },
+    /// A short plain-words explanation of a step's result, asked of a small
+    /// model once and kept so it is never asked again.
+    Explained {
+        text: String,
+    },
     /// The owner asked to run a step again. The named step goes back to idle,
     /// and with `and_after` so does every later step that already ran, because
     /// their results came from the old one. What was spent stays spent.

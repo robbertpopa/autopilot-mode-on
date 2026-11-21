@@ -186,8 +186,10 @@ impl TicketState {
             // Recorded for the log. A settings change applies when the next step
             // starts, and the ticket text is only kept for a later re-run, so
             // neither alters any state here.
-            Event::SettingsOverridden { .. } | Event::Described { .. } | Event::Attached { .. } => {
-            }
+            Event::SettingsOverridden { .. }
+            | Event::Described { .. }
+            | Event::Attached { .. }
+            | Event::Explained { .. } => {}
             Event::Done => {
                 if let Some(active) = self.active() {
                     return Err(E::StepBusy { active });
