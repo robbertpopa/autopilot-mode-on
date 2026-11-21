@@ -52,6 +52,7 @@ dependencies = [
  "autopilot-profile",
  "clap",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
