@@ -347,4 +347,119 @@ mod tests {
             None
         );
     }
+
+    // Real Claude Code 2.1.330 transcripts, sanitized by `cargo xtask
+    // sanitize-claude`. Each must keep mapping to the same result, so a parser
+    // change that breaks a real shape fails here and not in a live run.
+    const STRUCTURED: &[u8] =
+        include_bytes!("../../../fixtures/claude/live-2.1.330-subscription-structured.jsonl");
+    const API_MINIMAL: &[u8] =
+        include_bytes!("../../../fixtures/claude/live-2.1.330-api-minimal.jsonl");
+    const BUDGET_CAP: &[u8] =
+        include_bytes!("../../../fixtures/claude/live-2.1.330-api-budget-cap.jsonl");
+    const MAX_TURNS: &[u8] =
+        include_bytes!("../../../fixtures/claude/live-2.1.330-max-turns.jsonl");
+    const SCHEMA_FAIL: &[u8] =
+        include_bytes!("../../../fixtures/claude/live-2.1.330-schema-unsatisfiable.jsonl");
+    const RESUME_FIRST: &[u8] =
+        include_bytes!("../../../fixtures/claude/live-2.1.330-resume-first.jsonl");
+    const RESUME_SECOND: &[u8] =
+        include_bytes!("../../../fixtures/claude/live-2.1.330-resume-second.jsonl");
+    const HOOK_DENIED: &[u8] =
+        include_bytes!("../../../fixtures/claude/live-2.1.330-hook-denied.jsonl");
+
+    fn decode(bytes: &[u8]) -> (Vec<String>, Option<Finish>) {
+        let mut decoder = stream::Decoder::default();
+        let mut activity = Vec::new();
+        decoder.push(bytes, &mut |summary| activity.push(summary));
+        decoder.finish_tail(&mut |summary| activity.push(summary));
+        (activity, decoder.into_finish())
+    }
+
+    fn replay(bytes: &[u8], code: i32) -> Result<Understanding, AgentError> {
+        conclude_with(code, decode(bytes).1)
+    }
+
+    #[test]
+    fn live_structured_output_becomes_an_understanding_and_a_priced_estimate() {
+        let understanding = replay(STRUCTURED, 0).unwrap();
+        assert_ne!(understanding.summary, "");
+        let finish = decode(STRUCTURED).1.unwrap();
+        // The table matched the CLI's reported figure to the micro-dollar live.
+        assert_eq!(step_cost(&finish, Auth::Subscription), Some((1_383, true)));
+        assert_eq!(finish.model.as_deref(), Some("claude-haiku-5-5"));
+    }
+
+    // Invariant: both limit stops observed live are stops, with their cost.
+    #[test]
+    fn live_turn_and_budget_limits_are_stops_that_keep_their_cost() {
+        for (fixture, subtype) in [
+            (MAX_TURNS, "error_max_turns"),
+            (BUDGET_CAP, "error_max_budget_usd"),
+        ] {
+            let error = replay(fixture, 1).unwrap_err();
+            assert!(error.downcast_ref::<Stopped>().is_some(), "{subtype}");
+            let finish = decode(fixture).1.unwrap();
+            assert_eq!(finish.subtype, subtype);
+            assert!(finish.is_error);
+            assert!(step_cost(&finish, Auth::Api).is_some());
+        }
+    }
+
+    // Live finding: an unsatisfiable schema ends as `success` with exit 0 and
+    // no structured output, not as error_max_structured_output_retries.
+    #[test]
+    fn live_unsatisfiable_schema_is_a_failure_not_a_result() {
+        let finish = decode(SCHEMA_FAIL).1.unwrap();
+        assert_eq!(finish.subtype, "success");
+        assert!(finish.structured_output.is_none());
+        let error = replay(SCHEMA_FAIL, 0).unwrap_err();
+        assert!(error.downcast_ref::<Stopped>().is_none());
+    }
+
+    #[test]
+    fn live_api_cost_is_the_reported_figure_and_not_an_estimate() {
+        let finish = decode(API_MINIMAL).1.unwrap();
+        assert_eq!(step_cost(&finish, Auth::Api), Some((443, false)));
+    }
+
+    #[test]
+    fn a_live_denied_tool_call_shows_as_activity_and_the_run_still_finishes() {
+        let (activity, finish) = decode(HOOK_DENIED);
+        assert!(activity.iter().any(|a| a == "tool requested: Bash"));
+        assert_eq!(finish.unwrap().subtype, "success");
+    }
+
+    // Invariant: no prefix, bit flip or splice of a real transcript panics, and
+    // a longer prefix never reports less activity than a shorter one.
+    #[test]
+    fn hostile_input_over_every_live_fixture_never_panics_or_loses_activity() {
+        let all = [
+            STRUCTURED,
+            API_MINIMAL,
+            BUDGET_CAP,
+            MAX_TURNS,
+            SCHEMA_FAIL,
+            RESUME_FIRST,
+            RESUME_SECOND,
+            HOOK_DENIED,
+        ];
+        for fixture in all {
+            let mut previous = 0;
+            for cut in (0..=fixture.len()).step_by(7) {
+                let mut decoder = stream::Decoder::default();
+                let mut count = 0;
+                decoder.push(&fixture[..cut], &mut |_| count += 1);
+                assert!(count >= previous);
+                previous = count;
+            }
+            for index in (0..fixture.len()).step_by(11) {
+                let mut flipped = fixture.to_vec();
+                flipped[index] ^= 0x55;
+                let _ = replay(&flipped, 0);
+            }
+            let doubled = [fixture, fixture].concat();
+            let _ = replay(&doubled, 0);
+        }
+    }
 }

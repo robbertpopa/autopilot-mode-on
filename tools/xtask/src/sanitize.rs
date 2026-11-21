@@ -55,7 +55,17 @@ impl Sanitizer {
         match value {
             Value::Object(map) => {
                 for (name, child) in map.iter_mut() {
-                    self.clean(Some(name), child);
+                    if is_environment_inventory(name) {
+                        // The count is not interesting and the names describe one
+                        // machine, so the whole value goes.
+                        match child {
+                            Value::Array(items) => items.clear(),
+                            Value::Object(entries) => entries.clear(),
+                            _ => self.clean(Some(name), child),
+                        }
+                    } else {
+                        self.clean(Some(name), child);
+                    }
                 }
             }
             Value::Array(items) => {
@@ -87,6 +97,10 @@ impl Sanitizer {
                 | "request_id"
         ) {
             return Some(self.alias(text));
+        }
+        // Names the credential source, such as ANTHROPIC_API_KEY, never its value.
+        if key == "apikeysource" {
+            return None;
         }
         if [
             "token", "secret", "password", "email", "org", "account", "api_key", "apikey",
@@ -157,6 +171,24 @@ impl Sanitizer {
         }
         Ok(())
     }
+}
+
+/// Init-frame fields that list what is installed on the capturing machine.
+fn is_environment_inventory(key: &str) -> bool {
+    matches!(
+        key,
+        "plugins"
+            | "skills"
+            | "slash_commands"
+            | "terminal_slash_commands"
+            | "agents"
+            | "mcp_servers"
+            | "memory_paths"
+            | "capabilities"
+            | "additional_directories"
+            // Keyed by provider tool-call ids and repeats inputs seen elsewhere.
+            | "wire_tool_inputs"
+    )
 }
 
 fn replace_ignore_case(text: &str, needle: &str, with: &str) -> String {
@@ -263,6 +295,27 @@ mod tests {
         assert_eq!(value["result"], "<text 13 chars>");
         assert_eq!(value["note"], "key <redacted> end");
         assert!(!out.to_lowercase().contains("alice"));
+    }
+
+    #[test]
+    fn the_name_of_a_credential_source_is_kept_but_a_key_value_is_not() {
+        let raw = r#"{"type":"system","apiKeySource":"ANTHROPIC_API_KEY","api_key":"abc"}"#;
+        let value: Value = serde_json::from_str(sanitize(raw).unwrap().trim()).unwrap();
+        assert_eq!(value["apiKeySource"], "ANTHROPIC_API_KEY");
+        assert_eq!(value["api_key"], "<redacted>");
+    }
+
+    #[test]
+    fn installed_plugins_skills_and_paths_are_emptied_but_tools_are_kept() {
+        let raw = r#"{"type":"system","plugins":[{"name":"private-plugin"}],"skills":["mine"],"memory_paths":{"auto":"somewhere"},"tools":["StructuredOutput"]}"#;
+        let out = sanitize(raw).unwrap();
+        assert!(
+            !out.contains("private-plugin") && !out.contains("mine") && !out.contains("somewhere")
+        );
+        let value: Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(value["plugins"], serde_json::json!([]));
+        assert_eq!(value["memory_paths"], serde_json::json!({}));
+        assert_eq!(value["tools"], serde_json::json!(["StructuredOutput"]));
     }
 
     #[test]
