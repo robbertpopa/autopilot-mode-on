@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)] // helpers outside #[test] functions
 use std::{
     io,
     path::PathBuf,
@@ -10,7 +11,8 @@ use autopilot_core::{
     Ambiguity, Clarity, Event, Money, OpenQuestion, Ticket, TicketId, Understanding,
 };
 use autopilot_engine::{
-    ClarifyStart, Error, answer_clarify, run_understand, start_clarify, sync_inbox, watch,
+    ClarifyStart, Error, answer_clarify, effective_overrides, override_settings, recover,
+    run_understand, run_understand_with, start_clarify, sync_inbox, watch,
 };
 use autopilot_pipeline::{
     clarify::Choice,
@@ -306,4 +308,235 @@ fn a_bad_answer_file_leaves_the_question_waiting() {
         )
         .unwrap();
     assert_eq!(sync_inbox(data.path(), &ticket).unwrap().len(), 1);
+}
+
+fn understood_and_asking(description: &str) -> (tempfile::TempDir, TicketId) {
+    let data = tempfile::tempdir().unwrap();
+    let ticket = Ticket {
+        id: TicketId::from("approve-1"),
+        title: "Export".into(),
+        description: description.into(),
+    };
+    let agent = Synthetic {
+        data_dir: data.path().into(),
+    };
+    run_understand_with(data.path(), &ticket, &agent, Some(true)).unwrap();
+    (data, ticket.id)
+}
+
+fn last_kind(data: &std::path::Path, ticket: &TicketId) -> Event {
+    watch(data, ticket, 0).unwrap().pop().unwrap().event.kind
+}
+
+// Invariant: with "Ask me after this step" the step does not pass until the
+// owner answers, and the request survives in the inbox meanwhile.
+#[test]
+fn ask_after_holds_the_step_until_the_owner_approves() {
+    let (data, ticket) = understood_and_asking("plain");
+    assert!(matches!(
+        last_kind(data.path(), &ticket),
+        Event::Asked { .. }
+    ));
+    let inbox = Inbox::in_data_dir(data.path());
+    let waiting = inbox.requests().unwrap();
+    assert_eq!(waiting.len(), 1);
+    // Clarify cannot start while Understand waits for approval.
+    assert!(matches!(
+        start_clarify(data.path(), &ticket),
+        Err(Error::NotReady(_))
+    ));
+    let approve = Reply::Approval {
+        decision: Decision::Approve,
+        allow_for_project: false,
+    };
+    inbox.write_answer(&waiting[0].id, &approve).unwrap();
+    assert_eq!(sync_inbox(data.path(), &ticket).unwrap().len(), 1);
+    assert!(matches!(
+        last_kind(data.path(), &ticket),
+        Event::StepFinished
+    ));
+    assert!(matches!(
+        start_clarify(data.path(), &ticket),
+        Ok(ClarifyStart::Skipped(_))
+    ));
+}
+
+// Invariant: reject stops the step as Interrupted (so it can run again), and
+// an edit passes the step while keeping the owner's text in the log.
+#[test]
+fn reject_interrupts_and_edit_keeps_the_text() {
+    let (data, ticket) = understood_and_asking("plain");
+    let inbox = Inbox::in_data_dir(data.path());
+    let id = inbox.requests().unwrap().remove(0).id;
+    let reject = Reply::Approval {
+        decision: Decision::Reject,
+        allow_for_project: false,
+    };
+    inbox.write_answer(&id, &reject).unwrap();
+    sync_inbox(data.path(), &ticket).unwrap();
+    assert!(matches!(
+        last_kind(data.path(), &ticket),
+        Event::Interrupted { ref reason } if reason == "rejected by the owner"
+    ));
+
+    let (data, ticket) = understood_and_asking("plain");
+    let inbox = Inbox::in_data_dir(data.path());
+    let id = inbox.requests().unwrap().remove(0).id;
+    let edit = Reply::Approval {
+        decision: Decision::Edit("use semicolons".into()),
+        allow_for_project: false,
+    };
+    inbox.write_answer(&id, &edit).unwrap();
+    sync_inbox(data.path(), &ticket).unwrap();
+    let history = watch(data.path(), &ticket, 0).unwrap();
+    assert!(history.iter().any(|record| matches!(
+        &record.event.kind,
+        Event::Answered { answer, .. } if answer.contains("use semicolons")
+    )));
+    assert!(matches!(
+        history.last().unwrap().event.kind,
+        Event::StepFinished
+    ));
+}
+
+// Invariant: if the request file is lost, it comes back as a forced request,
+// so a standing allowance can never be granted from a rebuilt request.
+#[test]
+fn a_lost_approval_request_returns_as_forced() {
+    let (data, ticket) = understood_and_asking("plain");
+    let inbox = Inbox::in_data_dir(data.path());
+    let id = inbox.requests().unwrap().remove(0).id;
+    inbox.clean_up(&id).unwrap();
+    sync_inbox(data.path(), &ticket).unwrap();
+    let standing = Reply::Approval {
+        decision: Decision::Approve,
+        allow_for_project: true,
+    };
+    inbox.write_answer(&id, &standing).unwrap();
+    assert!(sync_inbox(data.path(), &ticket).is_err());
+    assert_eq!(answered_count(data.path(), &ticket), 0);
+}
+
+// Invariant: an attempt whose process died is shown as Interrupted and can be
+// started again; a finished or waiting step is never touched. Without this a
+// killed run would read as "running" forever.
+#[test]
+fn recover_interrupts_only_attempts_that_were_cut_off() {
+    use autopilot_core::{AttemptId, NewEvent, Step};
+    use autopilot_store::{SqliteStore, Store};
+    let data = tempfile::tempdir().unwrap();
+    let ticket = TicketId::from("killed-1");
+    let at = |step, kind| NewEvent {
+        at_ms: 1,
+        step,
+        kind,
+    };
+    {
+        let mut store = SqliteStore::open(data.path().join("events.sqlite3")).unwrap();
+        store
+            .append(
+                &ticket,
+                0,
+                &[
+                    at(None, Event::TicketCreated { title: "t".into() }),
+                    at(
+                        Some(Step::Understand),
+                        Event::StepStarted {
+                            attempt: AttemptId::from("understand-1"),
+                            session: None,
+                        },
+                    ),
+                ],
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        recover(data.path(), &ticket).unwrap(),
+        vec![Step::Understand]
+    );
+    assert!(matches!(
+        last_kind(data.path(), &ticket),
+        Event::Interrupted { .. }
+    ));
+    assert_eq!(recover(data.path(), &ticket).unwrap(), vec![]);
+
+    let (data, ticket) = understood_and_asking("plain");
+    assert_eq!(recover(data.path(), &ticket).unwrap(), vec![]);
+}
+
+fn ask_after_change(value: bool) -> Vec<autopilot_core::StepChange> {
+    vec![autopilot_core::StepChange {
+        step: autopilot_core::Step::Understand,
+        change: autopilot_core::StepOverride {
+            ask_after: Some(value),
+            ..Default::default()
+        },
+    }]
+}
+
+// Invariant: a project-scope override reaches a ticket that starts later, an
+// explicit choice beats it, and a ticket-scope change wins over the project
+// one for that ticket only. Otherwise the owner's "always ask" would silently
+// not apply to new tickets.
+#[test]
+fn overrides_layer_project_then_ticket_and_apply_at_the_next_start() {
+    use autopilot_core::SettingsScope;
+    let data = tempfile::tempdir().unwrap();
+    let first = understood_with(data.path(), "first", None);
+    override_settings(
+        data.path(),
+        &first,
+        SettingsScope::Project,
+        &ask_after_change(true),
+    )
+    .unwrap();
+    // The finished ticket was not changed retroactively.
+    assert!(matches!(
+        last_kind(data.path(), &first),
+        Event::SettingsOverridden { .. }
+    ));
+    let second = understood_with(data.path(), "second", None);
+    assert!(matches!(
+        last_kind(data.path(), &second),
+        Event::Asked { .. }
+    ));
+    let third = understood_with(data.path(), "third", Some(false));
+    assert!(matches!(
+        last_kind(data.path(), &third),
+        Event::StepFinished
+    ));
+
+    override_settings(
+        data.path(),
+        &third,
+        SettingsScope::Ticket,
+        &ask_after_change(false),
+    )
+    .unwrap();
+    let step = autopilot_core::Step::Understand;
+    assert_eq!(
+        effective_overrides(data.path(), &second, step)
+            .unwrap()
+            .ask_after,
+        Some(true)
+    );
+    assert_eq!(
+        effective_overrides(data.path(), &third, step)
+            .unwrap()
+            .ask_after,
+        Some(false)
+    );
+}
+
+fn understood_with(data: &std::path::Path, id: &str, ask: Option<bool>) -> TicketId {
+    let ticket = Ticket {
+        id: TicketId::from(id),
+        title: "t".into(),
+        description: "plain".into(),
+    };
+    let agent = Synthetic {
+        data_dir: data.into(),
+    };
+    run_understand_with(data, &ticket, &agent, ask).unwrap();
+    ticket.id
 }

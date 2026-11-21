@@ -214,6 +214,40 @@ pub enum SettingsScope {
     Project,
 }
 
+/// A change to one step's settings. A missing field leaves that setting alone.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StepOverride {
+    #[serde(default)]
+    pub ask_after: Option<bool>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+
+impl StepOverride {
+    /// Newer values win; anything the newer override leaves unset is kept.
+    pub fn merge(&mut self, newer: &Self) {
+        if newer.ask_after.is_some() {
+            self.ask_after = newer.ask_after;
+        }
+        if newer.model.is_some() {
+            self.model.clone_from(&newer.model);
+        }
+        if newer.effort.is_some() {
+            self.effort.clone_from(&newer.effort);
+        }
+    }
+}
+
+/// One step's override, as recorded in the log and in the project file.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StepChange {
+    pub step: Step,
+    #[serde(flatten)]
+    pub change: StepOverride,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
@@ -255,6 +289,8 @@ pub enum Event {
     },
     SettingsOverridden {
         scope: SettingsScope,
+        #[serde(default)]
+        changes: Vec<StepChange>,
     },
     Paused,
     Resumed,
