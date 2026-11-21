@@ -32,7 +32,8 @@ mod rerun;
 mod settings;
 mod view;
 pub use attachments::{
-    Attachment, MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_FOLDER_ITEMS, MAX_TICKET_BYTES, attach, stage,
+    Attachment, MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_FOLDER_ITEMS, MAX_TICKET_BYTES, attach, note,
+    stage,
 };
 pub use autopilot_checks::resolve_executable;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
@@ -193,10 +194,11 @@ pub(crate) fn run_attempt(
     ask_after: bool,
     agent: &impl Agent,
 ) -> Result<Understanding, Error> {
+    let notes = attachments::note(directory, &store.events(&ticket.id, 0)?);
     let started = agent.start(StepRequest {
         step: Step::Understand,
         ticket,
-        context: "",
+        context: &notes,
     });
     let (response, last) = match pump(store, &ticket.id, UNDERSTAND, last, started)? {
         (Pumped::Understanding(result), last) => (Ok(result), last),

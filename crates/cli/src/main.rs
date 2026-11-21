@@ -66,6 +66,10 @@ enum Command {
         /// Wait in the inbox for approve, edit or reject before the step passes.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
         ask_after: Option<bool>,
+        /// A file, image or folder to attach when the ticket starts. Repeat for more.
+        /// Contents are data for the agent, never run.
+        #[arg(long)]
+        attach: Vec<PathBuf>,
     },
     /// Run the Build step for an approved plan in a ticket worktree.
     Build {
@@ -296,13 +300,14 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             claude_path,
             timeout_seconds,
             ask_after,
+            attach,
         } => {
             let ticket = read_ticket(&ticket)?;
             let exe = env::current_exe()?;
             let result = match agent {
                 Agent::Fake => {
                     let agent = FixtureAgent::beside(&exe)?;
-                    run_step(&cli.data_dir, step, &ticket, &agent, ask_after)?
+                    run_step(&cli.data_dir, step, &ticket, &agent, ask_after, &attach)?
                 }
                 Agent::Claude => {
                     let config = ClaudeConfig {
@@ -318,7 +323,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                         timeout: Duration::from_secs(timeout_seconds),
                     };
                     let agent = claude_agent(&exe, config)?;
-                    run_step(&cli.data_dir, step, &ticket, &agent, ask_after)?
+                    run_step(&cli.data_dir, step, &ticket, &agent, ask_after, &attach)?
                 }
             };
             serde_json::to_writer(
@@ -501,11 +506,19 @@ fn run_step(
     ticket: &Ticket,
     agent: &impl autopilot_agent::Agent,
     ask_after: Option<bool>,
+    attach: &[PathBuf],
 ) -> Result<serde_json::Value, Box<dyn Error>> {
     Ok(match step {
-        Step::Understand => serde_json::to_value(autopilot_engine::run_understand_with(
-            data_dir, ticket, agent, ask_after,
-        )?)?,
+        Step::Understand => {
+            let absolute = attach
+                .iter()
+                .map(std::path::absolute)
+                .collect::<Result<Vec<_>, _>>()?;
+            let staged = autopilot_engine::stage(data_dir, &ticket.id, &absolute, (0, 0))?;
+            serde_json::to_value(autopilot_engine::run_understand_attached(
+                data_dir, ticket, agent, ask_after, &staged,
+            )?)?
+        }
         Step::Plan => serde_json::to_value(autopilot_engine::run_plan(data_dir, ticket, agent)?)?,
     })
 }
