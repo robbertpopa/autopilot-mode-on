@@ -322,16 +322,16 @@ impl App {
                 )
             );
             let busy = view.steps.iter().any(|other| other.state.is_active());
-            let rerunnable = matches!(step, Step::Understand | Step::Plan);
+            let rerunnable = matches!(step, Step::Understand | Step::Design | Step::Plan);
             if rerunnable && settled && !busy {
                 let rerun = ui.add(button("Re-run this step")).on_hover_text(
                     "Runs the step again with the same words, answers and files. Later steps that ran are reset with it.",
                 );
                 if rerun.clicked() {
-                    self.act(if step == Step::Understand {
-                        Action::RerunUnderstand(view.id.clone())
-                    } else {
-                        Action::RerunPlan(view.id.clone())
+                    self.act(match step {
+                        Step::Understand => Action::RerunUnderstand(view.id.clone()),
+                        Step::Design => Action::RerunDesign(view.id.clone()),
+                        _ => Action::RerunPlan(view.id.clone()),
                     });
                 }
             } else {
@@ -342,6 +342,14 @@ impl App {
                 };
                 ui.add_enabled(false, button("Re-run this step"))
                     .on_disabled_hover_text(why);
+            }
+            if step == Step::Design
+                && ui
+                    .add(button("Open the mockups"))
+                    .on_hover_text("Shows the saved pages in the file manager. They hold no script and load nothing.")
+                    .clicked()
+            {
+                self.act(Action::OpenDesign(view.id.clone()));
             }
             if matches!(card, Some(StepState::Skipped(_))) {
                 ui.add_enabled(false, button("Run it anyway"))

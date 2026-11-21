@@ -13,7 +13,7 @@ use std::{
 
 use std::path::Path;
 
-use autopilot_core::{Money, Plan, SessionId, Step, Ticket, Understanding};
+use autopilot_core::{Design, Money, Plan, SessionId, Step, Ticket, Understanding};
 
 pub type AgentError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -70,6 +70,7 @@ pub enum AgentEvent {
     },
     Result(Understanding),
     PlanResult(Plan),
+    DesignResult(Design),
     /// A build turn ended normally. Its effect is in the worktree.
     BuildDone,
     Stopped(String),
@@ -90,6 +91,18 @@ pub trait Agent {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "this agent cannot run the Build step",
+        )
+        .into())
+    }
+
+    /// Start the Design step. Adapters that cannot design keep this default.
+    ///
+    /// # Errors
+    /// Returns an error if the request cannot be started or is unsupported.
+    fn start_design(&self, _request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this agent cannot run the Design step",
         )
         .into())
     }
@@ -172,6 +185,16 @@ impl AgentRun {
         work: impl FnOnce(AgentContext) -> Result<Plan, AgentError> + Send + 'static,
     ) -> io::Result<Self> {
         Self::spawn_with(work, AgentEvent::PlanResult)
+    }
+
+    /// Like [`AgentRun::spawn`] for a Design result.
+    ///
+    /// # Errors
+    /// Returns an error if the worker thread cannot be started.
+    pub fn spawn_design(
+        work: impl FnOnce(AgentContext) -> Result<Design, AgentError> + Send + 'static,
+    ) -> io::Result<Self> {
+        Self::spawn_with(work, AgentEvent::DesignResult)
     }
 
     /// Like [`AgentRun::spawn`] for a build turn, which has no structured result.

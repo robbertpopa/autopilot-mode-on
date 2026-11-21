@@ -87,6 +87,13 @@ pub enum Action {
     MakePlan(TicketId),
     /// Make the plan again, replacing the one that was made or approved.
     RerunPlan(TicketId),
+    /// Make the design (static mockups) for a ticket that changes a screen,
+    /// or skip the step when it needs none.
+    MakeDesign(TicketId),
+    /// Make the design again, replacing the one that was made.
+    RerunDesign(TicketId),
+    /// Show the saved mockups in the system file manager.
+    OpenDesign(TicketId),
     /// Explain a step's result in plain words, once; the answer is kept.
     Explain {
         ticket: TicketId,
@@ -474,6 +481,34 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             })
             .map(|_| "Explanation kept".to_owned())
             .map_err(|error| error.to_string())
+        }
+        Action::MakeDesign(ticket) => {
+            let agent = chosen_agent(options, Step::Design)?;
+            let history =
+                autopilot_engine::watch(directory, ticket, 0).map_err(|error| error.to_string())?;
+            let words = autopilot_engine::ticket_words(ticket, &history)
+                .map_err(|error| error.to_string())?;
+            autopilot_engine::run_design(directory, &words, &agent)
+                .map(|design| match design {
+                    Some(design) => format!("Design ready: {} mockups", design.mockups.len()),
+                    None => "No design needed: the step was skipped".to_owned(),
+                })
+                .map_err(|error| error.to_string())
+        }
+        Action::RerunDesign(ticket) => {
+            let agent = chosen_agent(options, Step::Design)?;
+            autopilot_engine::rerun_design(directory, ticket, &agent)
+                .map(|_| "New design ready".to_owned())
+                .map_err(|error| error.to_string())
+        }
+        Action::OpenDesign(ticket) => {
+            let folder = autopilot_engine::design_folder(directory, ticket);
+            if !folder.is_dir() {
+                return Err("there is no saved design for this ticket yet".to_owned());
+            }
+            let guardian = beside("autopilot-process-guardian")?;
+            autopilot_update::open_installer(&guardian, &folder)?;
+            Ok("Opened the mockups".to_owned())
         }
         Action::RerunPlan(ticket) => {
             let agent = chosen_agent(options, Step::Plan)?;

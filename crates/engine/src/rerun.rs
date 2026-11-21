@@ -14,6 +14,44 @@ use autopilot_store::{SqliteStore, Store};
 
 use crate::{DATABASE, Error, UNDERSTAND, event, lock_run, run_attempt, timestamp};
 
+/// The ticket as it was started, rebuilt from its history: the title and the
+/// latest words (an older history has none, and the title stands alone).
+///
+/// # Errors
+/// Returns an error if the history has no ticket.
+pub fn ticket_words(
+    id: &TicketId,
+    history: &[autopilot_core::RecordedEvent],
+) -> Result<Ticket, Error> {
+    ticket_of(id, history)
+}
+
+pub(crate) fn ticket_of(
+    id: &TicketId,
+    history: &[autopilot_core::RecordedEvent],
+) -> Result<Ticket, Error> {
+    let title = history
+        .iter()
+        .find_map(|record| match &record.event.kind {
+            Event::TicketCreated { title } => Some(title.clone()),
+            _ => None,
+        })
+        .ok_or(Error::UnknownTicket)?;
+    let description = history
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event.kind {
+            Event::Described { text } => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    Ok(Ticket {
+        id: id.clone(),
+        title,
+        description,
+    })
+}
+
 /// Put a step back to idle. With `and_after`, every later step that already ran goes back too.
 ///
 /// # Errors

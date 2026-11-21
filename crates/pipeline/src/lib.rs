@@ -189,7 +189,8 @@ impl TicketState {
             Event::SettingsOverridden { .. }
             | Event::Described { .. }
             | Event::Attached { .. }
-            | Event::Explained { .. } => {}
+            | Event::Explained { .. }
+            | Event::DesignResult { .. } => {}
             Event::Done => {
                 if let Some(active) = self.active() {
                     return Err(E::StepBusy { active });
