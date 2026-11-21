@@ -344,3 +344,39 @@ fn the_hook_denies_a_push_and_allows_a_status() {
         "deny"
     );
 }
+
+// Invariant: a real agent is refused for Build until the containment spike is
+// settled. Real Claude would run shell tools in a real repository.
+#[test]
+fn a_real_agent_is_refused_for_build_and_the_refusal_names_s6() {
+    let scratch = tempfile::tempdir().unwrap();
+    let ticket = scratch.path().join("ticket.json");
+    std::fs::write(
+        &ticket,
+        serde_json::json!({"id": "b-1", "title": "t", "description": "d"}).to_string(),
+    )
+    .unwrap();
+    let profile = scratch.path().join("profile.toml");
+    std::fs::write(&profile, "").unwrap();
+    let output = autopilot(
+        &[
+            "build",
+            "--agent",
+            "claude",
+            "--ticket",
+            ticket.to_str().unwrap(),
+            "--repo",
+            scratch.path().to_str().unwrap(),
+            "--base",
+            "main",
+            "--worktrees",
+            scratch.path().join("wt").to_str().unwrap(),
+            "--profile",
+            profile.to_str().unwrap(),
+        ],
+        &scratch.path().join("data"),
+    );
+    assert!(!output.status.success());
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(message.contains("S6"), "{message}");
+}

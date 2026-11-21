@@ -82,7 +82,8 @@ pub fn resolve_executable(name: &str, path_var: &OsStr) -> Option<PathBuf> {
 /// The spelling of a directory that build tools cope with. Managed worktrees
 /// are canonical, which on Windows means `\\?\C:\...`, and the MinGW linker
 /// cannot find its object files from a working directory in that form.
-fn plain_directory(path: &Path) -> PathBuf {
+#[must_use]
+pub fn plain_directory(path: &Path) -> PathBuf {
     if cfg!(windows)
         && let Some(text) = path.to_str()
         && let Some(rest) = text.strip_prefix(r"\\?\")
@@ -118,6 +119,23 @@ pub(crate) struct Executed {
 }
 
 impl Toolbox {
+    /// Like [`Toolbox::from_profile`], building the runner from the process
+    /// guardian so a caller above this layer never touches `process`.
+    #[must_use]
+    pub fn with_guardian(
+        profile: &Profile,
+        guardian: PathBuf,
+        environment: Environment,
+        path_var: &OsStr,
+    ) -> Arc<Self> {
+        Self::from_profile(
+            profile,
+            Arc::new(Runner::new(guardian)),
+            environment,
+            path_var,
+        )
+    }
+
     #[must_use]
     pub fn from_profile(
         profile: &Profile,

@@ -106,8 +106,13 @@ name = "autopilot-engine"
 version = "0.1.0"
 dependencies = [
  "autopilot-agent",
+ "autopilot-agent-claude",
+ "autopilot-checks",
  "autopilot-core",
+ "autopilot-git",
  "autopilot-pipeline",
+ "autopilot-policy",
+ "autopilot-profile",
  "autopilot-store",
  "serde_json",
  "sha2",

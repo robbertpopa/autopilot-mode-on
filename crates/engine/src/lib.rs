@@ -20,8 +20,10 @@ use autopilot_pipeline::{
 };
 use autopilot_store::{SqliteStore, Store, StoreError};
 
+mod build;
 mod plan;
 mod settings;
+pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
 pub use plan::{approved_plan, run_plan};
 pub use settings::{effective_overrides, override_settings, project_overrides};
 
@@ -54,6 +56,10 @@ pub enum Error {
     Stopped(String),
     #[error(transparent)]
     Storage(#[from] StoreError),
+    #[error(transparent)]
+    Git(#[from] autopilot_git::Error),
+    #[error(transparent)]
+    Check(#[from] autopilot_checks::Error),
     #[error(transparent)]
     Io(#[from] io::Error),
 }
@@ -537,6 +543,9 @@ fn waiting_request(
             },
         });
     }
+    if step == Step::BuildCheck && request.as_str() == build::STUCK_REQUEST {
+        return Ok(build::stuck_request(ticket, history));
+    }
     if step == Step::Plan {
         let plan =
             plan::latest_plan(history).ok_or_else(|| Error::History("no Plan result".into()))?;
@@ -577,7 +586,11 @@ fn commit_approval(
             let sha256 = plan::store_approved(directory, ticket, history)?;
             events.push(event(at, Some(step), Event::PlanApproved { sha256 }));
         }
-        events.push(event(at, Some(step), Event::StepFinished));
+        // A stuck build is not finished by an approval. The answer sends it
+        // back to Running, and the next build run continues with more rounds.
+        if step != Step::BuildCheck {
+            events.push(event(at, Some(step), Event::StepFinished));
+        }
     }
     store.append(ticket, last, &events)?;
     Ok(())

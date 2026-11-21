@@ -126,6 +126,7 @@ impl TicketState {
             | Event::PlanResult { .. }
             | Event::PlanApproved { .. }
             | Event::RoundStarted { .. }
+            | Event::SessionStarted { .. }
             | Event::CheckResult { .. } => {
                 self.require(event, |s| matches!(s, StepState::Running))?;
             }
