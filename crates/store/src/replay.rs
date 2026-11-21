@@ -111,6 +111,18 @@ impl TicketState {
         Ok(())
     }
 
+    fn reset(&mut self, step: Step, and_after: bool) {
+        self.steps
+            .retain(|kept, _| *kept != step && !(and_after && *kept > step));
+        // A stop that was the reason for the reset is no longer the ticket's state.
+        if matches!(
+            self.status,
+            TicketStatus::Failed { .. } | TicketStatus::Interrupted { .. }
+        ) {
+            self.status = TicketStatus::Idle;
+        }
+    }
+
     fn apply(&mut self, record: &RecordedEvent) -> Result<(), StoreError> {
         if record.ticket != self.ticket {
             return Err(StoreError::TicketMismatch);
@@ -170,6 +182,9 @@ impl TicketState {
                     .checked_add(u128::from(amount.as_microusd()))
                     .ok_or(StoreError::CostOverflow)?;
             }
+            Event::StepReset { and_after } => {
+                self.reset(required_step(&record.event)?, *and_after);
+            }
             Event::Paused => self.status = TicketStatus::Paused,
             Event::Resumed => self.status = TicketStatus::Running,
             Event::Interrupted { reason } => {
@@ -206,6 +221,7 @@ impl TicketState {
             | Event::RoundStarted { .. }
             | Event::SessionStarted { .. }
             | Event::CheckResult { .. }
+            | Event::Described { .. }
             | Event::SettingsOverridden { .. } => {}
         }
         self.last_seq = record.seq;

@@ -197,6 +197,56 @@ mod tests {
         assert!(understand.in_short.is_some());
     }
 
+    // Invariant: "Try again" from the window runs Understand a second time
+    // through the real engine, keeps both attempts in the history, and the
+    // ticket ends with Understand settled again. A change that left the step
+    // idle or reused the first attempt id would fail the attempt count.
+    #[test]
+    fn rerunning_understand_from_the_window_adds_a_second_attempt() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        perform(
+            &options,
+            &Action::Start {
+                title: "Again".into(),
+                description: "Words kept for the second run".into(),
+            },
+        )
+        .unwrap();
+        let id = read(&options).tickets[0].id.clone();
+        // The fixture's Understand has an open question, so Clarify holds the
+        // ticket until it is answered, and nothing may run again meanwhile.
+        let refused = perform(&options, &Action::RerunUnderstand(id.clone()));
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.contains("still active")),
+            "{refused:?}"
+        );
+        perform(&options, &Action::AcceptDefaults { ticket: id.clone() }).unwrap();
+        let outcome = perform(&options, &Action::RerunUnderstand(id.clone()));
+        assert!(outcome.is_ok(), "{outcome:?}");
+        let events = autopilot_engine::watch(&options.data_dir, &id, 0).unwrap();
+        let starts = events
+            .iter()
+            .filter(|record| {
+                record.event.step == Some(Step::Understand)
+                    && matches!(record.event.kind, autopilot_core::Event::StepStarted { .. })
+            })
+            .count();
+        assert_eq!(starts, 2);
+        let ticket = &read(&options).tickets[0];
+        assert!(matches!(
+            ticket.step(Step::Understand).unwrap().state,
+            autopilot_pipeline::StepState::Passed | autopilot_pipeline::StepState::Asking(_)
+        ));
+    }
+
     // Invariant: the theme choice is kept for the next start.
     #[test]
     fn the_theme_choice_is_remembered() {

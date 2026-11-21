@@ -168,6 +168,15 @@ enum Command {
     Pause { ticket: String },
     /// Let a held ticket go on.
     Resume { ticket: String },
+    /// Send a step that already ran back to idle so it can run again. With
+    /// `--and-after`, every later step that ran goes back too.
+    Reset {
+        ticket: String,
+        #[arg(long)]
+        step: ResetStep,
+        #[arg(long)]
+        and_after: bool,
+    },
     /// Replay committed events from the ticket's local history.
     Watch {
         ticket: String,
@@ -211,6 +220,30 @@ enum InboxAction {
 enum Step {
     Understand,
     Plan,
+}
+
+/// Every step can be reset, not only the two the CLI can run.
+#[derive(Clone, Copy, ValueEnum)]
+enum ResetStep {
+    Understand,
+    Clarify,
+    Design,
+    Plan,
+    BuildCheck,
+    PullRequest,
+}
+
+impl ResetStep {
+    const fn into_core(self) -> autopilot_core::Step {
+        match self {
+            Self::Understand => autopilot_core::Step::Understand,
+            Self::Clarify => autopilot_core::Step::Clarify,
+            Self::Design => autopilot_core::Step::Design,
+            Self::Plan => autopilot_core::Step::Plan,
+            Self::BuildCheck => autopilot_core::Step::BuildCheck,
+            Self::PullRequest => autopilot_core::Step::PullRequest,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -382,6 +415,19 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         Command::Pause { ticket } => {
             autopilot_engine::request_pause(&cli.data_dir, &TicketId::from(ticket))?;
             writeln!(out, "{}", serde_json::json!({"requested": "pause"}))?;
+        }
+        Command::Reset {
+            ticket,
+            step,
+            and_after,
+        } => {
+            let step = step.into_core();
+            autopilot_engine::reset_step(&cli.data_dir, &TicketId::from(ticket), step, and_after)?;
+            writeln!(
+                out,
+                "{}",
+                serde_json::json!({"reset": step.as_str(), "and_after": and_after})
+            )?;
         }
         Command::Resume { ticket } => {
             autopilot_engine::request_resume(&cli.data_dir, &TicketId::from(ticket))?;

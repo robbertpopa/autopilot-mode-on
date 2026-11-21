@@ -328,6 +328,13 @@ fn timeline_text(step: Option<Step>, event: &Event) -> Option<String> {
         Event::PlanApproved { .. } => "Plan approved".to_owned(),
         Event::Asked { .. } => format!("{} is waiting for you", name?),
         Event::Answered { .. } => format!("You answered {}", name?),
+        Event::StepReset { and_after } => {
+            if *and_after {
+                format!("{} and later steps reset to run again", name?)
+            } else {
+                format!("{} reset to run again", name?)
+            }
+        }
         Event::Paused => "Paused".to_owned(),
         Event::Resumed => "Resumed".to_owned(),
         Event::Interrupted { reason } => format!("Interrupted · {reason}"),

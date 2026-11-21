@@ -375,6 +375,18 @@ pub enum Event {
         #[serde(default)]
         changes: Vec<StepChange>,
     },
+    /// The words the owner wrote for the ticket, kept so a step can run again
+    /// later without asking for them twice. Absent in older histories.
+    Described {
+        text: String,
+    },
+    /// The owner asked to run a step again. The named step goes back to idle,
+    /// and with `and_after` so does every later step that already ran, because
+    /// their results came from the old one. What was spent stays spent.
+    StepReset {
+        #[serde(default)]
+        and_after: bool,
+    },
     Paused,
     Resumed,
     Interrupted {

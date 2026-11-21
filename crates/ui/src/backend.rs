@@ -70,6 +70,8 @@ pub enum Action {
     AcceptDefaults {
         ticket: TicketId,
     },
+    /// Run Understand again for a ticket, with the words it started with.
+    RerunUnderstand(TicketId),
     Pause(TicketId),
     Resume(TicketId),
     Stop(TicketId),
@@ -252,6 +254,19 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                 }
             })?;
             Ok("Used the recommended answers".to_owned())
+        }
+        Action::RerunUnderstand(ticket) => {
+            let agent = fixture_agent()?;
+            let ask = autopilot_engine::load_profile(&options.profile)
+                .ok()
+                .and_then(|profile| {
+                    profile
+                        .step(Step::Understand)
+                        .map(|settings| settings.ask_after)
+                });
+            autopilot_engine::rerun_understand(directory, ticket, &agent, ask)
+                .map(|_| "Understand ran again".to_owned())
+                .map_err(|error| error.to_string())
         }
         Action::Pause(ticket) => autopilot_engine::request_pause(directory, ticket)
             .map(|()| "Pause requested. It takes effect between turns.".to_owned())
