@@ -21,6 +21,7 @@ use autopilot_pipeline::{
 };
 use autopilot_store::{SqliteStore, Store, StoreError};
 
+mod attachments;
 mod build;
 mod change;
 mod control;
@@ -30,6 +31,9 @@ mod publish;
 mod rerun;
 mod settings;
 mod view;
+pub use attachments::{
+    Attachment, MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_FOLDER_ITEMS, MAX_TICKET_BYTES, attach, stage,
+};
 pub use autopilot_checks::resolve_executable;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
 pub use change::{Proposal, Reading, apply_to_project, apply_to_ticket, propose};
@@ -40,8 +44,8 @@ pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use rerun::{rerun_understand, reset_step};
 pub use settings::{effective_overrides, override_settings, project_overrides};
 pub use view::{
-    Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView, TimelineLine, dollars,
-    load_ticket, spent_since, step_name, ticket_view, tickets,
+    AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,
+    TimelineLine, dollars, load_ticket, spent_since, step_name, ticket_view, tickets,
 };
 
 pub(crate) const DATABASE: &str = "events.sqlite3";
@@ -61,6 +65,8 @@ pub enum Error {
     Answer(#[from] clarify::ClarifyError),
     #[error(transparent)]
     Inbox(#[from] InboxError),
+    #[error("cannot attach: {0}")]
+    Attachment(String),
     #[error("the recorded history is invalid: {0}")]
     History(String),
     #[error("ticket has no recorded run")]
@@ -108,6 +114,21 @@ pub fn run_understand_with(
     agent: &impl Agent,
     ask_after: Option<bool>,
 ) -> Result<Understanding, Error> {
+    run_understand_attached(directory, ticket, agent, ask_after, &[])
+}
+
+/// Like [`run_understand_with`], with attachments staged by [`stage`]. They
+/// are recorded in the opening batch, so the first attempt already has them.
+///
+/// # Errors
+/// Returns an error if the ticket, agent, data directory or store cannot be used.
+pub fn run_understand_attached(
+    directory: &Path,
+    ticket: &Ticket,
+    agent: &impl Agent,
+    ask_after: Option<bool>,
+    attachments: &[Attachment],
+) -> Result<Understanding, Error> {
     // An explicit choice wins; otherwise the project setting decides.
     let ask_after = match ask_after {
         Some(choice) => choice,
@@ -121,7 +142,7 @@ pub fn run_understand_with(
     let _owner = lock_run(directory)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let started_at = timestamp()?;
-    let start_events = [
+    let mut start_events = vec![
         event(
             started_at,
             None,
@@ -145,6 +166,14 @@ pub fn run_understand_with(
             },
         ),
     ];
+    // Attachments sit between the ticket's words and the step's start.
+    let at = start_events.len() - 1;
+    for (offset, attachment) in attachments.iter().cloned().enumerate() {
+        start_events.insert(
+            at + offset,
+            event(started_at, None, attachment.into_event()),
+        );
+    }
     let start = match store.append(&ticket.id, 0, &start_events) {
         Err(StoreError::SequenceConflict { .. }) => return Err(Error::AlreadyStarted),
         result => result?,

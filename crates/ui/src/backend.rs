@@ -60,6 +60,13 @@ pub enum Action {
     Start {
         title: String,
         description: String,
+        /// Files, images and folders to attach, as absolute paths.
+        attachments: Vec<PathBuf>,
+    },
+    /// Attach files, images or folders to a ticket that exists.
+    Attach {
+        ticket: TicketId,
+        paths: Vec<PathBuf>,
     },
     /// Approve, or reject, what a ticket is waiting on.
     Decide {
@@ -227,7 +234,14 @@ pub fn run(options: Options, action: Action, context: egui::Context, sender: Sen
 pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
     let directory = options.data_dir.as_path();
     match action {
-        Action::Start { title, description } => start(options, title, description),
+        Action::Start {
+            title,
+            description,
+            attachments,
+        } => start(options, title, description, attachments),
+        Action::Attach { ticket, paths } => autopilot_engine::attach(directory, ticket, paths)
+            .map(|count| format!("Attached {count}"))
+            .map_err(|error| error.to_string()),
         Action::Decide { ticket, approve } => {
             answer(directory, ticket, |body| match body {
                 RequestBody::Approval { .. } => Ok(Reply::Approval {
@@ -280,7 +294,12 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
     }
 }
 
-fn start(options: &Options, title: &str, description: &str) -> Result<String, String> {
+fn start(
+    options: &Options,
+    title: &str,
+    description: &str,
+    attachments: &[PathBuf],
+) -> Result<String, String> {
     let directory = options.data_dir.as_path();
     let agent = fixture_agent()?;
     let id = TicketId::from(format!("t-{}", now_ms()));
@@ -296,8 +315,15 @@ fn start(options: &Options, title: &str, description: &str) -> Result<String, St
                 .step(Step::Understand)
                 .map(|settings| settings.ask_after)
         });
-    autopilot_engine::run_understand_with(directory, &ticket, &agent, ask)
+    let staged = autopilot_engine::stage(directory, &id, attachments, (0, 0))
         .map_err(|error| error.to_string())?;
+    if let Err(error) =
+        autopilot_engine::run_understand_attached(directory, &ticket, &agent, ask, &staged)
+    {
+        // The ticket was not made, so its copies must not stay behind.
+        let _ = std::fs::remove_dir_all(directory.join("attachments").join(id.as_str()));
+        return Err(error.to_string());
+    }
     // Clarify is decided right away. Plan and the later steps need a real
     // agent, which the window does not start yet.
     match autopilot_engine::start_clarify(directory, &id) {

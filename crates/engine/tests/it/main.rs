@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod attachments;
 #[cfg(windows)]
 mod build;
 

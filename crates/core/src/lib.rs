@@ -309,6 +309,15 @@ pub struct StepChange {
     pub change: StepOverride,
 }
 
+/// What an attachment is, which decides how the window shows it.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentKind {
+    File,
+    Image,
+    Folder,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
@@ -379,6 +388,17 @@ pub enum Event {
     /// later without asking for them twice. Absent in older histories.
     Described {
         text: String,
+    },
+    /// A file, image or folder the owner attached. Its contents are data:
+    /// nothing opens or runs them. A file was copied and hashed; a folder is
+    /// only recorded by its path, item count and size.
+    Attached {
+        name: String,
+        kind: AttachmentKind,
+        bytes: u64,
+        items: u64,
+        sha256: String,
+        stored: String,
     },
     /// The owner asked to run a step again. The named step goes back to idle,
     /// and with `and_after` so does every later step that already ran, because

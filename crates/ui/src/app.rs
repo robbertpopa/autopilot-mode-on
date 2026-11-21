@@ -469,6 +469,7 @@ impl App {
                             start = Some(Action::Start {
                                 title: form.title.clone(),
                                 description: form.description.clone(),
+                                attachments: Vec::new(),
                             });
                         }
                         if ui.button("Cancel").clicked() {
@@ -755,6 +756,7 @@ impl App {
                     start = Some(Action::Start {
                         title: self.home.title.clone(),
                         description: self.home.description.clone(),
+                        attachments: Vec::new(),
                     });
                 }
                 ui.label(theme::muted(
