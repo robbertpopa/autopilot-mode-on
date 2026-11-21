@@ -81,6 +81,17 @@ fn alive(pid: u32) -> bool {
         .is_some_and(|state| !matches!(state, b'Z' | b'X'))
 }
 
+#[cfg(target_os = "macos")]
+fn alive(pid: u32) -> bool {
+    // `ps` reports a zombie as Z, which counts as gone like on Linux.
+    Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .is_some_and(|state| !state.is_empty() && !state.starts_with('Z'))
+}
+
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod windows_probe {
@@ -166,6 +177,8 @@ fn cancellation_and_timeout_end_the_worker_and_its_grandchild() {
     }
 }
 
+// macOS has no guardian, so a killed supervisor cannot clean up (see macos.rs).
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn abrupt_supervisor_exit_cleans_up_the_process_tree() {
     let data = tempfile::tempdir().unwrap();

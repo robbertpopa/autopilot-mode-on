@@ -68,18 +68,14 @@ pub(crate) fn start(_: &Path, spec: &CommandSpec, input: &[u8]) -> io::Result<(A
         .stderr(Stdio::piped())
         .spawn()?;
     let group = Pid::from_child(&child);
-    let pipes = match (child.stdout.take(), child.stderr.take(), child.stdin.take()) {
-        (Some(stdout), Some(stderr), Some(stdin)) => {
-            let writer = feed(stdin, input.to_vec())?;
-            (stdout, stderr, writer)
-        }
-        _ => {
-            let _ = kill_process_group(group, Signal::KILL);
-            let _ = child.wait();
-            return Err(io::Error::other("missing worker pipe"));
-        }
+    let (Some(stdout), Some(stderr), Some(stdin)) =
+        (child.stdout.take(), child.stderr.take(), child.stdin.take())
+    else {
+        let _ = kill_process_group(group, Signal::KILL);
+        let _ = child.wait();
+        return Err(io::Error::other("missing worker pipe"));
     };
-    let (stdout, stderr, writer) = pipes;
+    let writer = feed(stdin, input.to_vec())?;
     Ok((
         Active {
             child,
