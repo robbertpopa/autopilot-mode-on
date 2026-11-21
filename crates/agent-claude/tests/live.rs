@@ -23,6 +23,7 @@ fn a_synthetic_understand_call_returns_structured_output_within_the_cap() {
             max_turns: 4,
             max_budget_usd: Some("0.05".into()),
             executable: None,
+            timeout: std::time::Duration::from_secs(120),
         },
         guardian,
     )
