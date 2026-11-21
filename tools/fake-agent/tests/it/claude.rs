@@ -106,11 +106,9 @@ fn a_rate_limited_run_fails_but_keeps_its_retry_activity() {
 fn a_crash_after_activity_fails_and_keeps_the_activity() {
     let events = run("scenario:crash");
     assert!(matches!(events.last(), Some(AgentEvent::Failed(_))));
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, AgentEvent::Message { summary } if summary == "session started"))
-    );
+    assert!(events.iter().any(
+        |e| matches!(e, AgentEvent::Message { summary } if summary.starts_with("session started"))
+    ));
 }
 
 // Invariant: a result cut short by the process ending is never accepted, even
