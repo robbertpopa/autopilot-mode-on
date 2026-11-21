@@ -169,7 +169,7 @@ impl App {
         };
         for row in rows(&accounts) {
             theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-                ui.set_width(ui.available_width() - 34.0);
+                ui.set_width(ui.available_width() - 38.0);
                 ui.horizontal(|ui| {
                     let (rect, _) =
                         ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());

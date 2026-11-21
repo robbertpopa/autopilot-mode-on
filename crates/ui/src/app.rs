@@ -10,7 +10,11 @@ use autopilot_profile::Profile;
 use eframe::egui::{self, Align, Color32, Frame, Layout, Margin, RichText, Stroke};
 
 use crate::backend::{self, Action, Message, Options, Snapshot};
+use crate::composer::{self, NewTicket};
 use crate::theme;
+
+/// The width of the one column the screens are laid out in.
+const COLUMN: f32 = 900.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
@@ -37,13 +41,6 @@ pub enum Tab {
     Changes,
     Cost,
     Settings,
-}
-
-#[derive(Default)]
-pub struct NewTicket {
-    focused: bool,
-    pub title: String,
-    pub description: String,
 }
 
 #[allow(clippy::struct_excessive_bools, reason = "independent view toggles")]
@@ -239,6 +236,7 @@ impl App {
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
             self.new_ticket = Some(NewTicket::default());
         }
+        self.take_drops(ctx);
         self.title_bar(ctx);
         self.sidebar(ctx);
         if self.mode == Mode::Watch
@@ -257,16 +255,48 @@ impl App {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        self.notice_bar(ui);
-                        match self.mode {
-                            Mode::Design => self.pipeline_screen(ui),
-                            Mode::Watch => self.watch_screen(ui),
-                            Mode::Cost => self.cost_screen(ui),
-                            Mode::Accounts => self.accounts_screen(ui),
-                        }
+                        // One centred column, so lines stay short on a wide window.
+                        let side = ((ui.available_width() - COLUMN) / 2.0).max(0.0);
+                        ui.horizontal_top(|ui| {
+                            ui.add_space(side);
+                            ui.vertical(|ui| {
+                                ui.set_width(ui.available_width().min(COLUMN));
+                                self.notice_bar(ui);
+                                match self.mode {
+                                    Mode::Design => self.pipeline_screen(ui),
+                                    Mode::Watch => self.watch_screen(ui),
+                                    Mode::Cost => self.cost_screen(ui),
+                                    Mode::Accounts => self.accounts_screen(ui),
+                                }
+                            });
+                        });
                     });
             });
         self.dialogs(ctx);
+    }
+
+    /// Files dropped on the window go to the open form, or to the ticket on
+    /// screen, or to the start box on the home screen.
+    fn take_drops(&mut self, ctx: &egui::Context) {
+        let paths: Vec<std::path::PathBuf> = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|file| file.path.clone())
+                .collect()
+        });
+        if paths.is_empty() {
+            return;
+        }
+        if let Some(form) = &mut self.new_ticket {
+            form.add(paths);
+        } else if self.mode == Mode::Watch {
+            match self.current().map(|view| view.id.clone()) {
+                Some(ticket) => self.act(Action::Attach { ticket, paths }),
+                None => self.home.add(paths),
+            }
+        }
     }
 
     fn title_bar(&mut self, ctx: &egui::Context) {
@@ -440,42 +470,14 @@ impl App {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .show(ctx, |ui| {
-                    ui.label("Title");
-                    let title = ui.add(egui::TextEdit::singleline(&mut form.title).desired_width(420.0));
-                    if !form.focused {
-                        title.request_focus();
-                        form.focused = true;
-                    }
-                    ui.label("What should change?");
-                    ui.add(
-                        egui::TextEdit::multiline(&mut form.description)
-                            .desired_rows(4)
-                            .desired_width(420.0),
-                    );
-                    ui.label(theme::muted(
-                        "Runs the local fixture agent: Understand, then Clarify. Real agents arrive with the Claude Code step (S6).",
-                    ));
-                    let enter = ctx.input(|input| {
-                        input.key_pressed(egui::Key::Enter) && input.modifiers.command
-                    });
+                    ui.set_width(520.0);
+                    start = composer::show(ui, form, "Ctrl+Enter");
                     if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
                         close = true;
                     }
-                    ui.horizontal(|ui| {
-                        let ready = !form.title.trim().is_empty();
-                        if ui.add_enabled(ready, theme::primary("Start")).clicked()
-                            || (enter && ready)
-                        {
-                            start = Some(Action::Start {
-                                title: form.title.clone(),
-                                description: form.description.clone(),
-                                attachments: Vec::new(),
-                            });
-                        }
-                        if ui.button("Cancel").clicked() {
-                            close = true;
-                        }
-                    });
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
                 });
         }
         if let Some(action) = start {
@@ -511,7 +513,7 @@ impl App {
         ));
         ui.add_space(12.0);
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
+            ui.set_width(ui.available_width() - 38.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Today").strong());
                 theme::cost_tag(ui, false);
@@ -729,41 +731,10 @@ impl App {
     fn home_screen(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("What should it work on?").size(32.0).strong());
         ui.label(theme::muted(
-            "Describe a change. It reads the code, asks only what it must, and shows every step.",
+            "Describe a change. It reads the code, asks only what it must, and shows every step. Real agents are coming soon: for now a practice agent runs.",
         ));
         ui.add_space(14.0);
-        let mut start = None;
-        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
-            ui.add(
-                egui::TextEdit::singleline(&mut self.home.title)
-                    .hint_text("A short title, e.g. Fix the timezone bug")
-                    .desired_width(f32::INFINITY),
-            );
-            ui.add_space(6.0);
-            ui.add(
-                egui::TextEdit::multiline(&mut self.home.description)
-                    .hint_text("What should change? (optional)")
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY),
-            );
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                let ready = !self.home.title.trim().is_empty();
-                let enter = ui
-                    .input(|input| input.key_pressed(egui::Key::Enter) && input.modifiers.command);
-                if ui.add_enabled(ready, theme::primary("Start")).clicked() || (enter && ready) {
-                    start = Some(Action::Start {
-                        title: self.home.title.clone(),
-                        description: self.home.description.clone(),
-                        attachments: Vec::new(),
-                    });
-                }
-                ui.label(theme::muted(
-                    "Ctrl+Enter. Real agents are coming soon: for now it runs the practice agent through Understand.",
-                ));
-            });
-        });
+        let start = composer::show(ui, &mut self.home, "Ctrl+Enter");
         if let Some(action) = start {
             self.home = NewTicket::default();
             self.new_started = true;
@@ -814,7 +785,7 @@ impl App {
 fn home_row(ui: &mut egui::Ui, view: &TicketView, action: &str) -> bool {
     let mut clicked = false;
     theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-        ui.set_width(ui.available_width() - 34.0);
+        ui.set_width(ui.available_width() - 38.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new(&view.title).size(16.0).strong());
             let (text, fill, color) = badge_colors(view.badge, view);
