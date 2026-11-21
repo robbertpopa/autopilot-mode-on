@@ -195,3 +195,126 @@ fn a_hung_run_is_killed_at_the_configured_timeout() {
     );
     assert!(started.elapsed() < Duration::from_secs(15));
 }
+
+fn build_agent(data: &std::path::Path) -> ClaudeAgent {
+    agent().with_build(autopilot_agent_claude::BuildConfig {
+        hook_command: "autopilot hook".into(),
+        data_dir: data.to_path_buf(),
+    })
+}
+
+fn build_turn(
+    agent: &ClaudeAgent,
+    worktree: &std::path::Path,
+    session: autopilot_agent::SessionUse,
+    prompt: &str,
+) -> Vec<AgentEvent> {
+    let ticket = Ticket {
+        id: "build-1".into(),
+        title: "Sample".into(),
+        description: String::new(),
+    };
+    agent
+        .start_build(autopilot_agent::BuildRequest {
+            ticket: &ticket,
+            worktree,
+            prompt,
+            session,
+            turns_left: 5,
+            budget_left: None,
+        })
+        .unwrap()
+        .collect()
+}
+
+// Invariant: a build turn runs in the worktree it was given, under the hook
+// and the same flags on resume, and the provider session id is reported only
+// as an opaque reference. Driven through a real process and the real map file.
+#[test]
+fn a_build_turn_runs_in_its_worktree_and_resumes_by_reference() {
+    use autopilot_agent::SessionUse;
+    let data = tempfile::tempdir().unwrap();
+    let tree = tempfile::tempdir().unwrap();
+    let agent = build_agent(data.path());
+
+    let first = build_turn(
+        &agent,
+        tree.path(),
+        SessionUse::Fresh,
+        "scenario:record-args",
+    );
+    assert!(matches!(first.last(), Some(AgentEvent::BuildDone)));
+    let reference = first
+        .iter()
+        .find_map(|e| match e {
+            AgentEvent::Session(reference) => Some(reference.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        tree.path().join("draft.txt").is_file(),
+        "ran in the worktree"
+    );
+    assert!(first.iter().any(|e| matches!(e, AgentEvent::Cost { .. })));
+
+    let recorded = std::fs::read_to_string(tree.path().join(".fake-args")).unwrap();
+    let args: Vec<&str> = recorded.lines().collect();
+    let at = args.iter().position(|a| *a == "--session-id").unwrap();
+    let uuid = args[at + 1].to_owned();
+    assert!(
+        args.iter().any(|a| a.contains("PreToolUse")),
+        "the hook is configured"
+    );
+    assert!(
+        !format!("{first:?}").contains(&uuid),
+        "the provider id must not appear in events"
+    );
+
+    let second = build_turn(
+        &agent,
+        tree.path(),
+        SessionUse::Resume(reference.clone()),
+        "scenario:record-args",
+    );
+    assert!(matches!(second.last(), Some(AgentEvent::BuildDone)));
+    let recorded = std::fs::read_to_string(tree.path().join(".fake-args")).unwrap();
+    let args: Vec<&str> = recorded.lines().collect();
+    let at = args.iter().position(|a| *a == "--resume").unwrap();
+    assert_eq!(
+        args[at + 1],
+        uuid,
+        "the reference leads back to the same session"
+    );
+    assert!(
+        second
+            .iter()
+            .any(|e| matches!(e, AgentEvent::Session(r) if *r == reference))
+    );
+}
+
+#[test]
+fn a_build_turn_is_refused_without_build_configuration_or_for_an_unknown_session() {
+    use autopilot_agent::{BuildRequest, SessionUse};
+    let data = tempfile::tempdir().unwrap();
+    let tree = tempfile::tempdir().unwrap();
+    let ticket = Ticket {
+        id: "build-2".into(),
+        title: "Sample".into(),
+        description: String::new(),
+    };
+    let request = |session| BuildRequest {
+        ticket: &ticket,
+        worktree: tree.path(),
+        prompt: "x",
+        session,
+        turns_left: 1,
+        budget_left: None,
+    };
+    assert!(agent().start_build(request(SessionUse::Fresh)).is_err());
+    let unknown = SessionUse::Resume("session-deadbeef".into());
+    assert!(
+        build_agent(data.path())
+            .start_build(request(unknown))
+            .is_err()
+    );
+}

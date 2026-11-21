@@ -169,7 +169,12 @@ fn pump(
     };
     let pumped = loop {
         let kind = match run.next() {
-            Some(AgentEvent::Started) => continue,
+            Some(AgentEvent::Started | AgentEvent::Session(_)) => continue,
+            Some(AgentEvent::BuildDone) => {
+                break Pumped::Failed(
+                    io::Error::other("a step that expects a result got a build result").into(),
+                );
+            }
             Some(AgentEvent::Message { summary }) => Event::AgentActivity { summary },
             Some(AgentEvent::Cost { amount, estimated }) => Event::CostTick { amount, estimated },
             Some(AgentEvent::Result(result)) => break Pumped::Understanding(result),

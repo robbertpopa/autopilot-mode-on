@@ -42,6 +42,7 @@ dependencies = [
  "autopilot-core",
  "autopilot-process",
  "autopilot-profile",
+ "getrandom",
  "schemars",
  "serde",
  "serde_json",
@@ -84,6 +85,7 @@ dependencies = [
  "autopilot-core",
  "autopilot-engine",
  "autopilot-pipeline",
+ "autopilot-policy",
  "autopilot-profile",
  "clap",
  "serde_json",
@@ -122,6 +124,7 @@ dependencies = [
  "autopilot-core",
  "autopilot-profile",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -161,6 +164,7 @@ dependencies = [
  "autopilot-core",
  "autopilot-profile",
  "globset",
+ "serde_json",
  "thiserror",
 ]
 

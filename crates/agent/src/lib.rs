@@ -11,7 +11,9 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use autopilot_core::{Money, Plan, Step, Ticket, Understanding};
+use std::path::Path;
+
+use autopilot_core::{Money, Plan, SessionId, Step, Ticket, Understanding};
 
 pub type AgentError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -28,9 +30,35 @@ pub struct StepRequest<'a> {
     pub context: &'a str,
 }
 
+/// One build turn in a ticket's worktree.
+pub struct BuildRequest<'a> {
+    pub ticket: &'a Ticket,
+    /// Directory the agent works in. Absolute.
+    pub worktree: &'a Path,
+    /// The prompt: the approved plan on a first turn, a failure note on a
+    /// refine turn, or a summary of what failed for a fresh session.
+    pub prompt: &'a str,
+    pub session: SessionUse,
+    /// What is left of the step's caps. The adapter passes them to the
+    /// provider as that call's own limits.
+    pub turns_left: u32,
+    pub budget_left: Option<Money>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionUse {
+    /// Start a new provider session. The adapter reports its opaque reference.
+    Fresh,
+    /// Continue the session behind this reference.
+    Resume(SessionId),
+}
+
 #[derive(Debug)]
 pub enum AgentEvent {
     Started,
+    /// The opaque local reference of the session this run uses. The provider's
+    /// own identifier never leaves the adapter.
+    Session(SessionId),
     Message {
         summary: String,
     },
@@ -42,6 +70,8 @@ pub enum AgentEvent {
     },
     Result(Understanding),
     PlanResult(Plan),
+    /// A build turn ended normally. Its effect is in the worktree.
+    BuildDone,
     Stopped(String),
     Failed(AgentError),
 }
@@ -51,6 +81,18 @@ pub trait Agent {
     /// Returns an error if the request cannot be started. A running step
     /// reports failure through its event stream.
     fn start(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError>;
+
+    /// Run one build turn. Adapters that cannot build keep this default.
+    ///
+    /// # Errors
+    /// Returns an error if the request cannot be started or is unsupported.
+    fn start_build(&self, _request: BuildRequest<'_>) -> Result<AgentRun, AgentError> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this agent cannot run the Build step",
+        )
+        .into())
+    }
 
     /// Start the Plan step. Adapters that cannot plan keep this default.
     ///
@@ -80,6 +122,11 @@ impl AgentContext {
     /// Report a bounded, safe-to-display activity summary.
     pub fn message(&self, summary: String) {
         let _ = self.events.send(AgentEvent::Message { summary });
+    }
+
+    /// Report the opaque reference of the session this run uses.
+    pub fn session(&self, reference: SessionId) {
+        let _ = self.events.send(AgentEvent::Session(reference));
     }
 
     pub fn cost(&self, amount: Money, estimated: bool) {
@@ -127,6 +174,16 @@ impl AgentRun {
         Self::spawn_with(work, AgentEvent::PlanResult)
     }
 
+    /// Like [`AgentRun::spawn`] for a build turn, which has no structured result.
+    ///
+    /// # Errors
+    /// Returns an error if the worker thread cannot be started.
+    pub fn spawn_build(
+        work: impl FnOnce(AgentContext) -> Result<(), AgentError> + Send + 'static,
+    ) -> io::Result<Self> {
+        Self::spawn_with(work, |()| AgentEvent::BuildDone)
+    }
+
     fn spawn_with<T: Send + 'static>(
         work: impl FnOnce(AgentContext) -> Result<T, AgentError> + Send + 'static,
         wrap: fn(T) -> AgentEvent,
@@ -172,7 +229,12 @@ impl Iterator for AgentRun {
         let event = self.events.as_ref()?.recv().ok();
         if !matches!(
             event,
-            Some(AgentEvent::Started | AgentEvent::Message { .. } | AgentEvent::Cost { .. })
+            Some(
+                AgentEvent::Started
+                    | AgentEvent::Message { .. }
+                    | AgentEvent::Session(_)
+                    | AgentEvent::Cost { .. }
+            )
         ) {
             self.events = None;
         }

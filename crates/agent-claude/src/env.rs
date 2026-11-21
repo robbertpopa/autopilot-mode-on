@@ -77,6 +77,35 @@ pub fn child_env(
     Ok(child)
 }
 
+/// The environment for a build turn: the same allowlist, plus settings that
+/// leave Git with no way to authenticate. A push the hook missed would
+/// otherwise use whatever credential helper this machine has configured, which
+/// can hold the owner's real tokens.
+///
+/// # Errors
+/// Returns an error if an API step has no dedicated key.
+pub fn build_env(
+    auth: Auth,
+    parent: impl IntoIterator<Item = (OsString, OsString)>,
+) -> Result<Vec<(OsString, OsString)>, EnvError> {
+    let mut child = child_env(auth, parent)?;
+    // Command-scope config has the highest precedence. An empty value resets
+    // the helper list, so the system and global helpers are dropped.
+    for (name, value) in [
+        ("GIT_TERMINAL_PROMPT", "0"),
+        ("GCM_INTERACTIVE", "never"),
+        ("GIT_ASKPASS", ""),
+        ("SSH_ASKPASS", ""),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_CONFIG_COUNT", "1"),
+        ("GIT_CONFIG_KEY_0", "credential.helper"),
+        ("GIT_CONFIG_VALUE_0", ""),
+    ] {
+        child.push((name.into(), value.into()));
+    }
+    Ok(child)
+}
+
 /// Windows names are case-insensitive. Matching that way everywhere is safe
 /// because no allowed name differs from another only by case.
 fn name_is(name: &OsStr, expected: &str) -> bool {
