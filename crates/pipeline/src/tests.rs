@@ -1,5 +1,6 @@
 use autopilot_core::{
-    Event, Money, NewEvent, RecordedEvent, RequestId, Step, TicketId, Understanding,
+    Ambiguity, Clarity, Event, Money, NewEvent, RecordedEvent, RequestId, Step, TicketId,
+    Understanding,
 };
 
 use super::*;
@@ -51,8 +52,12 @@ fn result_event() -> NewEvent {
         Event::UnderstandResult {
             result: Understanding {
                 summary: "s".into(),
+                ambiguity: Ambiguity::all(Clarity::Clear),
+                open_questions: vec![],
                 assumptions: vec![],
                 needs_design: false,
+                ui_files: vec![],
+                files_touched: vec![],
             },
         },
     )
