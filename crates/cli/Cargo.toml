@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 autopilot-accounts = { path = "../accounts" }
+autopilot-agent = { path = "../agent" }
 autopilot-agent-claude = { path = "../agent-claude" }
 autopilot-agent-fixture = { path = "../agent-fixture" }
 autopilot-core.workspace = true

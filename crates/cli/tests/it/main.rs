@@ -261,3 +261,53 @@ fn ask_after_and_project_override_are_driven_from_the_cli() {
     let recovered = json_line(&autopilot(&["recover", "e2e-2"], &data));
     assert_eq!(recovered["interrupted"], serde_json::json!([]));
 }
+
+// Invariant: Understand, Clarify (skipped), Plan and the owner's approval run
+// from the CLI against a fake `claude`, and the approved plan is in the status.
+#[test]
+fn a_plan_is_made_approved_and_reported_from_the_cli() {
+    let scratch = tempfile::tempdir().unwrap();
+    let data = scratch.path().join("data");
+    assert!(run_claude("plain", &data, scratch.path()).status.success());
+    let skipped = json_line(&autopilot(&["clarify", "e2e-1"], &data));
+    assert_eq!(skipped["clarify"], "skipped");
+
+    let ticket = scratch.path().join("ticket.json");
+    let fake = fake_claude();
+    let planned = json_line(&autopilot(
+        &[
+            "run-step",
+            "--step",
+            "plan",
+            "--agent",
+            "claude",
+            "--claude-path",
+            fake.to_str().unwrap(),
+            "--ticket",
+            ticket.to_str().unwrap(),
+        ],
+        &data,
+    ));
+    assert_eq!(planned["result"]["criteria"][0]["id"], "c1");
+    let status = json_line(&autopilot(&["status", "e2e-1", "--json"], &data));
+    assert_eq!(status["steps"][3]["state"], "asking");
+
+    let waiting = json_line(&autopilot(&["inbox", "list"], &data));
+    assert!(
+        waiting["body"]["action"]
+            .as_str()
+            .unwrap()
+            .contains("approve the plan")
+    );
+    let id = waiting["id"].as_str().unwrap().to_owned();
+    json_line(&autopilot(&["inbox", "approve", &id], &data));
+    let status = json_line(&autopilot(&["status", "e2e-1", "--json"], &data));
+    assert_eq!(status["steps"][3]["state"], "passed");
+    let lines = status["in_short"].as_array().unwrap();
+    assert!(
+        lines
+            .iter()
+            .any(|l| l["step"] == "plan" && l["line"].as_str().unwrap().starts_with("2 criteria."))
+    );
+    assert!(data.join("approved-plans").join("e2e-1.json").is_file());
+}

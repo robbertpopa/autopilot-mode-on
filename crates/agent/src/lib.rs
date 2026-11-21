@@ -11,7 +11,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use autopilot_core::{Money, Step, Ticket, Understanding};
+use autopilot_core::{Money, Plan, Step, Ticket, Understanding};
 
 pub type AgentError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -24,6 +24,8 @@ pub struct Stopped(pub String);
 pub struct StepRequest<'a> {
     pub step: Step,
     pub ticket: &'a Ticket,
+    /// What earlier steps established, as text for the prompt. Empty for Understand.
+    pub context: &'a str,
 }
 
 #[derive(Debug)]
@@ -39,6 +41,7 @@ pub enum AgentEvent {
         estimated: bool,
     },
     Result(Understanding),
+    PlanResult(Plan),
     Stopped(String),
     Failed(AgentError),
 }
@@ -48,6 +51,18 @@ pub trait Agent {
     /// Returns an error if the request cannot be started. A running step
     /// reports failure through its event stream.
     fn start(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError>;
+
+    /// Start the Plan step. Adapters that cannot plan keep this default.
+    ///
+    /// # Errors
+    /// Returns an error if the request cannot be started or is unsupported.
+    fn start_plan(&self, _request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this agent cannot run the Plan step",
+        )
+        .into())
+    }
 }
 
 #[derive(Clone)]
@@ -99,6 +114,23 @@ impl AgentRun {
     pub fn spawn(
         work: impl FnOnce(AgentContext) -> Result<Understanding, AgentError> + Send + 'static,
     ) -> io::Result<Self> {
+        Self::spawn_with(work, AgentEvent::Result)
+    }
+
+    /// Like [`AgentRun::spawn`] for a Plan result.
+    ///
+    /// # Errors
+    /// Returns an error if the worker thread cannot be started.
+    pub fn spawn_plan(
+        work: impl FnOnce(AgentContext) -> Result<Plan, AgentError> + Send + 'static,
+    ) -> io::Result<Self> {
+        Self::spawn_with(work, AgentEvent::PlanResult)
+    }
+
+    fn spawn_with<T: Send + 'static>(
+        work: impl FnOnce(AgentContext) -> Result<T, AgentError> + Send + 'static,
+        wrap: fn(T) -> AgentEvent,
+    ) -> io::Result<Self> {
         let (sender, events) = mpsc::channel();
         let cancel = CancelHandle(Arc::new(AtomicBool::new(false)));
         let context = AgentContext {
@@ -111,7 +143,7 @@ impl AgentRun {
             }
             // The stream must terminate even if another thread retains a context.
             let terminal = match panic::catch_unwind(AssertUnwindSafe(|| work(context))) {
-                Ok(Ok(result)) => AgentEvent::Result(result),
+                Ok(Ok(result)) => wrap(result),
                 Ok(Err(error)) => match error.downcast::<Stopped>() {
                     Ok(stopped) => AgentEvent::Stopped(stopped.0),
                     Err(error) => AgentEvent::Failed(error),

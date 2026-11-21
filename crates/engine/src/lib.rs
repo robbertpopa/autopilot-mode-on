@@ -7,10 +7,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use autopilot_agent::{Agent, AgentError, AgentEvent, StepRequest};
+use autopilot_agent::{Agent, AgentError, AgentEvent, AgentRun, StepRequest};
 use autopilot_core::{
-    AttemptId, Event, NewEvent, OpenQuestion, RecordedEvent, RequestId, Step, Ticket, TicketId,
-    Understanding,
+    AttemptId, Event, NewEvent, OpenQuestion, Plan, RecordedEvent, RequestId, Step, Ticket,
+    TicketId, Understanding,
 };
 use autopilot_pipeline::{
     StepState,
@@ -20,7 +20,9 @@ use autopilot_pipeline::{
 };
 use autopilot_store::{SqliteStore, Store, StoreError};
 
+mod plan;
 mod settings;
+pub use plan::{approved_plan, run_plan};
 pub use settings::{effective_overrides, override_settings, project_overrides};
 
 pub(crate) const DATABASE: &str = "events.sqlite3";
@@ -113,42 +115,23 @@ pub fn run_understand_with(
         Err(StoreError::SequenceConflict { .. }) => return Err(Error::AlreadyStarted),
         result => result?,
     };
-    let mut last = start.last().map_or(0, |record| record.seq);
+    let last = start.last().map_or(0, |record| record.seq);
 
-    let response = match agent.start(StepRequest {
+    let started = agent.start(StepRequest {
         step: Step::Understand,
         ticket,
-    }) {
-        Ok(mut run) => loop {
-            match run.next() {
-                Some(AgentEvent::Started) => {}
-                Some(AgentEvent::Message { summary }) => {
-                    last = record(
-                        &mut store,
-                        &ticket.id,
-                        last,
-                        Event::AgentActivity { summary },
-                    )?;
-                }
-                Some(AgentEvent::Cost { amount, estimated }) => {
-                    last = record(
-                        &mut store,
-                        &ticket.id,
-                        last,
-                        Event::CostTick { amount, estimated },
-                    )?;
-                }
-                Some(AgentEvent::Result(result)) => break Ok(result),
-                Some(AgentEvent::Stopped(reason)) => break Err(Outcome::Stopped(reason)),
-                Some(AgentEvent::Failed(error)) => break Err(Outcome::Failed(error)),
-                None => {
-                    break Err(Outcome::Failed(
-                        io::Error::other("agent stream ended without a result").into(),
-                    ));
-                }
-            }
-        },
-        Err(error) => Err(Outcome::Failed(error)),
+        context: "",
+    });
+    let (response, last) = match pump(&mut store, &ticket.id, UNDERSTAND, last, started)? {
+        (Pumped::Understanding(result), last) => (Ok(result), last),
+        (Pumped::Plan(_), last) => (
+            Err(Outcome::Failed(
+                io::Error::other("the agent answered Understand with a plan").into(),
+            )),
+            last,
+        ),
+        (Pumped::Stopped(reason), last) => (Err(Outcome::Stopped(reason)), last),
+        (Pumped::Failed(error), last) => (Err(Outcome::Failed(error)), last),
     };
     let asked = response.is_ok() && ask_after;
     let result = conclude(&mut store, &ticket.id, last, response, ask_after)?;
@@ -163,8 +146,63 @@ pub fn run_understand_with(
     Ok(result)
 }
 
+/// How a step's agent run ended.
+enum Pumped {
+    Understanding(Understanding),
+    Plan(Plan),
+    Stopped(String),
+    Failed(AgentError),
+}
+
+/// Record the run's activity and cost as it arrives and return how it ended
+/// with the new last sequence number.
+fn pump(
+    store: &mut SqliteStore,
+    ticket: &TicketId,
+    step: Option<Step>,
+    mut last: u64,
+    started: Result<AgentRun, AgentError>,
+) -> Result<(Pumped, u64), Error> {
+    let mut run = match started {
+        Ok(run) => run,
+        Err(error) => return Ok((Pumped::Failed(error), last)),
+    };
+    let pumped = loop {
+        let kind = match run.next() {
+            Some(AgentEvent::Started) => continue,
+            Some(AgentEvent::Message { summary }) => Event::AgentActivity { summary },
+            Some(AgentEvent::Cost { amount, estimated }) => Event::CostTick { amount, estimated },
+            Some(AgentEvent::Result(result)) => break Pumped::Understanding(result),
+            Some(AgentEvent::PlanResult(plan)) => break Pumped::Plan(plan),
+            Some(AgentEvent::Stopped(reason)) => break Pumped::Stopped(reason),
+            Some(AgentEvent::Failed(error)) => break Pumped::Failed(error),
+            None => {
+                break Pumped::Failed(
+                    io::Error::other("agent stream ended without a result").into(),
+                );
+            }
+        };
+        let committed = store.append(ticket, last, &[event(timestamp()?, step, kind)])?;
+        last = committed.last().map_or(last, |record| record.seq);
+    };
+    Ok((pumped, last))
+}
+
 fn approval_id(step: Step) -> RequestId {
     RequestId::from(format!("{}-approval", step.as_str()))
+}
+
+fn plan_request(ticket: &TicketId, plan: &Plan) -> Request {
+    let analysis = autopilot_pipeline::analyze::analyze(plan);
+    Request {
+        id: approval_id(Step::Plan),
+        ticket: ticket.clone(),
+        body: RequestBody::Approval {
+            action: format!("approve the plan ({})", analysis.describe()),
+            // A plan that cannot be checked as written is a forced confirmation.
+            forced: analysis.blocking(),
+        },
+    }
 }
 
 fn approval_request(ticket: &TicketId, id: &RequestId, step: Step, forced: bool) -> Request {
@@ -238,17 +276,6 @@ fn conclude(
             Err(Error::Agent(error))
         }
     }
-}
-
-/// Append one Understand event and return the new last sequence number.
-fn record(
-    store: &mut SqliteStore,
-    ticket: &TicketId,
-    last: u64,
-    kind: Event,
-) -> Result<u64, Error> {
-    let committed = store.append(ticket, last, &[event(timestamp()?, UNDERSTAND, kind)])?;
-    Ok(committed.last().map_or(last, |record| record.seq))
 }
 
 /// A limit stop is kept apart from failure so callers do not retry it blindly.
@@ -452,7 +479,9 @@ pub fn sync_inbox(directory: &Path, ticket: &TicketId) -> Result<Vec<RequestId>,
                 commit_clarify_answer(&mut store, ticket, &history, request, &choices)?;
             }
             Reply::Approval { decision, .. } => {
-                commit_approval(&mut store, ticket, &history, step, request, &decision)?;
+                commit_approval(
+                    &mut store, directory, ticket, &history, step, request, &decision,
+                )?;
             }
         }
         inbox.clean_up(request)?;
@@ -503,6 +532,11 @@ fn waiting_request(
             },
         });
     }
+    if step == Step::Plan {
+        let plan =
+            plan::latest_plan(history).ok_or_else(|| Error::History("no Plan result".into()))?;
+        return Ok(plan_request(ticket, plan));
+    }
     Ok(approval_request(ticket, request, step, true))
 }
 
@@ -510,6 +544,7 @@ fn waiting_request(
 /// reply. Reject stops the step as interrupted so it can be run again.
 fn commit_approval(
     store: &mut SqliteStore,
+    directory: &Path,
     ticket: &TicketId,
     history: &[RecordedEvent],
     step: Step,
@@ -520,27 +555,26 @@ fn commit_approval(
     let answer =
         serde_json::to_string(decision).map_err(|error| Error::History(error.to_string()))?;
     let at = timestamp()?;
-    let closing = match decision {
-        Decision::Reject => Event::Interrupted {
-            reason: "rejected by the owner".into(),
+    let rejected = matches!(decision, Decision::Reject);
+    let mut events = vec![event(
+        at,
+        Some(step),
+        Event::Answered {
+            request: request.clone(),
+            answer,
         },
-        Decision::Approve | Decision::Edit(_) => Event::StepFinished,
-    };
-    store.append(
-        ticket,
-        last,
-        &[
-            event(
-                at,
-                Some(step),
-                Event::Answered {
-                    request: request.clone(),
-                    answer,
-                },
-            ),
-            event(at, Some(step), closing),
-        ],
-    )?;
+    )];
+    if rejected {
+        let reason = "rejected by the owner".into();
+        events.push(event(at, Some(step), Event::Interrupted { reason }));
+    } else {
+        if step == Step::Plan {
+            let sha256 = plan::store_approved(directory, ticket, history)?;
+            events.push(event(at, Some(step), Event::PlanApproved { sha256 }));
+        }
+        events.push(event(at, Some(step), Event::StepFinished));
+    }
+    store.append(ticket, last, &events)?;
     Ok(())
 }
 

@@ -143,6 +143,7 @@ enum InboxAction {
 #[derive(Clone, Copy, ValueEnum)]
 enum Step {
     Understand,
+    Plan,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -177,7 +178,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     let mut out = io::stdout().lock();
     match cli.command {
         Command::RunStep {
-            step: Step::Understand,
+            step,
             ticket,
             agent,
             auth,
@@ -194,12 +195,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             let result = match agent {
                 Agent::Fake => {
                     let agent = FixtureAgent::beside(&exe)?;
-                    autopilot_engine::run_understand_with(
-                        &cli.data_dir,
-                        &ticket,
-                        &agent,
-                        ask_after,
-                    )?
+                    run_step(&cli.data_dir, step, &ticket, &agent, ask_after)?
                 }
                 Agent::Claude => {
                     let config = ClaudeConfig {
@@ -215,12 +211,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                         timeout: Duration::from_secs(timeout_seconds),
                     };
                     let agent = claude_agent(&exe, config)?;
-                    autopilot_engine::run_understand_with(
-                        &cli.data_dir,
-                        &ticket,
-                        &agent,
-                        ask_after,
-                    )?
+                    run_step(&cli.data_dir, step, &ticket, &agent, ask_after)?
                 }
             };
             serde_json::to_writer(
@@ -280,6 +271,7 @@ fn run_override(
     };
     let step = match step {
         Step::Understand => CoreStep::Understand,
+        Step::Plan => CoreStep::Plan,
     };
     autopilot_engine::override_settings(
         data_dir,
@@ -289,6 +281,21 @@ fn run_override(
     )?;
     writeln!(out, "{}", serde_json::json!({"recorded": true}))?;
     Ok(())
+}
+
+fn run_step(
+    data_dir: &Path,
+    step: Step,
+    ticket: &Ticket,
+    agent: &impl autopilot_agent::Agent,
+    ask_after: Option<bool>,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    Ok(match step {
+        Step::Understand => serde_json::to_value(autopilot_engine::run_understand_with(
+            data_dir, ticket, agent, ask_after,
+        )?)?,
+        Step::Plan => serde_json::to_value(autopilot_engine::run_plan(data_dir, ticket, agent)?)?,
+    })
 }
 
 fn claude_agent(exe: &Path, config: ClaudeConfig) -> Result<ClaudeAgent, Box<dyn Error>> {

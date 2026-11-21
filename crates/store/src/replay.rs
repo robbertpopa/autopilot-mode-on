@@ -201,6 +201,8 @@ impl TicketState {
             Event::Done => self.status = TicketStatus::Done,
             Event::AgentActivity { .. }
             | Event::UnderstandResult { .. }
+            | Event::PlanResult { .. }
+            | Event::PlanApproved { .. }
             | Event::RoundStarted { .. }
             | Event::CheckResult { .. }
             | Event::SettingsOverridden { .. } => {}

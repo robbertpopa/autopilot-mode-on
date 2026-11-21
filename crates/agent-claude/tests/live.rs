@@ -38,6 +38,7 @@ fn a_synthetic_understand_call_returns_structured_output_within_the_cap() {
         .start(StepRequest {
             step: Step::Understand,
             ticket: &ticket,
+            context: "",
         })
         .unwrap();
     let events: Vec<_> = run.collect();

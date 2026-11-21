@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+pub mod analyze;
 pub mod clarify;
 pub mod inbox;
 pub mod overrides;
@@ -121,6 +122,8 @@ impl TicketState {
             }
             Event::AgentActivity { .. }
             | Event::UnderstandResult { .. }
+            | Event::PlanResult { .. }
+            | Event::PlanApproved { .. }
             | Event::RoundStarted { .. }
             | Event::CheckResult { .. } => {
                 self.require(event, |s| matches!(s, StepState::Running))?;

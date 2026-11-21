@@ -43,6 +43,7 @@ dependencies = [
  "autopilot-process",
  "autopilot-profile",
  "schemars",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",
@@ -64,6 +65,7 @@ name = "autopilot-cli"
 version = "0.1.0"
 dependencies = [
  "autopilot-accounts",
+ "autopilot-agent",
  "autopilot-agent-claude",
  "autopilot-agent-fixture",
  "autopilot-core",
@@ -93,6 +95,7 @@ dependencies = [
  "autopilot-pipeline",
  "autopilot-store",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
 ]

@@ -11,8 +11,8 @@ use autopilot_core::{
     Ambiguity, Clarity, Event, Money, OpenQuestion, Ticket, TicketId, Understanding,
 };
 use autopilot_engine::{
-    ClarifyStart, Error, answer_clarify, effective_overrides, override_settings, recover,
-    run_understand, run_understand_with, start_clarify, sync_inbox, watch,
+    ClarifyStart, Error, answer_clarify, approved_plan, effective_overrides, override_settings,
+    recover, run_plan, run_understand, run_understand_with, start_clarify, sync_inbox, watch,
 };
 use autopilot_pipeline::{
     clarify::Choice,
@@ -539,4 +539,178 @@ fn understood_with(data: &std::path::Path, id: &str, ask: Option<bool>) -> Ticke
     };
     run_understand_with(data, &ticket, &agent, ask).unwrap();
     ticket.id
+}
+
+struct Planner(autopilot_core::Plan);
+
+impl Agent for Planner {
+    fn start(&self, _request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        Err(io::Error::other("planner only plans").into())
+    }
+
+    fn start_plan(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        assert!(request.context.contains("Summary:"));
+        let plan = self.0.clone();
+        Ok(AgentRun::spawn_plan(move |context| {
+            context.message("Drafting the plan.".into());
+            Ok(plan)
+        })?)
+    }
+}
+
+fn criterion(
+    id: &str,
+    verify: autopilot_core::Verify,
+    verification: &str,
+) -> autopilot_core::Criterion {
+    autopilot_core::Criterion {
+        id: id.into(),
+        text: "Row count equals ticket count".into(),
+        verify,
+        verification_id: verification.into(),
+    }
+}
+
+fn good_plan() -> autopilot_core::Plan {
+    autopilot_core::Plan {
+        criteria: vec![criterion("c1", autopilot_core::Verify::Test, "row_count")],
+        test_plan: vec!["run row_count".into()],
+        files: vec!["src/export.rs".into()],
+    }
+}
+
+fn ticket_for(id: &str) -> Ticket {
+    Ticket {
+        id: TicketId::from(id),
+        title: "Export".into(),
+        description: "plain".into(),
+    }
+}
+
+/// A ticket with Understand passed and Clarify skipped, ready to plan.
+fn ready_to_plan(id: &str) -> (tempfile::TempDir, Ticket) {
+    let data = tempfile::tempdir().unwrap();
+    let ticket = ticket_for(id);
+    let agent = Synthetic {
+        data_dir: data.path().into(),
+    };
+    run_understand(data.path(), &ticket, &agent).unwrap();
+    start_clarify(data.path(), &ticket.id).unwrap();
+    (data, ticket)
+}
+
+fn approve(
+    data: &std::path::Path,
+    ticket: &TicketId,
+    allow_for_project: bool,
+) -> Result<usize, Error> {
+    let inbox = Inbox::in_data_dir(data);
+    let id = inbox.requests().unwrap().remove(0).id;
+    let reply = Reply::Approval {
+        decision: Decision::Approve,
+        allow_for_project,
+    };
+    inbox.write_answer(&id, &reply).unwrap();
+    sync_inbox(data, ticket).map(|applied| applied.len())
+}
+
+// Invariant: the plan waits for approval; after approval the stored copy is
+// the one the log vouches for. Without the wait Build could start on a plan
+// nobody read.
+#[test]
+fn a_plan_is_approved_stored_and_read_back_with_its_hash() {
+    let (data, ticket) = ready_to_plan("plan-1");
+    assert!(matches!(
+        approved_plan(data.path(), &ticket.id),
+        Err(Error::NotReady(_))
+    ));
+    run_plan(data.path(), &ticket, &Planner(good_plan())).unwrap();
+    assert!(matches!(
+        last_kind(data.path(), &ticket.id),
+        Event::Asked { .. }
+    ));
+    assert!(matches!(
+        approved_plan(data.path(), &ticket.id),
+        Err(Error::NotReady(_))
+    ));
+    assert_eq!(approve(data.path(), &ticket.id, false).unwrap(), 1);
+    assert!(matches!(
+        last_kind(data.path(), &ticket.id),
+        Event::StepFinished
+    ));
+    assert_eq!(approved_plan(data.path(), &ticket.id).unwrap(), good_plan());
+}
+
+// Invariant: an agent that rewrites the stored plan after approval is caught,
+// so it cannot loosen its own acceptance criteria.
+#[test]
+fn an_altered_approved_plan_is_refused() {
+    let (data, ticket) = ready_to_plan("plan-2");
+    run_plan(data.path(), &ticket, &Planner(good_plan())).unwrap();
+    approve(data.path(), &ticket.id, false).unwrap();
+    let path = data.path().join("approved-plans").join("plan-2.json");
+    let mut edited = good_plan();
+    edited.criteria[0].text = "Anything goes".into();
+    std::fs::write(&path, serde_json::to_vec(&edited).unwrap()).unwrap();
+    assert!(matches!(
+        approved_plan(data.path(), &ticket.id),
+        Err(Error::History(_))
+    ));
+    std::fs::remove_file(&path).unwrap();
+    assert!(approved_plan(data.path(), &ticket.id).is_err());
+}
+
+// Invariant: a plan that cannot be checked as written asks as a forced
+// confirmation, so approving it cannot become a standing allowance.
+#[test]
+fn a_plan_with_an_unverifiable_criterion_is_a_forced_confirmation() {
+    let (data, ticket) = ready_to_plan("plan-3");
+    let mut plan = good_plan();
+    plan.criteria
+        .push(criterion("c2", autopilot_core::Verify::Unknown, ""));
+    run_plan(data.path(), &ticket, &Planner(plan)).unwrap();
+    let request = Inbox::in_data_dir(data.path())
+        .requests()
+        .unwrap()
+        .remove(0);
+    assert!(matches!(
+        request.body,
+        autopilot_pipeline::inbox::RequestBody::Approval { forced: true, .. }
+    ));
+    assert!(matches!(
+        approve(data.path(), &ticket.id, true),
+        Err(Error::Inbox(_))
+    ));
+    assert_eq!(approve(data.path(), &ticket.id, false).unwrap(), 1);
+}
+
+// Invariant: an invalid plan fails the step, and the step can be tried again.
+#[test]
+fn an_invalid_plan_fails_the_step_and_it_can_run_again() {
+    let (data, ticket) = ready_to_plan("plan-4");
+    let mut bad = good_plan();
+    bad.criteria.clear();
+    assert!(run_plan(data.path(), &ticket, &Planner(bad)).is_err());
+    assert!(matches!(
+        last_kind(data.path(), &ticket.id),
+        Event::Failed { .. }
+    ));
+    run_plan(data.path(), &ticket, &Planner(good_plan())).unwrap();
+    assert!(matches!(
+        last_kind(data.path(), &ticket.id),
+        Event::Asked { .. }
+    ));
+}
+
+#[test]
+fn planning_needs_understand_and_clarify_to_be_settled() {
+    let data = tempfile::tempdir().unwrap();
+    let ticket = ticket_for("plan-5");
+    assert!(run_plan(data.path(), &ticket, &Planner(good_plan())).is_err());
+    let (data, ticket) = understood_and_asking("ask");
+    let ticket = ticket_for(ticket.as_str());
+    assert!(matches!(
+        run_plan(data.path(), &ticket, &Planner(good_plan())),
+        Err(Error::NotReady(_))
+    ));
 }
