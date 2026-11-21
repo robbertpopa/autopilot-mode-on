@@ -84,7 +84,7 @@ fn a_good_claude_run_is_replayable_from_a_separate_process() {
         .map(|record| record["event"]["kind"].clone())
         .collect();
     let has = |name: &str| kinds.iter().any(|kind| kind["type"] == name);
-    assert!(has("agent_activity") && has("understand_result") && has("done"));
+    assert!(has("agent_activity") && has("understand_result") && has("step_finished"));
     // The subscription run is labelled an estimate, never a bill.
     assert!(
         kinds

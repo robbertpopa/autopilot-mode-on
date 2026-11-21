@@ -6,8 +6,11 @@ use std::{
 };
 
 use autopilot_agent::{Agent, AgentError, AgentRun, StepRequest, Stopped};
-use autopilot_core::{Ambiguity, Clarity, Event, Money, Ticket, TicketId, Understanding};
-use autopilot_engine::{Error, run_understand, watch};
+use autopilot_core::{
+    Ambiguity, Clarity, Event, Money, OpenQuestion, Ticket, TicketId, Understanding,
+};
+use autopilot_engine::{ClarifyStart, Error, answer_clarify, run_understand, start_clarify, watch};
+use autopilot_pipeline::clarify::Choice;
 
 struct Synthetic {
     data_dir: PathBuf,
@@ -16,6 +19,7 @@ struct Synthetic {
 impl Agent for Synthetic {
     fn start(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
         let fails = request.ticket.description == "fail";
+        let asks = request.ticket.description == "ask";
         let ticket = request.ticket.id.clone();
         let data_dir = self.data_dir.clone();
         Ok(AgentRun::spawn(move |context| {
@@ -40,7 +44,15 @@ impl Agent for Synthetic {
             Ok(Understanding {
                 summary: "Implement the sample change.".into(),
                 ambiguity: Ambiguity::all(Clarity::Clear),
-                open_questions: vec![],
+                open_questions: if asks {
+                    vec![OpenQuestion {
+                        question: "Which delimiter?".into(),
+                        options: vec!["Comma".into(), "Semicolon".into()],
+                        recommended: 1,
+                    }]
+                } else {
+                    vec![]
+                },
                 assumptions: vec![],
                 needs_design: false,
                 ui_files: vec![],
@@ -72,7 +84,10 @@ fn understand_saves_the_result_and_watch_can_resume_from_a_sequence() {
     let tail = watch(data.path(), &ticket.id, through_start).unwrap();
     assert!(tail.iter().all(|event| event.seq > through_start));
     assert!(tail.iter().any(|event| matches!(&event.event.kind, Event::UnderstandResult { result: stored } if stored == &result)));
-    assert!(matches!(tail.last().unwrap().event.kind, Event::Done));
+    assert!(matches!(
+        tail.last().unwrap().event.kind,
+        Event::StepFinished
+    ));
 }
 
 #[test]
@@ -146,4 +161,67 @@ fn a_limit_stop_is_recorded_as_interrupted_with_its_cost() {
             .iter()
             .any(|kind| matches!(kind, Event::Failed { .. } | Event::Done))
     );
+}
+
+fn understood(
+    description: &str,
+) -> Result<(tempfile::TempDir, TicketId), Box<dyn std::error::Error>> {
+    let data = tempfile::tempdir()?;
+    let ticket = Ticket {
+        id: TicketId::from("clarify-1"),
+        title: "Export".into(),
+        description: description.into(),
+    };
+    let agent = Synthetic {
+        data_dir: data.path().into(),
+    };
+    run_understand(data.path(), &ticket, &agent)?;
+    Ok((data, ticket.id))
+}
+
+// Invariant: a ticket with nothing to ask skips Clarify with the recorded
+// reason and does not stall waiting for an answer nobody can give.
+#[test]
+fn clarify_is_skipped_when_there_are_no_open_questions() {
+    let (data, ticket) = understood("plain").unwrap();
+    assert_eq!(
+        start_clarify(data.path(), &ticket).unwrap(),
+        ClarifyStart::Skipped("no open questions")
+    );
+    let last = watch(data.path(), &ticket, 0).unwrap().pop().unwrap();
+    assert!(matches!(
+        last.event.kind,
+        Event::StepSkipped { ref reason } if reason == "no open questions"
+    ));
+    assert!(matches!(
+        start_clarify(data.path(), &ticket),
+        Err(Error::NotReady(_))
+    ));
+}
+
+// Invariant: the question survives a restart (nothing is held in memory), and
+// accepting the recommendation records exactly one Q -> A pair, once.
+#[test]
+fn clarify_asks_then_records_the_recommended_answer_once() {
+    let (data, ticket) = understood("ask").unwrap();
+    let ClarifyStart::Asking { request, questions } = start_clarify(data.path(), &ticket).unwrap()
+    else {
+        panic!("expected a question");
+    };
+    assert_eq!(questions.len(), 1);
+    assert!(matches!(
+        answer_clarify(data.path(), &ticket, &request, &[]),
+        Err(Error::Answer(_))
+    ));
+    let pairs = answer_clarify(data.path(), &ticket, &request, &[Choice::Recommended]).unwrap();
+    assert_eq!(pairs[0].answer, "Semicolon");
+    let history = watch(data.path(), &ticket, 0).unwrap();
+    assert!(history.iter().any(|record| matches!(
+        &record.event.kind,
+        Event::Answered { answer, .. } if answer.contains("Semicolon") && answer.contains("Which delimiter?")
+    )));
+    assert!(matches!(
+        answer_clarify(data.path(), &ticket, &request, &[Choice::Recommended]),
+        Err(Error::NotReady(_))
+    ));
 }
