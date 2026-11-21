@@ -357,7 +357,7 @@ impl App {
                     ui.separator();
                     self.crumbs(ui);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("?").on_hover_text("Help").clicked() {
+                        if theme::named(ui.button("?").on_hover_text("Help"), "Help").clicked() {
                             self.help_open = !self.help_open;
                         }
                         let label = if self.light { "Dark" } else { "Light" };
@@ -538,6 +538,7 @@ impl App {
                 ui.label("A ticket: the box on top says what to do next. Click a step for its details.");
                 ui.label("Settings (bottom left): pipeline steps, cost, and who is signed in. Ctrl+N starts a ticket.");
                 ui.label("A grey control marked coming soon is not built yet.");
+                ui.label("Keyboard: Tab and Shift+Tab move between controls, Enter or Space press one, Escape closes a dialog.");
             });
             self.help_open = open;
         }

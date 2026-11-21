@@ -219,6 +219,15 @@ pub fn mono(text: impl Into<String>) -> RichText {
     RichText::new(text).monospace().color(TEXT_SOFT())
 }
 
+/// Give a button the name a screen reader says, for controls whose visible
+/// text is only a symbol.
+#[must_use]
+pub fn named(response: egui::Response, name: impl Into<String>) -> egui::Response {
+    let name = name.into();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+    response
+}
+
 /// A button for the one main action of a screen.
 pub fn primary(text: &str) -> egui::Button<'static> {
     egui::Button::new(
