@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)] // helpers outside #[test] functions
 
 use autopilot_agent::{Agent, AgentError, AgentRun, StepRequest, Stopped};
-use autopilot_core::{Money, Step, Ticket, TicketId, Understanding};
+use autopilot_core::{Ambiguity, Clarity, Money, Step, Ticket, TicketId, Understanding};
 use autopilot_pipeline::{StepState, fold};
 
 struct Scripted(&'static str);
@@ -16,8 +16,12 @@ impl Agent for Scripted {
             match how {
                 "ok" => Ok(Understanding {
                     summary: "s".into(),
+                    ambiguity: Ambiguity::all(Clarity::Clear),
+                    open_questions: vec![],
                     assumptions: vec![],
                     needs_design: false,
+                    ui_files: vec![],
+                    files_touched: vec![],
                 }),
                 "stop" => Err(Stopped("error_max_turns".into()).into()),
                 _ => Err(std::io::Error::other("boom").into()),

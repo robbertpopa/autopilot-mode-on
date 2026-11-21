@@ -6,7 +6,7 @@ use std::{
 };
 
 use autopilot_agent::{Agent, AgentError, AgentRun, StepRequest, Stopped};
-use autopilot_core::{Event, Money, Ticket, TicketId, Understanding};
+use autopilot_core::{Ambiguity, Clarity, Event, Money, Ticket, TicketId, Understanding};
 use autopilot_engine::{Error, run_understand, watch};
 
 struct Synthetic {
@@ -39,8 +39,12 @@ impl Agent for Synthetic {
             }
             Ok(Understanding {
                 summary: "Implement the sample change.".into(),
+                ambiguity: Ambiguity::all(Clarity::Clear),
+                open_questions: vec![],
                 assumptions: vec![],
                 needs_design: false,
+                ui_files: vec![],
+                files_touched: vec![],
             })
         })?)
     }

@@ -190,7 +190,18 @@ mod tests {
             .iter()
             .filter_map(|v| v.as_str())
             .collect();
-        assert_eq!(required, ["summary", "assumptions", "needs_design"]);
+        for field in [
+            "summary",
+            "ambiguity",
+            "open_questions",
+            "assumptions",
+            "needs_design",
+        ] {
+            assert!(required.contains(&field), "{field} must be required");
+        }
+        // Understand cannot see the repository, so these two stay optional.
+        assert!(!required.contains(&"ui_files"));
+        assert!(!required.contains(&"files_touched"));
     }
 
     #[test]

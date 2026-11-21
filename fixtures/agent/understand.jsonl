@@ -1,3 +1,3 @@
 {"type":"activity","summary":"Read the sample export ticket."}
 {"type":"fixture_metadata","version":1}
-{"type":"result","result":{"summary":"Add a CSV export for the ticket list.","assumptions":["Include the same tickets visible in the current list."],"needs_design":false}}
+{"type":"result","result":{"summary":"Add a CSV export for the ticket list.","ambiguity":{"functional_scope":"clear","domain_and_data":"clear","interaction_and_ux":"partial","non_functional":"clear","integrations":"clear","edge_cases_and_failures":"partial","constraints_and_trade_offs":"clear","terminology":"clear","completion_signals":"clear","misc":"clear"},"open_questions":[{"question":"Which delimiter?","options":["Comma","Semicolon"],"recommended":0}],"assumptions":["Include the same tickets visible in the current list."],"needs_design":false}}
