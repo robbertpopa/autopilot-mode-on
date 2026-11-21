@@ -22,6 +22,7 @@ use autopilot_pipeline::{
 use autopilot_store::{SqliteStore, Store, StoreError};
 
 mod build;
+mod change;
 mod control;
 mod plan;
 mod profile_edit;
@@ -30,6 +31,7 @@ mod settings;
 mod view;
 pub use autopilot_checks::resolve_executable;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
+pub use change::{Proposal, Reading, apply_to_project, apply_to_ticket, propose};
 pub use control::{request_pause, request_resume, request_stop};
 pub use plan::{approved_plan, run_plan};
 pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
