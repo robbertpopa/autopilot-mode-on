@@ -13,7 +13,7 @@ The standalone repository holds the current implementation and milestone status.
 
 | Item | File | State |
 |---|---|---|
-| S1 headless contract | `docs/spikes/S1-headless-contract.md` | [ ] |
+| S1 headless contract | `docs/spikes/S1-headless-contract.md` | [x] |
 | S2 plan-limit detection | `docs/spikes/S2-plan-limits.md` | [ ] |
 | S3 read Gru | `docs/spikes/S3-read-gru.md` | [x] |
 | S4 Claude Design headless | `docs/spikes/S4-claude-design-headless.md` | [ ] |
