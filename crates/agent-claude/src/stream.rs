@@ -5,6 +5,8 @@
 
 use serde_json::Value;
 
+use crate::pricing::Usage;
+
 const SUMMARY_CHARS: usize = 160;
 
 /// The terminal `result` frame, reduced to what the pipeline uses.
@@ -14,6 +16,9 @@ pub struct Finish {
     pub is_error: bool,
     pub structured_output: Option<Value>,
     pub cost_usd: Option<f64>,
+    pub usage: Option<Usage>,
+    /// The model named in the init frame. Used only to price token usage.
+    pub model: Option<String>,
     /// The error kind of the assistant frame that preceded the result, such
     /// as `rate_limit`. Kept for the failure message only.
     pub error_kind: Option<String>,
@@ -24,6 +29,7 @@ pub struct Decoder {
     pending: Vec<u8>,
     finish: Option<Finish>,
     last_error: Option<String>,
+    model: Option<String>,
 }
 
 impl Decoder {
@@ -63,7 +69,12 @@ impl Decoder {
             return;
         };
         match frame.get("type").and_then(Value::as_str) {
-            Some("system") => system(&frame, report),
+            Some("system") => {
+                if frame.get("subtype").and_then(Value::as_str) == Some("init") {
+                    self.model = frame.get("model").and_then(Value::as_str).map(bounded);
+                }
+                system(&frame, report);
+            }
             Some("assistant") => self.assistant(&frame, report),
             Some("rate_limit_event") => rate_limit(&frame, report),
             Some("result") => self.result(&frame),
@@ -118,8 +129,25 @@ impl Decoder {
                 .filter(|v| !v.is_null())
                 .cloned(),
             cost_usd: frame.get("total_cost_usd").and_then(Value::as_f64),
+            usage: frame.get("usage").map(usage),
+            model: self.model.clone(),
             error_kind: self.last_error.take(),
         });
+    }
+}
+
+/// Token counts use the Messages API field names. Missing fields count as zero.
+fn usage(value: &Value) -> Usage {
+    let count = |pointer: &str| value.pointer(pointer).and_then(Value::as_u64).unwrap_or(0);
+    let write_1h = count("/cache_creation/ephemeral_1h_input_tokens");
+    // Without the split, every cache write is priced as the cheaper 5-minute kind.
+    let write_total = count("/cache_creation_input_tokens");
+    Usage {
+        input: count("/input_tokens"),
+        output: count("/output_tokens"),
+        cache_read: count("/cache_read_input_tokens"),
+        cache_write_5m: write_total.saturating_sub(write_1h),
+        cache_write_1h: write_1h,
     }
 }
 
@@ -200,6 +228,24 @@ mod tests {
         assert!(!finish.is_error);
         assert_eq!(finish.cost_usd.and_then(microusd), Some(1_234));
         assert!(finish.structured_output.is_some());
+        assert_eq!(finish.model.as_deref(), Some("synthetic-model"));
+        let usage = finish.usage.unwrap();
+        assert_eq!((usage.input, usage.output, usage.cache_read), (10, 5, 0));
+    }
+
+    #[test]
+    fn cache_writes_are_split_by_duration_when_reported() {
+        let frame = serde_json::json!({
+            "cache_creation_input_tokens": 300,
+            "cache_creation": {"ephemeral_1h_input_tokens": 100},
+            "cache_read_input_tokens": 7
+        });
+        let usage = usage(&frame);
+        assert_eq!(
+            (usage.cache_write_5m, usage.cache_write_1h, usage.cache_read),
+            (200, 100, 7)
+        );
+        assert_eq!(super::usage(&serde_json::json!("junk")), Usage::default());
     }
 
     #[test]

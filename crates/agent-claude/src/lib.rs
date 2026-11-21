@@ -3,6 +3,7 @@
 mod auth;
 mod command;
 mod env;
+mod pricing;
 mod stream;
 
 use std::{
@@ -135,14 +136,26 @@ fn run_claude(
     }
     let finish = decoder.into_finish();
     // Cost is real even when the step failed, so it is reported first.
-    if let Some(micro) = finish
-        .as_ref()
-        .and_then(|f| f.cost_usd)
-        .and_then(stream::microusd)
-    {
-        context.cost(Money::from_microusd(micro), auth == Auth::Subscription);
+    if let Some((amount, estimated)) = finish.as_ref().and_then(|f| step_cost(f, auth)) {
+        context.cost(Money::from_microusd(amount), estimated);
     }
     conclude(&output.outcome, finish)
+}
+
+/// API steps are billed, so the provider's figure is the cost. A subscription
+/// has no bill: price the tokens with the table, and fall back to the CLI's own
+/// figure only when the model is not in it. Both are labelled estimates.
+fn step_cost(finish: &stream::Finish, auth: Auth) -> Option<(u64, bool)> {
+    let reported = finish.cost_usd.and_then(stream::microusd);
+    if auth == Auth::Api {
+        return reported.map(|amount| (amount, false));
+    }
+    let priced = finish
+        .model
+        .as_deref()
+        .zip(finish.usage)
+        .and_then(|(model, usage)| pricing::estimate_microusd(model, usage));
+    priced.or(reported).map(|amount| (amount, true))
 }
 
 /// Map the process outcome and the result frame to the step result.
@@ -276,5 +289,48 @@ mod tests {
             .is_err()
         );
         assert!(conclude(&Outcome::Cancelled, None).is_err());
+    }
+
+    fn costed(model: Option<&str>, usage: Option<pricing::Usage>, reported: Option<f64>) -> Finish {
+        Finish {
+            subtype: "success".into(),
+            model: model.map(Into::into),
+            usage,
+            cost_usd: reported,
+            ..Finish::default()
+        }
+    }
+
+    // Invariant: API steps use the provider's figure unchanged and are not
+    // estimates; subscription steps are priced from tokens and always labelled.
+    #[test]
+    fn api_cost_is_reported_and_subscription_cost_is_a_priced_estimate() {
+        let usage = pricing::Usage {
+            input: 1_000_000,
+            ..pricing::Usage::default()
+        };
+        let finish = costed(Some("claude-sonnet-5-5"), Some(usage), Some(0.5));
+        assert_eq!(step_cost(&finish, Auth::Api), Some((500_000, false)));
+        assert_eq!(
+            step_cost(&finish, Auth::Subscription),
+            Some((2_000_000, true))
+        );
+    }
+
+    #[test]
+    fn an_unpriced_subscription_model_falls_back_to_the_reported_figure() {
+        let usage = pricing::Usage {
+            input: 10,
+            ..pricing::Usage::default()
+        };
+        let finish = costed(Some("some-future-model"), Some(usage), Some(0.25));
+        assert_eq!(
+            step_cost(&finish, Auth::Subscription),
+            Some((250_000, true))
+        );
+        assert_eq!(
+            step_cost(&costed(None, None, None), Auth::Subscription),
+            None
+        );
     }
 }
