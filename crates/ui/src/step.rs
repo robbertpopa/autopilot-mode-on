@@ -280,29 +280,32 @@ impl App {
                 )
             );
             let busy = view.steps.iter().any(|other| other.state.is_active());
-            if step == Step::Understand && settled && !busy {
+            let rerunnable = matches!(step, Step::Understand | Step::Plan);
+            if rerunnable && settled && !busy {
                 let rerun = ui.add(button("Re-run this step")).on_hover_text(
-                    "Runs Understand again with the same words. Later steps that ran are reset with it.",
+                    "Runs the step again with the same words, answers and files. Later steps that ran are reset with it.",
                 );
                 if rerun.clicked() {
-                    self.act(Action::RerunUnderstand(view.id.clone()));
+                    self.act(if step == Step::Understand {
+                        Action::RerunUnderstand(view.id.clone())
+                    } else {
+                        Action::RerunPlan(view.id.clone())
+                    });
                 }
             } else {
-                let why = if step == Step::Understand {
-                    "Understand has not finished, or another step is running or waiting for you"
+                let why = if rerunnable {
+                    "The step has not finished, or another step is running or waiting for you"
                 } else {
-                    "Coming soon: only Understand can run again until real agents are allowed (S6)"
+                    "Coming soon: this step cannot run until code can be written safely (containment, S6)"
                 };
                 ui.add_enabled(false, button("Re-run this step"))
                     .on_disabled_hover_text(why);
             }
-            if step != Step::Understand {
-                ui.add_enabled(false, button("Re-run from here"))
-                    .on_disabled_hover_text("Coming soon: it needs the later steps to run for real (S6)");
-            }
             if matches!(card, Some(StepState::Skipped(_))) {
                 ui.add_enabled(false, button("Run it anyway"))
-                    .on_disabled_hover_text("Coming soon: it needs that step to run for real (S6)");
+                    .on_disabled_hover_text(
+                        "Not available: a skipped step had nothing to do. Re-run an earlier step instead.",
+                    );
             }
         });
         ui.add_space(8.0);

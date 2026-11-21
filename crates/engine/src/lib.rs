@@ -42,7 +42,7 @@ pub use control::{request_pause, request_resume, request_stop};
 pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
-pub use rerun::{rerun_understand, reset_step};
+pub use rerun::{rerun_plan, rerun_understand, reset_step};
 pub use settings::{effective_overrides, override_settings, project_overrides};
 pub use view::{
     AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,

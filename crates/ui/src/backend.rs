@@ -82,6 +82,8 @@ pub enum Action {
     /// Make the plan once Understand and Clarify are settled. The plan then
     /// waits for the owner's approval.
     MakePlan(TicketId),
+    /// Make the plan again, replacing the one that was made or approved.
+    RerunPlan(TicketId),
     Pause(TicketId),
     Resume(TicketId),
     Stop(TicketId),
@@ -423,6 +425,12 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             let agent = chosen_agent(options, Step::Plan)?;
             autopilot_engine::plan_ticket(directory, ticket, &agent)
                 .map(|plan| format!("Plan ready: {} criteria", plan.criteria.len()))
+                .map_err(|error| error.to_string())
+        }
+        Action::RerunPlan(ticket) => {
+            let agent = chosen_agent(options, Step::Plan)?;
+            autopilot_engine::rerun_plan(directory, ticket, &agent)
+                .map(|plan| format!("New plan ready: {} criteria", plan.criteria.len()))
                 .map_err(|error| error.to_string())
         }
         Action::Pause(ticket) => autopilot_engine::request_pause(directory, ticket)

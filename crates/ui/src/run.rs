@@ -297,14 +297,18 @@ impl App {
                     }
                 }
                 if let Some(card) = problem {
-                    if card.step == Step::Understand {
+                    if matches!(card.step, Step::Understand | Step::Plan) {
                         if ui.add(theme::primary("Try again")).clicked() {
-                            self.act(Action::RerunUnderstand(view.id.clone()));
+                            self.act(if card.step == Step::Understand {
+                                Action::RerunUnderstand(view.id.clone())
+                            } else {
+                                Action::RerunPlan(view.id.clone())
+                            });
                         }
                     } else {
                         ui.add_enabled(false, egui::Button::new("Try again"))
                             .on_disabled_hover_text(
-                                "coming soon: only Understand can run again until real agents are allowed (S6)",
+                                "coming soon: this step cannot run until code can be written safely (S6)",
                             );
                         ui.label(theme::muted("Try again is coming soon for this step."));
                     }

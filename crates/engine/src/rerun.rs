@@ -39,6 +39,30 @@ pub fn reset_step(
     Ok(())
 }
 
+/// Run Plan again for a ticket that already ran it, with the ticket's own
+/// words, its answers and its attachments. A plan that was approved is
+/// replaced and must be approved again.
+///
+/// # Errors
+/// Returns an error if the ticket is unknown, done or busy, a step is still
+/// active, or the agent or store cannot be used.
+pub fn rerun_plan(
+    directory: &Path,
+    ticket: &TicketId,
+    agent: &impl Agent,
+) -> Result<autopilot_core::Plan, Error> {
+    let settled = {
+        let store = SqliteStore::open(directory.join(DATABASE))?;
+        let history = store.events(ticket, 0)?;
+        let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
+        state.step(Step::Plan) != &StepState::Idle
+    };
+    if settled {
+        reset_step(directory, ticket, Step::Plan, true)?;
+    }
+    crate::plan::plan_ticket(directory, ticket, agent)
+}
+
 /// Run Understand again for a ticket that already ran it. The later steps that
 /// ran are reset with it, since they were built on the old answer.
 ///
