@@ -19,7 +19,7 @@ A ticket can be run, watched, answered and made merge-ready entirely from the wi
 - [x] Run view (strip, Build ⟲ Check panel, timeline, cost split). Open: turns/tokens/cache and the time estimate, which are not recorded yet. Original item: live strip with skip reasons, Build ⟲ Check panel, timeline, cost bars (API exact, subscription estimate shown apart).
 - [~] Step detail (tabs built; Input, Prompt and Changes say they are not recorded yet; re-run, explain, open worktree and terminal are shown off with the reason). Original item: tabs Overview, Input, Prompt, Output, Log, Changes, Cost, Settings; the actions; "In short" and "Explain in plain words".
 - [x] Inbox cards for questions and approvals (sidebar and run screen).
-- [ ] "Ask for a change": three targets, a typed pipeline patch shown as a diff, apply to this ticket or all future ones; rule changes rejected with the reason.
+- [x] "Ask for a change": read by a fixed grammar in `engine::change` (no model), shown as a diff, applied to this ticket or all future ones; spending limits refused with the reason. Open: the "review" clause (no separate review step yet) and the target switch (This ticket's code / The pipeline / Just ask).
 - [x] Graph widget: custom painter (arrows between step cards).
 - [~] Repaint on events only (done: a watcher repaints when a ticket changes). Open: full keyboard navigation and accessible names.
 

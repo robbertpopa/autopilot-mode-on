@@ -249,21 +249,114 @@ impl App {
         });
     }
 
-    /// The box for asking for a change. It needs a model to read the message,
-    /// which arrives with the real agent step, so it is shown and kept off.
+    /// "Ask for a change": the words are read by a fixed grammar, shown as a
+    /// diff, and applied only when the owner says so.
     pub(crate) fn change_box(&mut self, ui: &mut egui::Ui) {
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
             ui.set_width(ui.available_width() - 34.0);
-            ui.add_enabled(
-                false,
+            let edit = ui.add(
                 egui::TextEdit::multiline(&mut self.change_text)
                     .desired_rows(2)
                     .desired_width(f32::INFINITY)
-                    .hint_text("Ask for a change, e.g. \"use sonnet for the review\""),
-            )
-            .on_disabled_hover_text(
-                "Reading a request in plain words needs an agent (S6). Change the settings on the pipeline screen for now.",
+                    .hint_text("Ask for a change, e.g. \"use opus for the plan\" or \"allow only 2 refine rounds\""),
             );
+            let send = edit.has_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter) && input.modifiers.command);
+            ui.horizontal(|ui| {
+                let ready = !self.change_text.trim().is_empty();
+                if ui.add_enabled(ready, egui::Button::new("Propose")).clicked() || (send && ready) {
+                    self.reading = Some(match &self.profile {
+                        Ok(profile) => autopilot_engine::propose(&self.change_text, profile),
+                        Err(problem) => Err(format!("the profile cannot be read: {problem}")),
+                    });
+                }
+                ui.label(theme::muted("Ctrl+Enter to propose. Nothing changes until you apply."));
+            });
+            self.change_preview(ui);
+        });
+    }
+
+    fn change_preview(&mut self, ui: &mut egui::Ui) {
+        let Some(reading) = self.reading.clone() else {
+            return;
+        };
+        let reading = match reading {
+            Err(why) => {
+                super::app::banner(ui, &why, false);
+                return;
+            }
+            Ok(reading) => reading,
+        };
+        let ticket = self.current().map(|view| view.id.clone());
+        let one_ticket_ok = ticket.is_some()
+            && reading
+                .proposals
+                .iter()
+                .all(autopilot_engine::Proposal::fits_one_ticket);
+        if !one_ticket_ok {
+            self.for_project = true;
+        }
+        Frame::new()
+            .stroke(Stroke::new(1.0_f32, theme::BLUE()))
+            .fill(theme::BLUE_FILL())
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(Margin::same(12))
+            .show(ui, |ui| {
+                ui.label(RichText::new("Proposed change. Nothing is applied until you say so.").strong());
+                for proposal in &reading.proposals {
+                    ui.label(theme::mono(proposal.describe()));
+                }
+                for note in &reading.notes {
+                    ui.label(RichText::new(note).color(theme::AMBER()));
+                }
+                ui.horizontal(|ui| {
+                    ui.label(theme::muted("Applies to"));
+                    ui.add_enabled_ui(one_ticket_ok, |ui| {
+                        theme::segmented(
+                            ui,
+                            &mut self.for_project,
+                            &[(false, "This ticket only"), (true, "All future tickets")],
+                        );
+                    });
+                    if !one_ticket_ok {
+                        ui.label(theme::muted("(turns and rounds are project settings)"));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui.add(theme::primary("Apply")).clicked() {
+                        self.apply_change(&reading, ticket.as_ref());
+                    }
+                    if ui.button("Discard").clicked() {
+                        self.reading = None;
+                    }
+                });
+                ui.label(theme::muted(
+                    "Takes effect when the next step starts; the step running now is not touched. A spending limit cannot be loosened from here.",
+                ));
+            });
+    }
+
+    fn apply_change(&mut self, reading: &autopilot_engine::Reading, ticket: Option<&TicketId>) {
+        let outcome = if self.for_project || ticket.is_none() {
+            autopilot_engine::apply_to_project(&self.options.profile, &reading.proposals)
+                .map(|profile| {
+                    self.profile = Ok(profile);
+                    "Saved in profile.toml for all future tickets".to_owned()
+                })
+                .map_err(|error| error.to_string())
+        } else {
+            let id = ticket.cloned().unwrap_or_else(|| TicketId::from(""));
+            autopilot_engine::apply_to_ticket(&self.options.data_dir, &id, &reading.proposals)
+                .map(|()| "Recorded for this ticket".to_owned())
+                .map_err(|error| error.to_string())
+        };
+        if outcome.is_ok() {
+            self.change_text.clear();
+            self.reading = None;
+        }
+        self.notice = Some(match outcome {
+            Ok(text) => (true, text),
+            Err(text) => (false, text),
         });
     }
 

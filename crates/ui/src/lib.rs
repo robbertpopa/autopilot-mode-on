@@ -214,4 +214,53 @@ mod tests {
         assert!(app.light);
         frame(&mut app, &context);
     }
+
+    // Invariant: a change asked for in words is shown first and only applied
+    // on request; applied to the project it lands in profile.toml, applied to
+    // a ticket it lands in that ticket's history.
+    #[test]
+    fn a_change_request_is_proposed_then_applied_to_the_project_or_a_ticket() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let id = autopilot_core::TicketId::from("demo-timezone");
+        app.open(&id);
+        app.change_text = "use opus for the plan and 2 rounds".into();
+        let reading =
+            autopilot_engine::propose(&app.change_text, app.profile.as_ref().unwrap()).unwrap();
+        assert_eq!(reading.proposals.len(), 2);
+        assert!(!options.profile.exists(), "proposing must not write");
+        // Per ticket: only model, effort and ask-after fit.
+        let ticket_only = &reading.proposals[..1];
+        autopilot_engine::apply_to_ticket(&options.data_dir, &id, ticket_only).unwrap();
+        let effective = autopilot_engine::effective_overrides(
+            &options.data_dir,
+            &id,
+            autopilot_core::Step::Plan,
+        )
+        .unwrap();
+        assert_eq!(effective.model.as_deref(), Some("opus-5-5"));
+        // For the project: written to the file the window reads.
+        let profile =
+            autopilot_engine::apply_to_project(&options.profile, &reading.proposals).unwrap();
+        assert_eq!(
+            profile
+                .step(autopilot_core::Step::BuildCheck)
+                .unwrap()
+                .limits
+                .rounds,
+            2
+        );
+        app.reading = Some(Ok(reading));
+        app.for_project = true;
+        frame(&mut app, &context);
+    }
 }
