@@ -26,6 +26,7 @@ fn agent() -> ClaudeAgent {
             max_turns: 4,
             max_budget_usd: None,
             executable: Some(fake),
+            timeout: Duration::from_secs(20),
         },
         guardian,
     )
@@ -151,4 +152,45 @@ fn cancelling_a_hung_run_ends_it_promptly() {
     }
     assert!(matches!(last, Some(AgentEvent::Failed(_))));
     assert!(started.elapsed() < Duration::from_secs(20));
+}
+
+// Invariant: the configured wall limit, not the 300 s default, ends a hung
+// run. A constant in place of the config would leave this test hanging.
+#[test]
+fn a_hung_run_is_killed_at_the_configured_timeout() {
+    let fake = PathBuf::from(env!("CARGO_BIN_EXE_autopilot-fake-agent"));
+    let guardian = fake.with_file_name(format!(
+        "autopilot-process-guardian{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    let agent = ClaudeAgent::new(
+        ClaudeConfig {
+            auth: Auth::Subscription,
+            model: "haiku".into(),
+            effort: None,
+            max_turns: 4,
+            max_budget_usd: None,
+            executable: Some(fake),
+            timeout: Duration::from_secs(2),
+        },
+        guardian,
+    )
+    .unwrap();
+    let ticket = Ticket {
+        id: "claude-timeout".into(),
+        title: "Sample".into(),
+        description: "scenario:hang".into(),
+    };
+    let started = Instant::now();
+    let events: Vec<_> = agent
+        .start(StepRequest {
+            step: Step::Understand,
+            ticket: &ticket,
+        })
+        .unwrap()
+        .collect();
+    assert!(
+        matches!(events.last(), Some(AgentEvent::Failed(error)) if error.to_string().contains("timed out"))
+    );
+    assert!(started.elapsed() < Duration::from_secs(15));
 }

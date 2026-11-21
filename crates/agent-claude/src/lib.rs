@@ -22,11 +22,8 @@ pub use auth::PreflightError;
 pub use command::ClaudeConfig;
 pub use env::{API_KEY_SOURCE, EnvError, child_env};
 
-const RUN_LIMITS: Limits = Limits {
-    timeout: Duration::from_secs(300),
-    // The cap covers a whole stream, not one frame. Real runs are far below it.
-    bytes_per_stream: 16 * 1024 * 1024,
-};
+// The cap covers a whole stream, not one frame. Real runs are far below it.
+const STREAM_BYTES: usize = 16 * 1024 * 1024;
 const STATUS_LIMITS: Limits = Limits {
     timeout: Duration::from_secs(30),
     bytes_per_stream: 64 * 1024,
@@ -92,8 +89,12 @@ impl Agent for ClaudeAgent {
         let prompt = prompt(request.ticket)?;
         let runner = Runner::new(self.guardian.clone());
         let auth = self.config.auth;
+        let limits = Limits {
+            timeout: self.config.timeout,
+            bytes_per_stream: STREAM_BYTES,
+        };
         Ok(AgentRun::spawn(move |context| {
-            run_claude(&runner, &spec, &prompt, auth, &context)
+            run_claude(&runner, &spec, &prompt, auth, limits, &context)
         })?)
     }
 }
@@ -112,22 +113,18 @@ fn run_claude(
     spec: &CommandSpec,
     prompt: &[u8],
     auth: Auth,
+    limits: Limits,
     context: &AgentContext,
 ) -> Result<Understanding, AgentError> {
     let decoder = Arc::new(Mutex::new(stream::Decoder::default()));
     let reader = Arc::clone(&decoder);
     let activity = context.clone();
-    let output = runner.run_with_stdout(
-        spec,
-        prompt,
-        RUN_LIMITS,
-        context.cancel_flag(),
-        move |chunk| {
+    let output =
+        runner.run_with_stdout(spec, prompt, limits, context.cancel_flag(), move |chunk| {
             if let Ok(mut decoder) = reader.lock() {
                 decoder.push(chunk, &mut |summary| activity.message(summary));
             }
-        },
-    )?;
+        })?;
     let mut decoder = Arc::into_inner(decoder)
         .ok_or_else(|| io::Error::other("Claude output reader did not release its decoder"))?
         .into_inner()

@@ -5,6 +5,7 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::ExitCode,
+    time::Duration,
 };
 
 use autopilot_agent_claude::{ClaudeAgent, ClaudeConfig};
@@ -46,6 +47,9 @@ enum Command {
         /// Absolute path to a native claude executable. Defaults to a PATH search.
         #[arg(long)]
         claude_path: Option<PathBuf>,
+        /// Wall-clock limit for the claude run, in seconds.
+        #[arg(long, default_value_t = 300)]
+        timeout_seconds: u64,
     },
     /// Replay committed events from the ticket's local history.
     Watch {
@@ -94,6 +98,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             max_turns,
             max_budget_usd,
             claude_path,
+            timeout_seconds,
         } => {
             let ticket = read_ticket(&ticket)?;
             let exe = env::current_exe()?;
@@ -118,6 +123,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                             max_turns,
                             max_budget_usd: Some(max_budget_usd),
                             executable: claude_path,
+                            timeout: Duration::from_secs(timeout_seconds),
                         },
                         guardian,
                     )?;
