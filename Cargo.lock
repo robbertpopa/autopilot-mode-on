@@ -111,6 +111,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "autopilot-pipeline"
+version = "0.1.0"
+dependencies = [
+ "autopilot-agent",
+ "autopilot-core",
+ "autopilot-engine",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "autopilot-process"
 version = "0.1.0"
 dependencies = [
