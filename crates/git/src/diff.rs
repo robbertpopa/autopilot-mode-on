@@ -48,6 +48,73 @@ impl Repository {
     }
 }
 
+/// The lines a diff adds to one file, without the leading `+`.
+#[derive(Debug, Eq, PartialEq)]
+pub struct FileAdditions {
+    pub path: String,
+    pub lines: Vec<String>,
+}
+
+impl Repository {
+    /// The added lines of every text file changed between two commits, for
+    /// scans that look at what the agent wrote. Binary files have none.
+    ///
+    /// # Errors
+    /// Returns an error if Git fails or the patch is larger than the bounded
+    /// read allows, so a scan never runs on a partial diff.
+    pub fn added_lines(
+        &self,
+        base: &ObjectId,
+        head: &ObjectId,
+    ) -> Result<Vec<FileAdditions>, Error> {
+        let output = self.read_git(
+            "diff",
+            &[
+                "--unified=0",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-relative",
+                "--no-renames",
+                "--ignore-submodules=none",
+                base.as_str(),
+                head.as_str(),
+                "--",
+            ],
+        )?;
+        Ok(parse_additions(&String::from_utf8_lossy(&output)))
+    }
+}
+
+fn parse_additions(patch: &str) -> Vec<FileAdditions> {
+    let mut files: Vec<FileAdditions> = Vec::new();
+    let mut current: Option<usize> = None;
+    // Header lines (`--- a/x`, `+++ b/x`) sit between `diff --git` and the
+    // first `@@`; after that a line starting `+++` is an added line.
+    let mut in_header = false;
+    for line in patch.lines() {
+        if line.starts_with("diff --git ") {
+            current = None;
+            in_header = true;
+        } else if in_header && line.starts_with("@@") {
+            in_header = false;
+        } else if in_header {
+            if let Some(path) = line.strip_prefix("+++ ") {
+                current = path.strip_prefix("b/").map(|name| {
+                    files.push(FileAdditions {
+                        path: name.trim_matches('"').to_owned(),
+                        lines: Vec::new(),
+                    });
+                    files.len() - 1
+                });
+            }
+        } else if let (Some(index), Some(added)) = (current, line.strip_prefix('+')) {
+            files[index].lines.push(added.to_owned());
+        }
+    }
+    files
+}
+
 fn parse_numstat(bytes: &[u8]) -> Result<DiffStats, Error> {
     let mut result = DiffStats::default();
     if bytes.is_empty() {
@@ -108,7 +175,39 @@ fn line_count(bytes: &[u8]) -> Result<u64, Error> {
 mod tests {
     use std::path::Path;
 
-    use super::{Error, LineStats, parse_numstat};
+    use super::{Error, LineStats, parse_additions, parse_numstat};
+
+    // Invariant: only lines a file gains are returned, per file; a deleted
+    // file (no b/ side) and context lines add nothing.
+    #[test]
+    fn additions_are_read_per_file_and_skip_deleted_files() {
+        let patch = "diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -3,0 +4,2 @@
++serde = \"1\"
++++ looks like a header but is a line
+diff --git a/old.rs b/old.rs
+--- a/old.rs
++++ /dev/null
+@@ -1 +0,0 @@
+-gone
+diff --git a/new.rs b/new.rs
+--- /dev/null
++++ b/new.rs
+@@ -0,0 +1 @@
++fn main() {}
+";
+        let files = parse_additions(patch);
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "Cargo.toml");
+        assert_eq!(
+            files[0].lines,
+            ["serde = \"1\"", "++ looks like a header but is a line"]
+        );
+        assert_eq!(files[1].path, "new.rs");
+        assert_eq!(files[1].lines, ["fn main() {}"]);
+    }
 
     #[test]
     fn numstat_keeps_unusual_names_and_binary_files_without_guessing_counts() {

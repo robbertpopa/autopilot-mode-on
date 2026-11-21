@@ -6,6 +6,7 @@ mod criteria;
 mod diff;
 mod review;
 mod runner;
+mod scan;
 
 #[cfg(test)]
 mod criteria_tests;
@@ -19,6 +20,7 @@ pub use criteria::CriteriaCheck;
 pub use diff::DiffCheck;
 pub use review::{ReviewCheck, Reviewer};
 pub use runner::{CheckRun, Kept, Key, run_all, standard_checks};
+pub use scan::{Additions, signals};
 
 use std::{path::Path, sync::atomic::AtomicBool};
 

@@ -5,7 +5,7 @@ mod diff;
 mod managed;
 
 pub use conflicts::{PathOverlap, overlapping_paths};
-pub use diff::{DiffStats, FileStats, LineStats};
+pub use diff::{DiffStats, FileAdditions, FileStats, LineStats};
 pub use managed::{OwnedWorktree, Removal, TreeFingerprint, WorktreeManager};
 
 use std::{
