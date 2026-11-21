@@ -12,6 +12,7 @@ pub mod clarify;
 pub mod inbox;
 pub mod overrides;
 pub mod refine;
+pub mod scheduler;
 pub mod summary;
 
 use autopilot_core::{Event, Money, NewEvent, RecordedEvent, RequestId, Step};

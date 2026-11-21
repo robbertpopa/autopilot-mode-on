@@ -21,7 +21,7 @@ Two tickets run in parallel on a sample repository and open two draft pull reque
 - [x] Conflict prediction: compare the files predicted by Understand and Plan against running tickets. Report equal paths and directory overlaps, including case variants on Windows. The scheduler consumes the comparison in part 2.
 
 ## Part 2
-- [ ] Scheduler: slot limit, queue with the reason ("waits for #128: both change routes.rs"), fairness, pause and resume of the whole queue.
+- [x] Scheduler (`pipeline::scheduler`, pure state): slot limit, queue with the reason ("waits for #128: both change routes.rs"), fairness (arrival order; a blocked ticket never holds up an independent one and is never overtaken by a later overlapping one), pause and resume of the whole queue. The loop that starts tickets from it comes with the runner in M5.
 - [ ] Reuse the S6-tested isolation required by M3. Keep publisher credentials on the host side and outside the agent and check runtimes.
 - [ ] `tracker` through the `gh` CLI: read issues as tickets; persist approval for the exact checked repository, base and head before creating the feature branch and draft PR. Reconcile uncertain results by branch and PR identity. Use actual check results and a code-made summary in the description.
 - [ ] CI watch: show status for the current PR head. Later, after S3, allow up to two repair attempts using bounded, redacted failure data from trusted checks on that head. Updating the remote head requires rechecking and fresh approval.

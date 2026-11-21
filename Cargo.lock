@@ -155,6 +155,7 @@ dependencies = [
  "autopilot-checks",
  "autopilot-core",
  "autopilot-engine",
+ "autopilot-git",
  "autopilot-profile",
  "serde",
  "serde_json",
