@@ -72,6 +72,9 @@ pub enum Action {
     Decide {
         ticket: TicketId,
         approve: bool,
+        /// Stop asking after this kind of step in the project. Ignored for
+        /// a forced confirmation and for the plan.
+        always: bool,
     },
     /// Answer a waiting question with the recommended options.
     AcceptDefaults {
@@ -381,15 +384,19 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
         Action::Attach { ticket, paths } => autopilot_engine::attach(directory, ticket, paths)
             .map(|count| format!("Attached {count}"))
             .map_err(|error| error.to_string()),
-        Action::Decide { ticket, approve } => {
+        Action::Decide {
+            ticket,
+            approve,
+            always,
+        } => {
             answer(directory, ticket, |body| match body {
-                RequestBody::Approval { .. } => Ok(Reply::Approval {
+                RequestBody::Approval { forced, .. } => Ok(Reply::Approval {
                     decision: if *approve {
                         Decision::Approve
                     } else {
                         Decision::Reject
                     },
-                    allow_for_project: false,
+                    allow_for_project: *always && *approve && !*forced,
                 }),
                 RequestBody::Question { .. } => {
                     Err("that is a question: answer it instead of approving".to_owned())

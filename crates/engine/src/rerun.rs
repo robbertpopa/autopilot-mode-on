@@ -77,9 +77,12 @@ pub fn rerun_understand(
 ) -> Result<Understanding, Error> {
     let ask_after = match ask_after {
         Some(choice) => choice,
-        None => crate::project_overrides(directory, Step::Understand)?
-            .ask_after
-            .unwrap_or(false),
+        None => {
+            crate::project_overrides(directory, Step::Understand)?
+                .ask_after
+                .unwrap_or(false)
+                && !crate::allowances::allowed(directory, Step::Understand)
+        }
     };
     let _owner = lock_run(directory)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;

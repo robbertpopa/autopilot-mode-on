@@ -386,17 +386,25 @@ impl App {
                             .color(theme::AMBER()),
                     );
                     ui.label(text);
+                    if step != Step::Plan {
+                        ui.checkbox(
+                            &mut self.always,
+                            "Do not ask again after this step in this project",
+                        );
+                    }
                     ui.horizontal(|ui| {
                         if ui.add(theme::primary("Approve")).clicked() {
                             self.act(Action::Decide {
                                 ticket: view.id.clone(),
                                 approve: true,
+                                always: self.always,
                             });
                         }
                         if ui.button("Reject").clicked() {
                             self.act(Action::Decide {
                                 ticket: view.id.clone(),
                                 approve: false,
+                                always: false,
                             });
                         }
                     });

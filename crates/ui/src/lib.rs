@@ -138,6 +138,7 @@ mod tests {
             &Action::Decide {
                 ticket: id.clone(),
                 approve: true,
+                always: false,
             },
         );
         assert_eq!(outcome, Ok("Approved".to_owned()), "{outcome:?}");
@@ -325,6 +326,7 @@ mod tests {
             &Action::Decide {
                 ticket: id,
                 approve: true,
+                always: false,
             },
         )
         .unwrap();

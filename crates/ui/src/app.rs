@@ -65,6 +65,8 @@ pub struct App {
     new_started: bool,
     pub(crate) light: bool,
     pub(crate) agent: backend::AgentChoice,
+    /// "Do not ask again after this kind of step" on an approval.
+    pub(crate) always: bool,
     update: Option<autopilot_update::Update>,
     installing: bool,
     home: NewTicket,
@@ -113,6 +115,7 @@ impl App {
             new_started: false,
             light,
             agent,
+            always: false,
             update: None,
             installing: false,
             home: NewTicket::default(),

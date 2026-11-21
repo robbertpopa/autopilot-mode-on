@@ -21,6 +21,7 @@ use autopilot_pipeline::{
 };
 use autopilot_store::{SqliteStore, Store, StoreError};
 
+mod allowances;
 mod attachments;
 mod build;
 mod change;
@@ -31,6 +32,7 @@ mod publish;
 mod rerun;
 mod settings;
 mod view;
+pub use allowances::{allow, allowed, list as allowances, revoke};
 pub use attachments::{
     Attachment, MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_FOLDER_ITEMS, MAX_TICKET_BYTES, attach, note,
     stage,
@@ -133,9 +135,12 @@ pub fn run_understand_attached(
     // An explicit choice wins; otherwise the project setting decides.
     let ask_after = match ask_after {
         Some(choice) => choice,
-        None => project_overrides(directory, Step::Understand)?
-            .ask_after
-            .unwrap_or(false),
+        None => {
+            project_overrides(directory, Step::Understand)?
+                .ask_after
+                .unwrap_or(false)
+                && !allowances::allowed(directory, Step::Understand)
+        }
     };
     if ticket.id.as_str().trim().is_empty() || ticket.title.trim().is_empty() {
         return Err(Error::InvalidTicket);
@@ -561,7 +566,15 @@ pub fn sync_inbox(directory: &Path, ticket: &TicketId) -> Result<Vec<RequestId>,
             Reply::Question { choices } => {
                 commit_clarify_answer(&mut store, ticket, &history, request, &choices)?;
             }
-            Reply::Approval { decision, .. } => {
+            Reply::Approval {
+                decision,
+                allow_for_project,
+            } => {
+                // A forced confirmation was already refused by `check_reply`.
+                if allow_for_project && !matches!(decision, Decision::Reject) && step != Step::Plan
+                {
+                    allowances::allow(directory, step)?;
+                }
                 commit_approval(
                     &mut store, directory, ticket, &history, step, request, &decision,
                 )?;
