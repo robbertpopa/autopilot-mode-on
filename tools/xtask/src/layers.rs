@@ -26,7 +26,10 @@ pub(crate) fn check() -> TaskResult {
     let mut errors = Vec::new();
     for package in metadata.workspace_packages() {
         let name = package.name.as_str();
-        if matches!(name, "xtask" | "autopilot-fake-agent" | "autopilot-testkit") {
+        if matches!(
+            name,
+            "xtask" | "autopilot-fake-agent" | "autopilot-fake-gh" | "autopilot-testkit"
+        ) {
             continue;
         }
         let Some(current) = layer(name) else {

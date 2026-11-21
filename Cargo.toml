@@ -14,7 +14,9 @@ members = [
     "crates/process",
     "crates/profile",
     "crates/store",
+    "crates/tracker",
     "tools/fake-agent",
+    "tools/fake-gh",
     "tools/xtask",
 ]
 resolver = "3"
