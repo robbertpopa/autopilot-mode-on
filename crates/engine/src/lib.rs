@@ -16,11 +16,14 @@ use autopilot_pipeline::{
     StepState,
     clarify::{self, Choice, ClarifyPlan, QaPair},
     fold,
-    inbox::{Inbox, InboxError, Reply, Request, RequestBody, check_reply},
+    inbox::{Decision, Inbox, InboxError, Reply, Request, RequestBody, check_reply},
 };
 use autopilot_store::{SqliteStore, Store, StoreError};
 
-const DATABASE: &str = "events.sqlite3";
+mod settings;
+pub use settings::{effective_overrides, override_settings, project_overrides};
+
+pub(crate) const DATABASE: &str = "events.sqlite3";
 const UNDERSTAND: Option<Step> = Some(Step::Understand);
 
 #[derive(Debug, thiserror::Error)]
@@ -62,6 +65,27 @@ pub fn run_understand(
     ticket: &Ticket,
     agent: &impl Agent,
 ) -> Result<Understanding, Error> {
+    run_understand_with(directory, ticket, agent, None)
+}
+
+/// Like [`run_understand`]. With `ask_after` (or the project setting when it is `None`) the step waits in the inbox for
+/// the owner to approve, edit or reject its result before it counts as passed.
+///
+/// # Errors
+/// Returns an error if the ticket, agent, data directory or store cannot be used.
+pub fn run_understand_with(
+    directory: &Path,
+    ticket: &Ticket,
+    agent: &impl Agent,
+    ask_after: Option<bool>,
+) -> Result<Understanding, Error> {
+    // An explicit choice wins; otherwise the project setting decides.
+    let ask_after = match ask_after {
+        Some(choice) => choice,
+        None => project_overrides(directory, Step::Understand)?
+            .ask_after
+            .unwrap_or(false),
+    };
     if ticket.id.as_str().trim().is_empty() || ticket.title.trim().is_empty() {
         return Err(Error::InvalidTicket);
     }
@@ -126,7 +150,32 @@ pub fn run_understand(
         },
         Err(error) => Err(Outcome::Failed(error)),
     };
-    conclude(&mut store, &ticket.id, last, response)
+    let asked = response.is_ok() && ask_after;
+    let result = conclude(&mut store, &ticket.id, last, response, ask_after)?;
+    if asked {
+        Inbox::in_data_dir(directory).write_request(&approval_request(
+            &ticket.id,
+            &approval_id(Step::Understand),
+            Step::Understand,
+            false,
+        ))?;
+    }
+    Ok(result)
+}
+
+fn approval_id(step: Step) -> RequestId {
+    RequestId::from(format!("{}-approval", step.as_str()))
+}
+
+fn approval_request(ticket: &TicketId, id: &RequestId, step: Step, forced: bool) -> Request {
+    Request {
+        id: id.clone(),
+        ticket: ticket.clone(),
+        body: RequestBody::Approval {
+            action: format!("continue after the {} step", step.as_str()),
+            forced,
+        },
+    }
 }
 
 /// Record how the attempt ended.
@@ -135,10 +184,18 @@ fn conclude(
     ticket: &TicketId,
     last: u64,
     response: Result<Understanding, Outcome>,
+    ask_after: bool,
 ) -> Result<Understanding, Error> {
     let finished_at = timestamp()?;
     match response {
         Ok(result) => {
+            let closing = if ask_after {
+                Event::Asked {
+                    request: approval_id(Step::Understand),
+                }
+            } else {
+                Event::StepFinished
+            };
             let terminal = [
                 event(
                     finished_at,
@@ -147,7 +204,7 @@ fn conclude(
                         result: result.clone(),
                     },
                 ),
-                event(finished_at, UNDERSTAND, Event::StepFinished),
+                event(finished_at, UNDERSTAND, closing),
             ];
             store.append(ticket, last, &terminal)?;
             Ok(result)
@@ -325,6 +382,39 @@ fn commit_clarify_answer(
     Ok(pairs)
 }
 
+/// Mark an attempt left running by a process that no longer exists as
+/// `Interrupted`. Holding the run lock proves no other process is working on
+/// the ticket, so a step that still reads as running was cut off. Waiting and
+/// paused steps are durable states and are left alone.
+///
+/// # Errors
+/// Returns an error if another action holds the data directory or the history
+/// is invalid.
+pub fn recover(directory: &Path, ticket: &TicketId) -> Result<Vec<Step>, Error> {
+    let _owner = lock_run(directory)?;
+    let mut store = SqliteStore::open(directory.join(DATABASE))?;
+    let history = store.events(ticket, 0)?;
+    let mut last = history.last().ok_or(Error::UnknownTicket)?.seq;
+    let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
+    let mut recovered = Vec::new();
+    for step in Step::ALL {
+        if state.step(step) != &StepState::Running {
+            continue;
+        }
+        let interrupted = Event::Interrupted {
+            reason: "the process ended before the step finished".into(),
+        };
+        let committed = store.append(
+            ticket,
+            last,
+            &[event(timestamp()?, Some(step), interrupted)],
+        )?;
+        last = committed.last().map_or(last, |record| record.seq);
+        recovered.push(step);
+    }
+    Ok(recovered)
+}
+
 /// Reconcile the inbox folder with the event log for one ticket.
 ///
 /// A waiting question gets its request file back if it is missing. A valid
@@ -345,33 +435,37 @@ pub fn sync_inbox(directory: &Path, ticket: &TicketId) -> Result<Vec<RequestId>,
     }
     let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
     let mut applied = Vec::new();
-    if let StepState::Asking(request) = state.step(Step::Clarify) {
-        let understanding = latest_understanding(&history)
-            .ok_or_else(|| Error::History("no Understand result".into()))?;
-        let mirror = Request {
-            id: request.clone(),
-            ticket: ticket.clone(),
-            body: RequestBody::Question {
-                questions: understanding.open_questions.clone(),
-            },
+    for step in Step::ALL {
+        let StepState::Asking(request) = state.step(step) else {
+            continue;
         };
+        let mirror = waiting_request(&history, ticket, step, request)?;
         if inbox.read_request(request)?.is_none() {
             inbox.write_request(&mirror)?;
         }
-        if let Some(reply) = inbox.read_answer(request)? {
-            check_reply(&mirror, &reply)?;
-            let Reply::Question { choices } = reply else {
-                return Err(Error::NotReady("the reply is not a question answer".into()));
-            };
-            commit_clarify_answer(&mut store, ticket, &history, request, &choices)?;
-            inbox.clean_up(request)?;
-            applied.push(request.clone());
+        let Some(reply) = inbox.read_answer(request)? else {
+            continue;
+        };
+        check_reply(&mirror, &reply)?;
+        match reply {
+            Reply::Question { choices } => {
+                commit_clarify_answer(&mut store, ticket, &history, request, &choices)?;
+            }
+            Reply::Approval { decision, .. } => {
+                commit_approval(&mut store, ticket, &history, step, request, &decision)?;
+            }
         }
+        inbox.clean_up(request)?;
+        applied.push(request.clone());
+        // One answer per pass: the history changed, so the caller syncs again.
+        break;
     }
-    let state =
-        fold(&store.events(ticket, 0)?).map_err(|error| Error::History(error.to_string()))?;
+    let history = store.events(ticket, 0)?;
+    let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
     for request in inbox.requests()? {
-        let waiting = state.step(Step::Clarify) == &StepState::Asking(request.id.clone());
+        let waiting = Step::ALL
+            .iter()
+            .any(|step| state.step(*step) == &StepState::Asking(request.id.clone()));
         if request.ticket == *ticket && !waiting {
             inbox.clean_up(&request.id)?;
         }
@@ -387,6 +481,67 @@ pub fn sync_inbox(directory: &Path, ticket: &TicketId) -> Result<Vec<RequestId>,
         }
     }
     Ok(applied)
+}
+
+/// The request a waiting step should show, rebuilt from the log. A lost
+/// approval request comes back as forced: that is the safe reading, because a
+/// forced confirmation cannot be turned into a standing allowance.
+fn waiting_request(
+    history: &[RecordedEvent],
+    ticket: &TicketId,
+    step: Step,
+    request: &RequestId,
+) -> Result<Request, Error> {
+    if step == Step::Clarify && request.as_str() == CLARIFY_REQUEST {
+        let understanding = latest_understanding(history)
+            .ok_or_else(|| Error::History("no Understand result".into()))?;
+        return Ok(Request {
+            id: request.clone(),
+            ticket: ticket.clone(),
+            body: RequestBody::Question {
+                questions: understanding.open_questions.clone(),
+            },
+        });
+    }
+    Ok(approval_request(ticket, request, step, true))
+}
+
+/// Approve and edit let the step pass; the edit text stays in the log with the
+/// reply. Reject stops the step as interrupted so it can be run again.
+fn commit_approval(
+    store: &mut SqliteStore,
+    ticket: &TicketId,
+    history: &[RecordedEvent],
+    step: Step,
+    request: &RequestId,
+    decision: &Decision,
+) -> Result<(), Error> {
+    let last = history.last().ok_or(Error::UnknownTicket)?.seq;
+    let answer =
+        serde_json::to_string(decision).map_err(|error| Error::History(error.to_string()))?;
+    let at = timestamp()?;
+    let closing = match decision {
+        Decision::Reject => Event::Interrupted {
+            reason: "rejected by the owner".into(),
+        },
+        Decision::Approve | Decision::Edit(_) => Event::StepFinished,
+    };
+    store.append(
+        ticket,
+        last,
+        &[
+            event(
+                at,
+                Some(step),
+                Event::Answered {
+                    request: request.clone(),
+                    answer,
+                },
+            ),
+            event(at, Some(step), closing),
+        ],
+    )?;
+    Ok(())
 }
 
 fn latest_understanding(history: &[RecordedEvent]) -> Option<&Understanding> {
@@ -427,7 +582,7 @@ fn lock_run(directory: &Path) -> Result<File, Error> {
     }
 }
 
-fn timestamp() -> Result<u64, Error> {
+pub(crate) fn timestamp() -> Result<u64, Error> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| Error::Clock)?;

@@ -191,3 +191,73 @@ fn clarify_is_driven_from_the_cli_through_the_inbox() {
     assert_eq!(status["steps"][1]["state"], "passed");
     assert_eq!(autopilot(&["inbox", "list"], &data).stdout, b"");
 }
+
+// Invariant: "Ask me after this step" is driven from the CLI: the step waits,
+// `inbox approve` finishes it, and `status` shows the code-made line. A project
+// override makes a later run ask without the flag.
+#[test]
+fn ask_after_and_project_override_are_driven_from_the_cli() {
+    let scratch = tempfile::tempdir().unwrap();
+    let data = scratch.path().join("data");
+    let ticket = scratch.path().join("ticket.json");
+    std::fs::write(
+        &ticket,
+        serde_json::json!({"id": "e2e-1", "title": "Sample", "description": "d"}).to_string(),
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        let mut all = vec![
+            "run-step",
+            "--step",
+            "understand",
+            "--agent",
+            "fake",
+            "--ticket",
+            ticket.to_str().unwrap(),
+        ];
+        all.extend_from_slice(args);
+        autopilot(&all, &data)
+    };
+    assert!(run(&["--ask-after"]).status.success());
+    let status = json_line(&autopilot(&["status", "e2e-1", "--json"], &data));
+    assert_eq!(status["steps"][0]["state"], "asking");
+
+    let waiting = json_line(&autopilot(&["inbox", "list"], &data));
+    let id = waiting["id"].as_str().unwrap().to_owned();
+    assert_eq!(waiting["body"]["type"], "approval");
+    let applied = json_line(&autopilot(&["inbox", "approve", &id], &data));
+    assert_eq!(applied["applied"][0], id.as_str());
+    let status = json_line(&autopilot(&["status", "e2e-1", "--json"], &data));
+    assert_eq!(status["steps"][0]["state"], "passed");
+    assert!(
+        status["in_short"][0]["line"]
+            .as_str()
+            .unwrap()
+            .contains("open question")
+    );
+
+    let set = autopilot(
+        &[
+            "override",
+            "e2e-1",
+            "--scope",
+            "project",
+            "--step",
+            "understand",
+            "--ask-after",
+            "true",
+        ],
+        &data,
+    );
+    assert!(set.status.success());
+    std::fs::write(
+        &ticket,
+        serde_json::json!({"id": "e2e-2", "title": "Sample", "description": "d"}).to_string(),
+    )
+    .unwrap();
+    assert!(run(&[]).status.success());
+    let status = json_line(&autopilot(&["status", "e2e-2", "--json"], &data));
+    assert_eq!(status["steps"][0]["state"], "asking");
+    let recovered = json_line(&autopilot(&["recover", "e2e-2"], &data));
+    assert_eq!(recovered["interrupted"], serde_json::json!([]));
+}

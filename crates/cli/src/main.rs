@@ -11,12 +11,15 @@ use std::{
 use autopilot_accounts::{Accounts, Status};
 use autopilot_agent_claude::{ClaudeAgent, ClaudeConfig};
 use autopilot_agent_fixture::FixtureAgent;
-use autopilot_core::{RequestId, Step as CoreStep, Ticket, TicketId};
+use autopilot_core::{
+    RequestId, SettingsScope, Step as CoreStep, StepChange, StepOverride, Ticket, TicketId,
+};
 use autopilot_pipeline::{
     StepState, TicketState,
     clarify::Choice,
     fold,
     inbox::{Decision, Inbox, Reply, RequestBody, check_reply},
+    summary,
 };
 use autopilot_profile::Auth;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -60,6 +63,9 @@ enum Command {
         /// Wall-clock limit for the claude run, in seconds.
         #[arg(long, default_value_t = 300)]
         timeout_seconds: u64,
+        /// Wait in the inbox for approve, edit or reject before the step passes.
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        ask_after: Option<bool>,
     },
     /// Show which Claude, GitHub and Azure accounts this machine is signed in to.
     Accounts {
@@ -73,6 +79,23 @@ enum Command {
     Inbox {
         #[command(subcommand)]
         action: InboxAction,
+    },
+    /// Mark an attempt left running by a dead process as interrupted.
+    Recover { ticket: String },
+    /// Change step settings. A change applies when the next step starts.
+    Override {
+        ticket: String,
+        #[arg(long)]
+        scope: ScopeArg,
+        #[arg(long)]
+        step: Step,
+        /// Whether to wait for approval after the step.
+        #[arg(long)]
+        ask_after: Option<bool>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        effort: Option<String>,
     },
     /// Show where each step of a ticket stands, folded from its history.
     Status {
@@ -123,6 +146,12 @@ enum Step {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
+enum ScopeArg {
+    Ticket,
+    Project,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
 enum Agent {
     Fake,
     Claude,
@@ -158,38 +187,40 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             max_budget_usd,
             claude_path,
             timeout_seconds,
+            ask_after,
         } => {
             let ticket = read_ticket(&ticket)?;
             let exe = env::current_exe()?;
             let result = match agent {
                 Agent::Fake => {
                     let agent = FixtureAgent::beside(&exe)?;
-                    autopilot_engine::run_understand(&cli.data_dir, &ticket, &agent)?
+                    autopilot_engine::run_understand_with(
+                        &cli.data_dir,
+                        &ticket,
+                        &agent,
+                        ask_after,
+                    )?
                 }
                 Agent::Claude => {
-                    let guardian = exe.with_file_name(format!(
-                        "autopilot-process-guardian{}",
-                        env::consts::EXE_SUFFIX
-                    ));
-                    let agent = ClaudeAgent::new(
-                        ClaudeConfig {
-                            auth: match auth {
-                                AuthArg::Subscription => Auth::Subscription,
-                                AuthArg::Api => Auth::Api,
-                            },
-                            model,
-                            effort,
-                            max_turns,
-                            max_budget_usd: Some(max_budget_usd),
-                            executable: claude_path,
-                            timeout: Duration::from_secs(timeout_seconds),
+                    let config = ClaudeConfig {
+                        auth: match auth {
+                            AuthArg::Subscription => Auth::Subscription,
+                            AuthArg::Api => Auth::Api,
                         },
-                        guardian,
-                    )?;
-                    agent
-                        .preflight()
-                        .map_err(|error| -> Box<dyn Error> { error })?;
-                    autopilot_engine::run_understand(&cli.data_dir, &ticket, &agent)?
+                        model,
+                        effort,
+                        max_turns,
+                        max_budget_usd: Some(max_budget_usd),
+                        executable: claude_path,
+                        timeout: Duration::from_secs(timeout_seconds),
+                    };
+                    let agent = claude_agent(&exe, config)?;
+                    autopilot_engine::run_understand_with(
+                        &cli.data_dir,
+                        &ticket,
+                        &agent,
+                        ask_after,
+                    )?
                 }
             };
             serde_json::to_writer(
@@ -198,38 +229,32 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             )?;
             writeln!(out)?;
         }
-        Command::Accounts { json } => {
-            let exe = env::current_exe()?;
-            let guardian = exe.with_file_name(format!(
-                "autopilot-process-guardian{}",
-                env::consts::EXE_SUFFIX
-            ));
-            let accounts = autopilot_accounts::collect(guardian);
-            if json {
-                serde_json::to_writer_pretty(&mut out, &accounts)?;
-                writeln!(out)?;
-            } else {
-                write_accounts(&mut out, &accounts)?;
-            }
+        Command::Accounts { json } => write_accounts_command(&mut out, json)?,
+        Command::Clarify { ticket } => run_clarify(&mut out, &cli.data_dir, ticket)?,
+        Command::Recover { ticket } => {
+            let steps = autopilot_engine::recover(&cli.data_dir, &TicketId::from(ticket))?;
+            write_recovered(&mut out, &steps)?;
         }
-        Command::Clarify { ticket } => {
-            let started = autopilot_engine::start_clarify(&cli.data_dir, &TicketId::from(ticket))?;
-            let value = match started {
-                autopilot_engine::ClarifyStart::Skipped(reason) => {
-                    serde_json::json!({"clarify": "skipped", "reason": reason})
-                }
-                autopilot_engine::ClarifyStart::Asking { request, questions } => {
-                    serde_json::json!({"clarify": "asking", "request": request, "questions": questions})
-                }
+        Command::Override {
+            ticket,
+            scope,
+            step,
+            ask_after,
+            model,
+            effort,
+        } => {
+            let change = StepOverride {
+                ask_after,
+                model,
+                effort,
             };
-            serde_json::to_writer(&mut out, &value)?;
-            writeln!(out)?;
+            run_override(&mut out, &cli.data_dir, &ticket, scope, step, change)?;
         }
         Command::Inbox { action } => run_inbox(&mut out, &cli.data_dir, action)?,
         Command::Status { ticket, json } => {
             let events = autopilot_engine::watch(&cli.data_dir, &TicketId::from(ticket), 0)?;
             let state = fold(&events)?;
-            write_status(&mut out, &state, json)?;
+            write_status(&mut out, &state, &summary::from_history(&events), json)?;
         }
         Command::Watch { ticket, after } => {
             for record in autopilot_engine::watch(&cli.data_dir, &TicketId::from(ticket), after)? {
@@ -238,6 +263,82 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    Ok(())
+}
+
+fn run_override(
+    out: &mut impl Write,
+    data_dir: &Path,
+    ticket: &str,
+    scope: ScopeArg,
+    step: Step,
+    change: StepOverride,
+) -> Result<(), Box<dyn Error>> {
+    let scope = match scope {
+        ScopeArg::Ticket => SettingsScope::Ticket,
+        ScopeArg::Project => SettingsScope::Project,
+    };
+    let step = match step {
+        Step::Understand => CoreStep::Understand,
+    };
+    autopilot_engine::override_settings(
+        data_dir,
+        &TicketId::from(ticket),
+        scope,
+        &[StepChange { step, change }],
+    )?;
+    writeln!(out, "{}", serde_json::json!({"recorded": true}))?;
+    Ok(())
+}
+
+fn claude_agent(exe: &Path, config: ClaudeConfig) -> Result<ClaudeAgent, Box<dyn Error>> {
+    let guardian = exe.with_file_name(format!(
+        "autopilot-process-guardian{}",
+        env::consts::EXE_SUFFIX
+    ));
+    let agent = ClaudeAgent::new(config, guardian)?;
+    agent
+        .preflight()
+        .map_err(|error| -> Box<dyn Error> { error })?;
+    Ok(agent)
+}
+
+fn write_accounts_command(out: &mut impl Write, json: bool) -> Result<(), Box<dyn Error>> {
+    let exe = env::current_exe()?;
+    let guardian = exe.with_file_name(format!(
+        "autopilot-process-guardian{}",
+        env::consts::EXE_SUFFIX
+    ));
+    let accounts = autopilot_accounts::collect(guardian);
+    if json {
+        serde_json::to_writer_pretty(&mut *out, &accounts)?;
+        writeln!(out)?;
+    } else {
+        write_accounts(out, &accounts)?;
+    }
+    Ok(())
+}
+
+fn write_recovered(out: &mut impl Write, steps: &[CoreStep]) -> io::Result<()> {
+    let names: Vec<_> = steps.iter().map(|step| step.as_str()).collect();
+    writeln!(out, "{}", serde_json::json!({"interrupted": names}))
+}
+
+fn run_clarify(
+    out: &mut impl Write,
+    data_dir: &Path,
+    ticket: String,
+) -> Result<(), Box<dyn Error>> {
+    let value = match autopilot_engine::start_clarify(data_dir, &TicketId::from(ticket))? {
+        autopilot_engine::ClarifyStart::Skipped(reason) => {
+            serde_json::json!({"clarify": "skipped", "reason": reason})
+        }
+        autopilot_engine::ClarifyStart::Asking { request, questions } => {
+            serde_json::json!({"clarify": "asking", "request": request, "questions": questions})
+        }
+    };
+    serde_json::to_writer(&mut *out, &value)?;
+    writeln!(out)?;
     Ok(())
 }
 
@@ -298,7 +399,9 @@ fn run_inbox(
             };
             check_reply(&waiting, &reply)?;
             inbox.write_answer(&id, &reply)?;
-            writeln!(out, "{}", serde_json::json!({"recorded": true}))?;
+            let applied = autopilot_engine::sync_inbox(data_dir, &waiting.ticket)?;
+            serde_json::to_writer(&mut *out, &serde_json::json!({"applied": applied}))?;
+            writeln!(out)?;
         }
     }
     Ok(())
@@ -333,6 +436,7 @@ fn state_name(state: &StepState) -> (&'static str, Option<String>) {
 fn write_status(
     out: &mut impl Write,
     state: &TicketState,
+    in_short: &[(CoreStep, String)],
     json: bool,
 ) -> Result<(), Box<dyn Error>> {
     let (cost, estimated) = state.cost();
@@ -346,6 +450,7 @@ fn write_status(
             .collect();
         let value = serde_json::json!({
             "steps": steps,
+            "in_short": in_short.iter().map(|(step, line)| serde_json::json!({"step": step.as_str(), "line": line})).collect::<Vec<_>>(),
             "done": state.is_done(),
             "cost_microusd": cost.as_microusd(),
             "cost_estimated": estimated,
@@ -359,6 +464,9 @@ fn write_status(
             (name, Some(detail)) => writeln!(out, "{}: {name} ({detail})", step.as_str())?,
             (name, None) => writeln!(out, "{}: {name}", step.as_str())?,
         }
+    }
+    for (step, line) in in_short {
+        writeln!(out, "in short, {}: {line}", step.as_str())?;
     }
     let label = if estimated { "estimated" } else { "billed" };
     writeln!(out, "cost: {} microUSD ({label})", cost.as_microusd())?;
