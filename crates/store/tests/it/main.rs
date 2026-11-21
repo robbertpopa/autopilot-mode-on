@@ -177,3 +177,49 @@ fn a_snapshot_and_its_tail_match_full_replay_after_reopening() {
     assert_eq!(cached, complete);
     assert_eq!(cached.last_seq(), 3);
 }
+
+// Invariant: after a reset the stored summary of the ticket forgets the step's
+// old result and no longer reads as failed, while spend stays. If it kept the
+// failure, a re-run ticket would show as failed until its next event.
+#[test]
+fn a_reset_clears_the_step_and_the_failed_status_but_not_the_cost() {
+    let temp = tempfile::tempdir().unwrap();
+    let ticket = TicketId::from("CK-6");
+    let mut store = SqliteStore::open(temp.path().join("events.sqlite3")).unwrap();
+    let on = |step, kind| NewEvent {
+        at_ms: 1,
+        step: Some(step),
+        kind,
+    };
+    let events = store
+        .append(
+            &ticket,
+            0,
+            &[
+                create(),
+                on(
+                    Step::Understand,
+                    Event::StepStarted {
+                        attempt: "a".into(),
+                        session: None,
+                    },
+                ),
+                event(Event::CostTick {
+                    amount: Money::from_microusd(7),
+                    estimated: false,
+                }),
+                on(
+                    Step::Understand,
+                    Event::Failed {
+                        reason: "boom".into(),
+                    },
+                ),
+                on(Step::Understand, Event::StepReset { and_after: false }),
+            ],
+        )
+        .unwrap();
+    let state = autopilot_store::fold(ticket, &events).unwrap();
+    assert_eq!(state.step(Step::Understand), None);
+    assert_eq!(*state.status(), autopilot_store::TicketStatus::Idle);
+    assert_eq!(state.reported_cost_microusd(), 7);
+}

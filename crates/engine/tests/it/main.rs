@@ -15,7 +15,8 @@ use autopilot_core::{
 };
 use autopilot_engine::{
     ClarifyStart, Error, answer_clarify, approved_plan, effective_overrides, override_settings,
-    recover, run_plan, run_understand, run_understand_with, start_clarify, sync_inbox, watch,
+    recover, rerun_understand, reset_step, run_plan, run_understand, run_understand_with,
+    start_clarify, sync_inbox, watch,
 };
 use autopilot_pipeline::{
     clarify::Choice,
@@ -715,5 +716,110 @@ fn planning_needs_understand_and_clarify_to_be_settled() {
     assert!(matches!(
         run_plan(data.path(), &ticket, &Planner(good_plan())),
         Err(Error::NotReady(_))
+    ));
+}
+
+struct Remembers(std::sync::Mutex<Vec<String>>);
+
+impl Agent for Remembers {
+    fn start(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        self.0
+            .lock()
+            .unwrap()
+            .push(request.ticket.description.clone());
+        Ok(AgentRun::spawn(move |_| {
+            Ok(Understanding {
+                summary: "Again.".into(),
+                ambiguity: Ambiguity::all(Clarity::Clear),
+                open_questions: vec![],
+                assumptions: vec![],
+                needs_design: false,
+                ui_files: vec![],
+                files_touched: vec![],
+            })
+        })?)
+    }
+}
+
+// Invariant: running Understand again reuses the words the owner first wrote,
+// keeps the old attempt in the history, and the step ends passed again. A
+// change that dropped the saved words, or that rewrote the first attempt, would
+// make a re-run answer a different question than the one that was asked.
+#[test]
+fn understand_runs_again_with_the_original_words_and_keeps_the_old_attempt() {
+    let data = tempfile::tempdir().unwrap();
+    let ticket = Ticket {
+        id: TicketId::from("again-1"),
+        title: "Export".into(),
+        description: "Add an export option.".into(),
+    };
+    let agent = Remembers(std::sync::Mutex::new(Vec::new()));
+    run_understand(data.path(), &ticket, &agent).unwrap();
+    rerun_understand(data.path(), &ticket.id, &agent, None).unwrap();
+
+    assert_eq!(
+        *agent.0.lock().unwrap(),
+        ["Add an export option.", "Add an export option."]
+    );
+    let history = watch(data.path(), &ticket.id, 0).unwrap();
+    let attempts: Vec<String> = history
+        .iter()
+        .filter_map(|record| match &record.event.kind {
+            Event::StepStarted { attempt, .. } => Some(attempt.as_str().to_owned()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(attempts, ["understand-1", "understand-2"]);
+    assert!(
+        history
+            .iter()
+            .any(|record| matches!(record.event.kind, Event::StepReset { and_after: true }))
+    );
+    assert!(matches!(
+        history.last().unwrap().event.kind,
+        Event::StepFinished
+    ));
+    let state = autopilot_pipeline::fold(&history).unwrap();
+    assert_eq!(
+        state.step(autopilot_core::Step::Understand),
+        &autopilot_pipeline::StepState::Passed
+    );
+}
+
+// Invariant: a reset is validated by the same machine as every other event,
+// so a step that has not run, or an unknown ticket, is refused with a reason
+// and nothing is written.
+#[test]
+fn a_reset_that_the_machine_refuses_writes_nothing() {
+    let data = tempfile::tempdir().unwrap();
+    let ticket = Ticket {
+        id: TicketId::from("again-2"),
+        title: "Export".into(),
+        description: "x".into(),
+    };
+    let agent = Remembers(std::sync::Mutex::new(Vec::new()));
+    run_understand(data.path(), &ticket, &agent).unwrap();
+    let before = watch(data.path(), &ticket.id, 0).unwrap().len();
+
+    let error = reset_step(data.path(), &ticket.id, autopilot_core::Step::Plan, false).unwrap_err();
+    assert!(error.to_string().contains("nothing to reset"));
+    assert_eq!(watch(data.path(), &ticket.id, 0).unwrap().len(), before);
+
+    reset_step(
+        data.path(),
+        &ticket.id,
+        autopilot_core::Step::Understand,
+        true,
+    )
+    .unwrap();
+    assert_eq!(watch(data.path(), &ticket.id, 0).unwrap().len(), before + 1);
+    assert!(matches!(
+        reset_step(
+            data.path(),
+            &TicketId::from("nobody"),
+            autopilot_core::Step::Understand,
+            false
+        ),
+        Err(Error::UnknownTicket)
     ));
 }
