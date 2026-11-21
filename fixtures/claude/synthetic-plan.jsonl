@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-000000000000","model":"synthetic-model","tools":[]}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Reading the synthetic ticket."}]},"session_id":"00000000-0000-4000-8000-000000000000"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"StructuredOutput","input":{}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":2,"result":"","structured_output":{"criteria":[{"id":"c1","text":"The export has one row per ticket","verify":"test","verification_id":"row_count"},{"id":"c2","text":"The header row names every column","verify":"command","verification_id":"cargo test headers"}],"test_plan":["Run row_count against a three-ticket list","Run cargo test headers"],"files":["src/export.rs"]},"total_cost_usd":0.001234,"usage":{"input_tokens":10,"output_tokens":5},"session_id":"00000000-0000-4000-8000-000000000000"}

@@ -43,6 +43,7 @@ fn run(description: &str) -> Vec<AgentEvent> {
         .start(StepRequest {
             step: Step::Understand,
             ticket: &ticket,
+            context: "",
         })
         .unwrap()
         .collect()
@@ -137,6 +138,7 @@ fn cancelling_a_hung_run_ends_it_promptly() {
         .start(StepRequest {
             step: Step::Understand,
             ticket: &ticket,
+            context: "",
         })
         .unwrap();
     let cancel = run.cancellation();
@@ -184,6 +186,7 @@ fn a_hung_run_is_killed_at_the_configured_timeout() {
         .start(StepRequest {
             step: Step::Understand,
             ticket: &ticket,
+            context: "",
         })
         .unwrap()
         .collect();

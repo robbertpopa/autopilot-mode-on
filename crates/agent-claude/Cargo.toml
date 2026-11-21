@@ -19,6 +19,7 @@ autopilot-core.workspace = true
 autopilot-process = { path = "../process" }
 autopilot-profile = { path = "../profile" }
 schemars.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 

@@ -11,6 +11,7 @@ use autopilot_core::Ticket;
 
 const TRANSCRIPT: &[u8] = include_bytes!("../../../fixtures/agent/understand.jsonl");
 const CLAUDE_SUCCESS: &[u8] = include_bytes!("../../../fixtures/claude/synthetic-understand.jsonl");
+const CLAUDE_PLAN: &[u8] = include_bytes!("../../../fixtures/claude/synthetic-plan.jsonl");
 
 fn main() -> ExitCode {
     // Real Claude Code starts with `-p` or `auth`; the replay mode keeps its own word.
@@ -85,7 +86,13 @@ fn claude_print() -> Result<ExitCode, Box<dyn std::error::Error>> {
         )?;
         return Ok(ExitCode::FAILURE);
     }
-    output.write_all(CLAUDE_SUCCESS)?;
+    // The Plan prompt asks for a plan; every other prompt is Understand.
+    let reply = if prompt.contains("Write a plan for this ticket") {
+        CLAUDE_PLAN
+    } else {
+        CLAUDE_SUCCESS
+    };
+    output.write_all(reply)?;
     Ok(ExitCode::SUCCESS)
 }
 

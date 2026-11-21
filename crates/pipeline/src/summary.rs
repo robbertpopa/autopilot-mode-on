@@ -3,7 +3,7 @@
 
 use autopilot_core::{Clarity, Event, RecordedEvent, Step, Understanding};
 
-use crate::clarify::QaPair;
+use crate::{analyze, clarify::QaPair};
 
 fn plural(count: usize, word: &str) -> String {
     if count == 1 {
@@ -77,6 +77,24 @@ pub fn from_history(history: &[RecordedEvent]) -> Vec<(Step, String)> {
         });
     if let Some(pairs) = answered {
         lines.push((Step::Clarify, clarification(&pairs)));
+    }
+    let planned = history
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event.kind {
+            Event::PlanResult { plan } => Some(plan),
+            _ => None,
+        });
+    if let Some(plan) = planned {
+        let analysis = analyze::analyze(plan);
+        lines.push((
+            Step::Plan,
+            format!(
+                "{}. Analysis: {}.",
+                plural(plan.criteria.len(), "criterion").replace("criterions", "criteria"),
+                analysis.describe()
+            ),
+        ));
     }
     lines
 }

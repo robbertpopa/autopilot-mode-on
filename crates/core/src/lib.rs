@@ -58,6 +58,67 @@ pub struct Understanding {
     pub files_touched: Vec<String>,
 }
 
+/// How a criterion is shown to hold. `Unknown` can never pass a check.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verify {
+    Test,
+    Command,
+    Unknown,
+}
+
+/// One acceptance criterion. Whether it holds comes from executed evidence, so
+/// there is no `passes` field an agent could set to true.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct Criterion {
+    pub id: String,
+    pub text: String,
+    pub verify: Verify,
+    /// Name of the test or command that verifies it. Empty when `verify` is unknown.
+    pub verification_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct Plan {
+    #[schemars(length(min = 1, max = 30))]
+    pub criteria: Vec<Criterion>,
+    pub test_plan: Vec<String>,
+    #[schemars(length(max = 50))]
+    pub files: Vec<String>,
+}
+
+impl Plan {
+    /// Reject a plan the schema cannot express or that cannot be checked later.
+    ///
+    /// # Errors
+    /// Returns a description of the first violation.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.criteria.is_empty() || self.criteria.len() > 30 {
+            return Err(format!("{} criteria, need 1 to 30", self.criteria.len()));
+        }
+        if self.files.len() > 50 {
+            return Err(format!("{} files, at most 50 allowed", self.files.len()));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for criterion in &self.criteria {
+            if criterion.id.trim().is_empty() || criterion.text.trim().is_empty() {
+                return Err("a criterion needs an id and text".into());
+            }
+            if !seen.insert(criterion.id.as_str()) {
+                return Err(format!("criterion id {:?} appears twice", criterion.id));
+            }
+            let needs_id = criterion.verify != Verify::Unknown;
+            if needs_id && criterion.verification_id.trim().is_empty() {
+                return Err(format!(
+                    "criterion {:?} names no verification",
+                    criterion.id
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Clarity {
@@ -268,6 +329,14 @@ pub enum Event {
     UnderstandResult {
         result: Understanding,
     },
+    PlanResult {
+        plan: Plan,
+    },
+    /// The owner approved this exact plan. The hash ties the approval to the
+    /// copy stored outside the agent's reach.
+    PlanApproved {
+        sha256: String,
+    },
     RoundStarted {
         round: u32,
     },
@@ -358,5 +427,74 @@ mod understanding_tests {
         value.as_object_mut().unwrap().remove("files_touched");
         let parsed: Understanding = serde_json::from_value(value).unwrap();
         assert!(parsed.ui_files.is_empty() && parsed.files_touched.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+
+    fn criterion(id: &str, verify: Verify, verification: &str) -> Criterion {
+        Criterion {
+            id: id.into(),
+            text: "Something observable".into(),
+            verify,
+            verification_id: verification.into(),
+        }
+    }
+
+    fn plan(criteria: Vec<Criterion>) -> Plan {
+        Plan {
+            criteria,
+            test_plan: vec![],
+            files: vec![],
+        }
+    }
+
+    // Invariant: a plan the later checks cannot use is refused when it arrives,
+    // not when Build is already running on it.
+    #[test]
+    fn a_plan_must_be_checkable() {
+        assert!(
+            plan(vec![criterion("a", Verify::Test, "t")])
+                .validate()
+                .is_ok()
+        );
+        assert!(plan(vec![]).validate().is_err());
+        assert!(
+            plan(vec![
+                criterion("a", Verify::Test, "t"),
+                criterion("a", Verify::Test, "u")
+            ])
+            .validate()
+            .is_err()
+        );
+        assert!(
+            plan(vec![criterion("a", Verify::Command, " ")])
+                .validate()
+                .is_err()
+        );
+        // Unknown is allowed to arrive: Analyze flags it, the owner decides.
+        assert!(
+            plan(vec![criterion("a", Verify::Unknown, "")])
+                .validate()
+                .is_ok()
+        );
+    }
+
+    // Invariant: nothing an agent writes can mark a criterion as passing, so
+    // a model reply carrying `passes: true` is not a way to skip a check.
+    #[test]
+    fn a_plan_has_no_passes_field_to_set() {
+        let schema = serde_json::to_value(schemars::schema_for!(Plan)).unwrap();
+        let properties = &schema["$defs"]["Criterion"]["properties"];
+        assert!(properties.get("verification_id").is_some());
+        assert!(properties.get("passes").is_none());
+        let reply = serde_json::json!({
+            "criteria": [{"id":"a","text":"t","verify":"test","verification_id":"v","passes":true}],
+            "test_plan": [], "files": []
+        });
+        let parsed: Plan = serde_json::from_value(reply).unwrap();
+        assert!(!serde_json::to_string(&parsed).unwrap().contains("passes"));
     }
 }
