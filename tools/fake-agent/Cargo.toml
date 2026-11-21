@@ -17,3 +17,4 @@ serde_json.workspace = true
 autopilot-agent = { path = "../../crates/agent" }
 autopilot-agent-claude = { path = "../../crates/agent-claude" }
 autopilot-profile = { path = "../../crates/profile" }
+tempfile.workspace = true

@@ -104,6 +104,10 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// The agent's tool-call hook: reads one call on standard input and
+    /// prints whether it may run. Claude Code starts this, not people.
+    #[command(hide = true)]
+    Hook,
     /// Replay committed events from the ticket's local history.
     Watch {
         ticket: String,
@@ -219,6 +223,13 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 &serde_json::json!({"ticket": ticket.id, "result": result}),
             )?;
             writeln!(out)?;
+        }
+        Command::Hook => {
+            // A bounded read: the hook must answer even for a hostile call.
+            let mut input = Vec::new();
+            io::stdin().lock().take(1 << 20).read_to_end(&mut input)?;
+            let verdict = autopilot_policy::hook::decide(&input);
+            writeln!(out, "{}", autopilot_policy::hook::response(&verdict))?;
         }
         Command::Accounts { json } => write_accounts_command(&mut out, json)?,
         Command::Clarify { ticket } => run_clarify(&mut out, &cli.data_dir, ticket)?,

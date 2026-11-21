@@ -86,6 +86,9 @@ fn claude_print() -> Result<ExitCode, Box<dyn std::error::Error>> {
         )?;
         return Ok(ExitCode::FAILURE);
     }
+    if env::args_os().any(|arg| arg == "--allowedTools") {
+        return claude_build(&prompt, &mut output);
+    }
     // The Plan prompt asks for a plan; every other prompt is Understand.
     let reply = if prompt.contains("Write a plan for this ticket") {
         CLAUDE_PLAN
@@ -93,6 +96,51 @@ fn claude_print() -> Result<ExitCode, Box<dyn std::error::Error>> {
         CLAUDE_SUCCESS
     };
     output.write_all(reply)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Pretend to be a build turn of `claude -p`: edit files in the working
+/// directory the way the prompt's scenario says, then report success. A build
+/// turn is recognised by `--allowedTools`, which only it passes.
+fn claude_build(
+    prompt: &str,
+    output: &mut impl Write,
+) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let args: Vec<String> = env::args().collect();
+    let session = args
+        .windows(2)
+        .find(|pair| pair[0] == "--session-id" || pair[0] == "--resume")
+        .map_or("00000000-0000-4000-8000-000000000000", |pair| {
+            pair[1].as_str()
+        });
+    if prompt.contains("scenario:record-args") {
+        std::fs::write(
+            ".fake-args",
+            args.join(
+                "
+",
+            ),
+        )?;
+    }
+    if prompt.contains("scenario:build-protected") {
+        std::fs::create_dir_all("secrets")?;
+        std::fs::write("secrets/key.txt", "x")?;
+    } else if prompt.contains("scenario:build-nothing") {
+        // Changes nothing: the not-working counter must notice.
+    } else if prompt.contains("scenario:build-never-fixes") {
+        // A different edit every turn, so only the round cap can stop it.
+        let count = std::fs::read_dir(".")?.count();
+        std::fs::write(format!("attempt-{count}.txt"), "still wrong")?;
+    } else if prompt.contains("FAILED:") {
+        std::fs::write("fixed.txt", "fixed")?;
+    } else {
+        std::fs::write("draft.txt", "draft")?;
+    }
+    writeln!(
+        output,
+        "{{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"{session}\"}}
+         {{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"total_cost_usd\":0.001}}"
+    )?;
     Ok(ExitCode::SUCCESS)
 }
 

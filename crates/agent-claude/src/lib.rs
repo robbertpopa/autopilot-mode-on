@@ -4,6 +4,7 @@ mod auth;
 mod command;
 mod env;
 mod pricing;
+mod sessions;
 mod stream;
 
 use std::{
@@ -13,14 +14,16 @@ use std::{
     time::Duration,
 };
 
-use autopilot_agent::{Agent, AgentContext, AgentError, AgentRun, StepRequest, Stopped};
+use autopilot_agent::{
+    Agent, AgentContext, AgentError, AgentRun, BuildRequest, SessionUse, StepRequest, Stopped,
+};
 use autopilot_core::{Money, Plan, Step, Understanding};
 use autopilot_process::{CommandSpec, Limits, Outcome, Runner};
 use autopilot_profile::Auth;
 
 pub use auth::PreflightError;
 pub use command::ClaudeConfig;
-pub use env::{API_KEY_SOURCE, EnvError, child_env};
+pub use env::{API_KEY_SOURCE, EnvError, build_env, child_env};
 
 // The cap covers a whole stream, not one frame. Real runs are far below it.
 const STREAM_BYTES: usize = 16 * 1024 * 1024;
@@ -29,10 +32,21 @@ const STATUS_LIMITS: Limits = Limits {
     bytes_per_stream: 64 * 1024,
 };
 
+/// What a build turn needs besides the common configuration.
+#[derive(Clone, Debug)]
+pub struct BuildConfig {
+    /// The command Claude Code runs before each shell call: the path of this
+    /// program quoted for a shell, then `hook`.
+    pub hook_command: String,
+    /// The data directory, where session references are mapped.
+    pub data_dir: PathBuf,
+}
+
 pub struct ClaudeAgent {
     config: ClaudeConfig,
     executable: PathBuf,
     guardian: PathBuf,
+    build: Option<BuildConfig>,
 }
 
 impl ClaudeAgent {
@@ -50,7 +64,15 @@ impl ClaudeAgent {
             config,
             executable,
             guardian,
+            build: None,
         })
+    }
+
+    /// Allow build turns. Without this, `start_build` refuses.
+    #[must_use]
+    pub fn with_build(mut self, build: BuildConfig) -> Self {
+        self.build = Some(build);
+        self
     }
 
     /// Confirm Claude Code is signed in with the method the step needs. This
@@ -97,6 +119,52 @@ impl Agent for ClaudeAgent {
         };
         Ok(AgentRun::spawn(move |context| {
             run_claude::<Understanding>(&runner, &spec, &prompt, auth, limits, &context)
+        })?)
+    }
+
+    fn start_build(&self, request: BuildRequest<'_>) -> Result<AgentRun, AgentError> {
+        let build = self.build.as_ref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::Unsupported, "build turns are not configured")
+        })?;
+        let sessions = sessions::SessionMap::in_directory(&build.data_dir);
+        let (reference, session) = match &request.session {
+            SessionUse::Fresh => {
+                let (reference, uuid) = sessions.create()?;
+                (reference, command::SessionArg::New(uuid))
+            }
+            SessionUse::Resume(reference) => {
+                let uuid = sessions.lookup(reference)?.ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::NotFound, "that session is not known here")
+                })?;
+                (reference.clone(), command::SessionArg::Resume(uuid))
+            }
+        };
+        let settings = command::hook_settings(&build.hook_command)?;
+        let budget = request
+            .budget_left
+            .map(|left| format!("{:.6}", dollars(left.as_microusd())));
+        let spec = CommandSpec {
+            program: self.executable.clone(),
+            args: command::build_args(
+                &self.config,
+                &settings,
+                &session,
+                request.turns_left,
+                budget.as_deref(),
+            ),
+            env: build_env(self.config.auth, process_env::vars_os())?,
+            cwd: Some(request.worktree.to_path_buf()),
+        };
+        let prompt = request.prompt.as_bytes().to_vec();
+        let runner = Runner::new(self.guardian.clone());
+        let auth = self.config.auth;
+        let limits = Limits {
+            timeout: self.config.timeout,
+            bytes_per_stream: STREAM_BYTES,
+        };
+        Ok(AgentRun::spawn_build(move |context| {
+            context.session(reference);
+            run_build(&runner, &spec, &prompt, auth, limits, &context)
         })?)
     }
 
@@ -167,6 +235,11 @@ fn prompt(ticket: &autopilot_core::Ticket) -> Result<Vec<u8>, AgentError> {
     .into_bytes())
 }
 
+#[allow(clippy::cast_precision_loss)]
+fn dollars(microusd: u64) -> f64 {
+    microusd as f64 / 1_000_000.0
+}
+
 fn run_claude<T: StepOutput>(
     runner: &Runner,
     spec: &CommandSpec,
@@ -175,6 +248,32 @@ fn run_claude<T: StepOutput>(
     limits: Limits,
     context: &AgentContext,
 ) -> Result<T, AgentError> {
+    let (outcome, finish, stderr) = run_stream(runner, spec, prompt, auth, limits, context)?;
+    conclude(&outcome, finish, &stderr)
+}
+
+/// A build turn has no structured result: it ends well when Claude Code says
+/// so and exits cleanly, and its effect is in the worktree.
+fn run_build(
+    runner: &Runner,
+    spec: &CommandSpec,
+    prompt: &[u8],
+    auth: Auth,
+    limits: Limits,
+    context: &AgentContext,
+) -> Result<(), AgentError> {
+    let (outcome, finish, stderr) = run_stream(runner, spec, prompt, auth, limits, context)?;
+    check_finish(&outcome, finish, &stderr).map(|_| ())
+}
+
+fn run_stream(
+    runner: &Runner,
+    spec: &CommandSpec,
+    prompt: &[u8],
+    auth: Auth,
+    limits: Limits,
+    context: &AgentContext,
+) -> Result<(Outcome, Option<stream::Finish>, String), AgentError> {
     let decoder = Arc::new(Mutex::new(stream::Decoder::default()));
     let reader = Arc::clone(&decoder);
     let activity = context.clone();
@@ -197,7 +296,7 @@ fn run_claude<T: StepOutput>(
     if let Some((amount, estimated)) = finish.as_ref().and_then(|f| step_cost(f, auth)) {
         context.cost(Money::from_microusd(amount), estimated);
     }
-    conclude(&output.outcome, finish, &stderr_tail(&output.stderr))
+    Ok((output.outcome, finish, stderr_tail(&output.stderr)))
 }
 
 /// The last part of stderr, flattened and bounded, for a failure message.
@@ -235,6 +334,27 @@ fn conclude<T: StepOutput>(
     finish: Option<stream::Finish>,
     stderr: &str,
 ) -> Result<T, AgentError> {
+    let finish = check_finish(outcome, finish, stderr)?;
+    let value = finish.structured_output.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Claude returned no structured output",
+        )
+    })?;
+    let output: T = serde_json::from_value(value)?;
+    // The schema bounds are advisory to the model, so enforce them here.
+    output
+        .check()
+        .map_err(|reason| io::Error::new(io::ErrorKind::InvalidData, reason))?;
+    Ok(output)
+}
+
+/// What every step shares: the run must have ended in a clean success.
+fn check_finish(
+    outcome: &Outcome,
+    finish: Option<stream::Finish>,
+    stderr: &str,
+) -> Result<stream::Finish, AgentError> {
     let exited_ok = match outcome {
         Outcome::Exited(status) => status.success(),
         Outcome::Cancelled => {
@@ -281,18 +401,7 @@ fn conclude<T: StepOutput>(
     if finish.subtype != "success" {
         return Err(io::Error::other(format!("Claude ended with {}", finish.subtype)).into());
     }
-    let value = finish.structured_output.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Claude returned no structured output",
-        )
-    })?;
-    let output: T = serde_json::from_value(value)?;
-    // The schema bounds are advisory to the model, so enforce them here.
-    output
-        .check()
-        .map_err(|reason| io::Error::new(io::ErrorKind::InvalidData, reason))?;
-    Ok(output)
+    Ok(finish)
 }
 
 #[cfg(test)]

@@ -311,3 +311,36 @@ fn a_plan_is_made_approved_and_reported_from_the_cli() {
     );
     assert!(data.join("approved-plans").join("e2e-1.json").is_file());
 }
+
+// Invariant: the hook Claude Code launches answers on standard output with a
+// decision it can read, and never crashes on a hostile call. Driven as a real
+// process because the settings name this very binary.
+#[test]
+fn the_hook_denies_a_push_and_allows_a_status() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let call = |input: &[u8]| -> Value {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_autopilot"))
+            .arg("hook")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(input).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success());
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let push = br#"{"tool_name":"Bash","tool_input":{"command":"git -C . push origin main"}}"#;
+    assert_eq!(
+        call(push)["hookSpecificOutput"]["permissionDecision"],
+        "deny"
+    );
+    let status = br#"{"tool_name":"Bash","tool_input":{"command":"git status"}}"#;
+    assert_eq!(call(status), serde_json::json!({}));
+    assert_eq!(
+        call(b"\xff not json")["hookSpecificOutput"]["permissionDecision"],
+        "deny"
+    );
+}

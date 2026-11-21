@@ -4,6 +4,8 @@
 //! ticket text argues otherwise. The checkbox can only add a question: the
 //! decision is `forced || checkbox`, so nothing here lets it remove one.
 
+pub mod hook;
+
 use autopilot_core::Money;
 use autopilot_profile::{Profile, WhenUnsure};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
