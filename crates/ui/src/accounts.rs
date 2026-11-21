@@ -133,34 +133,26 @@ fn color(level: Level) -> Color32 {
 }
 
 impl App {
-    /// A row of four dots for the sidebar: one look tells you if anything is signed out.
+    /// Says nothing while every sign-in is fine. Only a service that is
+    /// signed out or rejected shows up, as one line that opens the details.
     pub(crate) fn account_dots(&self, ui: &mut egui::Ui) -> bool {
-        let mut open = false;
-        ui.horizontal_wrapped(|ui| match &self.accounts {
-            None => {
-                ui.label(theme::muted("Checking accounts..."));
-            }
-            Some(accounts) => {
-                for row in rows(accounts) {
-                    let (rect, response) =
-                        ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
-                    ui.painter()
-                        .circle_filled(rect.center(), 5.0, color(row.level));
-                    ui.label(
-                        RichText::new(row.name)
-                            .size(12.0)
-                            .color(theme::TEXT_MUTED()),
-                    );
-                    if response
-                        .on_hover_text(format!("{}: {}", row.name, row.lines.join(", ")))
-                        .clicked()
-                    {
-                        open = true;
-                    }
-                }
-            }
-        });
-        open
+        let Some(accounts) = &self.accounts else {
+            return false;
+        };
+        let names: Vec<&str> = rows(accounts)
+            .into_iter()
+            .filter(|row| row.level == Level::Attention)
+            .map(|row| row.name)
+            .collect();
+        if names.is_empty() {
+            return false;
+        }
+        ui.link(
+            RichText::new(format!("Sign in needed: {}", names.join(", ")))
+                .size(13.0)
+                .color(theme::AMBER()),
+        )
+        .clicked()
     }
 
     pub(crate) fn accounts_screen(&mut self, ui: &mut egui::Ui) {

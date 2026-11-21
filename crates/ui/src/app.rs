@@ -69,6 +69,7 @@ pub struct App {
     pub(crate) light: bool,
     update: Option<autopilot_update::Update>,
     installing: bool,
+    home: NewTicket,
     watching: bool,
     next_update_check: Option<std::time::Instant>,
     pub(crate) accounts: Option<autopilot_accounts::Accounts>,
@@ -96,7 +97,7 @@ impl App {
             options,
             profile,
             snapshot: Snapshot::default(),
-            mode: Mode::Design,
+            mode: Mode::Watch,
             screen: Screen::Run,
             selected: None,
             design_step: Step::BuildCheck,
@@ -114,6 +115,7 @@ impl App {
             light,
             update: None,
             installing: false,
+            home: NewTicket::default(),
             watching: watch,
             next_update_check: None,
             accounts: None,
@@ -239,7 +241,10 @@ impl App {
         }
         self.title_bar(ctx);
         self.sidebar(ctx);
-        if self.mode == Mode::Watch && self.current().is_some() {
+        if self.mode == Mode::Watch
+            && matches!(self.screen, Screen::Step(_))
+            && self.current().is_some()
+        {
             self.side_panel(ctx);
         }
         egui::CentralPanel::default()
@@ -299,7 +304,8 @@ impl App {
     }
 
     fn crumbs(&self, ui: &mut egui::Ui) {
-        if let (Mode::Watch, Some(view)) = (self.mode, self.current()) {
+        if let (Mode::Watch, Screen::Step(_), Some(view)) = (self.mode, self.screen, self.current())
+        {
             {
                 ui.label(RichText::new(&view.title).color(theme::TEXT_SOFT()));
                 if let Screen::Step(step) = self.screen {
@@ -376,9 +382,10 @@ impl App {
                         "   No tickets yet. Start one, or run with --demo.",
                     ));
                 }
-                self.needs_you_cards(ui);
                 let mut open = None;
-                for view in &self.snapshot.tickets {
+                let mut ordered: Vec<&TicketView> = self.snapshot.tickets.iter().collect();
+                ordered.sort_by_key(|view| view.badge != Badge::NeedsYou);
+                for view in ordered {
                     if ticket_row(ui, view, self.selected.as_ref() == Some(&view.id)) {
                         open = Some(view.id.clone());
                     }
@@ -397,7 +404,7 @@ impl App {
                         .min_size(egui::vec2(ui.available_width(), 44.0));
                     if ui
                         .add(settings)
-                        .on_hover_text("Step settings are on the pipeline screen")
+                        .on_hover_text("Pipeline steps, cost and accounts")
                         .clicked()
                     {
                         self.mode = Mode::Design;
@@ -481,11 +488,10 @@ impl App {
         if self.help_open {
             let mut open = true;
             egui::Window::new("Help").open(&mut open).show(ctx, |ui| {
-                ui.label("Design the pipeline: choose the settings of each step. They are saved in profile.toml.");
-                ui.label("Watch a run: pick a ticket in the sidebar, then click a step for its details.");
-                ui.label("Accounts: who is signed in to GitHub, Claude, Codex and Azure. Ctrl+N starts a ticket; Ctrl+Enter in the form sends it.");
-                ui.label("Cost: what each ticket spent. API spend is exact; subscription spend is an estimate and is never added to it.");
-                ui.label("A grey control with a hover note is not built yet.");
+                ui.label("Home: describe what should change and press Start. Tickets that need you are listed first.");
+                ui.label("A ticket: the box on top says what to do next. Click a step for its details.");
+                ui.label("Settings (bottom left): pipeline steps, cost, and who is signed in. Ctrl+N starts a ticket.");
+                ui.label("A grey control marked coming soon is not built yet.");
             });
             self.help_open = open;
         }
@@ -529,13 +535,21 @@ impl App {
         });
     }
 
+    /// Settings pages share a row of tabs and a way back. The ticket pages
+    /// have no tabs: the sidebar is how you move between tickets.
     pub(crate) fn mode_tabs(&mut self, ui: &mut egui::Ui) {
+        if self.mode == Mode::Watch {
+            return;
+        }
+        if ui.link("< Back to tickets").clicked() {
+            self.mode = Mode::Watch;
+        }
+        ui.add_space(6.0);
         theme::segmented(
             ui,
             &mut self.mode,
             &[
-                (Mode::Design, "Design the pipeline"),
-                (Mode::Watch, "Watch a run"),
+                (Mode::Design, "Pipeline steps"),
                 (Mode::Cost, "Cost"),
                 (Mode::Accounts, "Accounts"),
             ],
@@ -546,10 +560,7 @@ impl App {
         self.mode_tabs(ui);
         ui.add_space(14.0);
         match self.current().map(|view| view.id.clone()) {
-            None => {
-                ui.label(RichText::new("Watch a run").size(30.0).strong());
-                ui.label(theme::muted("Pick a ticket in the sidebar to watch it."));
-            }
+            None => self.home_screen(ui),
             Some(id) => match self.screen {
                 Screen::Run => self.run_screen(ui, &id),
                 Screen::Step(step) => self.step_screen(ui, &id, step),
@@ -655,62 +666,7 @@ fn save_theme(options: &Options, light: bool) {
     );
 }
 
-impl App {
-    /// A waiting ticket shows its question right in the sidebar, with the
-    /// answer one click away, so approving never needs a screen change.
-    fn needs_you_cards(&mut self, ui: &mut egui::Ui) {
-        let waiting: Vec<(TicketId, String, String)> = self
-            .snapshot
-            .tickets
-            .iter()
-            .filter_map(|view| {
-                let (_, request) = view.asking.as_ref()?;
-                let text = backend::waiting_text(&self.options, request)?;
-                Some((view.id.clone(), view.title.clone(), text))
-            })
-            .collect();
-        for (id, title, text) in waiting {
-            let question = text.contains('?');
-            Frame::new()
-                .fill(theme::AMBER_FILL())
-                .corner_radius(egui::CornerRadius::same(8))
-                .inner_margin(Margin::same(10))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width() - 20.0);
-                    ui.label(
-                        RichText::new(format!("{title} needs you"))
-                            .strong()
-                            .color(theme::AMBER()),
-                    );
-                    ui.label(RichText::new(text).size(13.0));
-                    ui.horizontal_wrapped(|ui| {
-                        if question {
-                            if ui.button("Use defaults").clicked() {
-                                self.act(Action::AcceptDefaults { ticket: id.clone() });
-                            }
-                        } else {
-                            if ui.button("Approve").clicked() {
-                                self.act(Action::Decide {
-                                    ticket: id.clone(),
-                                    approve: true,
-                                });
-                            }
-                            if ui.button("Reject").clicked() {
-                                self.act(Action::Decide {
-                                    ticket: id.clone(),
-                                    approve: false,
-                                });
-                            }
-                        }
-                        if ui.button("Open").clicked() {
-                            self.open(&id);
-                        }
-                    });
-                });
-            ui.add_space(6.0);
-        }
-    }
-}
+impl App {}
 
 /// How often a running window looks for a new release.
 const UPDATE_EVERY: std::time::Duration = std::time::Duration::from_hours(6);
@@ -765,4 +721,106 @@ impl App {
         }
         ctx.request_repaint_after(UPDATE_EVERY);
     }
+}
+
+impl App {
+    /// The first screen: one box to start work, then what waits for you.
+    fn home_screen(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("What should it work on?").size(32.0).strong());
+        ui.label(theme::muted(
+            "Describe a change. It reads the code, asks only what it must, and shows every step.",
+        ));
+        ui.add_space(14.0);
+        let mut start = None;
+        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+            ui.set_width(ui.available_width() - 34.0);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.home.title)
+                    .hint_text("A short title, e.g. Fix the timezone bug")
+                    .desired_width(f32::INFINITY),
+            );
+            ui.add_space(6.0);
+            ui.add(
+                egui::TextEdit::multiline(&mut self.home.description)
+                    .hint_text("What should change? (optional)")
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let ready = !self.home.title.trim().is_empty();
+                let enter = ui
+                    .input(|input| input.key_pressed(egui::Key::Enter) && input.modifiers.command);
+                if ui.add_enabled(ready, theme::primary("Start")).clicked() || (enter && ready) {
+                    start = Some(Action::Start {
+                        title: self.home.title.clone(),
+                        description: self.home.description.clone(),
+                    });
+                }
+                ui.label(theme::muted(
+                    "Ctrl+Enter. Real agents are coming soon: for now it runs the practice agent through Understand.",
+                ));
+            });
+        });
+        if let Some(action) = start {
+            self.home = NewTicket::default();
+            self.new_started = true;
+            self.act(action);
+        }
+        ui.add_space(18.0);
+        let mut open = None;
+        let waiting: Vec<&TicketView> = self
+            .snapshot
+            .tickets
+            .iter()
+            .filter(|view| view.badge == Badge::NeedsYou)
+            .collect();
+        if !waiting.is_empty() {
+            ui.label(
+                RichText::new("Waiting for you")
+                    .size(18.0)
+                    .strong()
+                    .color(theme::AMBER()),
+            );
+            for view in waiting {
+                if home_row(ui, view, "Answer") {
+                    open = Some(view.id.clone());
+                }
+            }
+            ui.add_space(14.0);
+        }
+        let rest: Vec<&TicketView> = self
+            .snapshot
+            .tickets
+            .iter()
+            .filter(|view| view.badge != Badge::NeedsYou)
+            .collect();
+        if !rest.is_empty() {
+            ui.label(RichText::new("Tickets").size(18.0).strong());
+            for view in rest {
+                if home_row(ui, view, "Open") {
+                    open = Some(view.id.clone());
+                }
+            }
+        }
+        if let Some(id) = open {
+            self.open(&id);
+        }
+    }
+}
+
+fn home_row(ui: &mut egui::Ui, view: &TicketView, action: &str) -> bool {
+    let mut clicked = false;
+    theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+        ui.set_width(ui.available_width() - 34.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&view.title).size(16.0).strong());
+            let (text, fill, color) = badge_colors(view.badge, view);
+            theme::pill(ui, &text, fill, color);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                clicked = ui.button(action).clicked();
+            });
+        });
+    });
+    clicked
 }
