@@ -123,6 +123,7 @@ impl TicketState {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "one arm per event")]
     fn apply(&mut self, record: &RecordedEvent) -> Result<(), StoreError> {
         if record.ticket != self.ticket {
             return Err(StoreError::TicketMismatch);
@@ -222,6 +223,7 @@ impl TicketState {
             | Event::SessionStarted { .. }
             | Event::CheckResult { .. }
             | Event::Described { .. }
+            | Event::Attached { .. }
             | Event::SettingsOverridden { .. } => {}
         }
         self.last_seq = record.seq;

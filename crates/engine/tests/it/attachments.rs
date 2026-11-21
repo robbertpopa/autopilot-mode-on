@@ -1,0 +1,160 @@
+use std::fs;
+
+use autopilot_core::{AttachmentKind, Event, Ticket, TicketId};
+use autopilot_engine::{
+    MAX_FILE_BYTES, attach, run_understand, run_understand_attached, stage, watch,
+};
+
+use super::Synthetic;
+
+fn ticket(id: &str) -> Ticket {
+    Ticket {
+        id: TicketId::from(id),
+        title: "With files".into(),
+        description: "Look at the files".into(),
+    }
+}
+
+fn attached(data: &std::path::Path, id: &TicketId) -> Vec<Event> {
+    watch(data, id, 0)
+        .unwrap()
+        .into_iter()
+        .map(|record| record.event.kind)
+        .filter(|kind| matches!(kind, Event::Attached { .. }))
+        .collect()
+}
+
+// Invariant: a copied file keeps its bytes and carries their SHA-256, an image
+// is told apart by extension, and a folder is recorded but never copied. A
+// change that dropped the hash or copied the folder would fail here.
+#[test]
+fn files_images_and_folders_are_recorded_with_a_hash_and_folders_are_not_copied() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let file = source.path().join("notes.txt");
+    fs::write(&file, b"abc").unwrap();
+    let image = source.path().join("shot.PNG");
+    fs::write(&image, b"png").unwrap();
+    let folder = source.path().join("project");
+    fs::create_dir_all(folder.join("src")).unwrap();
+    fs::write(folder.join("src").join("a.rs"), b"fn main() {}").unwrap();
+
+    let staged = stage(
+        data.path(),
+        &TicketId::from("t-1"),
+        &[file.clone(), image, folder.clone()],
+        (0, 0),
+    )
+    .unwrap();
+    assert_eq!(staged.len(), 3);
+    assert_eq!(staged[0].kind, AttachmentKind::File);
+    assert_eq!(
+        staged[0].sha256,
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    assert_eq!(staged[1].kind, AttachmentKind::Image);
+    assert_eq!(staged[2].kind, AttachmentKind::Folder);
+    assert_eq!(staged[2].items, 2);
+    assert_eq!(staged[2].sha256, "");
+    assert_eq!(
+        fs::read(data.path().join(&staged[0].stored)).unwrap(),
+        b"abc"
+    );
+    // Only the two files were copied.
+    let copies = fs::read_dir(data.path().join("attachments").join("t-1"))
+        .unwrap()
+        .count();
+    assert_eq!(copies, 2);
+}
+
+// Invariant: a refused source leaves nothing on disk, even when an earlier
+// source was fine, and no event is written. A partial copy would be left over.
+#[test]
+fn a_refused_source_writes_nothing() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let good = source.path().join("good.txt");
+    fs::write(&good, b"ok").unwrap();
+    let big = source.path().join("big.bin");
+    let handle = fs::File::create(&big).unwrap();
+    handle.set_len(MAX_FILE_BYTES + 1).unwrap();
+    let relative = std::path::PathBuf::from("relative.txt");
+
+    for bad in [big, relative, source.path().join("missing")] {
+        let result = stage(
+            data.path(),
+            &TicketId::from("t-2"),
+            &[good.clone(), bad],
+            (0, 0),
+        );
+        assert!(result.is_err());
+        assert!(!data.path().join("attachments").join("t-2").exists());
+    }
+    let result = stage(data.path(), &TicketId::from("../evil"), &[good], (0, 0));
+    assert!(result.is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_is_refused() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let target = source.path().join("real.txt");
+    fs::write(&target, b"x").unwrap();
+    let link = source.path().join("link.txt");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert!(stage(data.path(), &TicketId::from("t-3"), &[link], (0, 0)).is_err());
+}
+
+// Invariant: attachments given at the start are recorded in the opening
+// batch, before the first step starts, so the first attempt can see them.
+#[test]
+fn attachments_given_at_the_start_come_before_the_first_step() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let file = source.path().join("brief.md");
+    fs::write(&file, b"# brief").unwrap();
+    let ticket = ticket("t-4");
+    let staged = stage(data.path(), &ticket.id, &[file], (0, 0)).unwrap();
+    let agent = Synthetic {
+        data_dir: data.path().into(),
+    };
+    run_understand_attached(data.path(), &ticket, &agent, None, &staged).unwrap();
+    let kinds: Vec<_> = watch(data.path(), &ticket.id, 0)
+        .unwrap()
+        .into_iter()
+        .map(|record| record.event.kind)
+        .collect();
+    let attached_at = kinds
+        .iter()
+        .position(|kind| matches!(kind, Event::Attached { .. }))
+        .unwrap();
+    let started_at = kinds
+        .iter()
+        .position(|kind| matches!(kind, Event::StepStarted { .. }))
+        .unwrap();
+    assert!(attached_at < started_at);
+}
+
+// Invariant: attaching later appends events and counts what is already there
+// toward the per-ticket limit.
+#[test]
+fn attaching_later_appends_and_respects_the_count_limit() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let ticket = ticket("t-5");
+    let agent = Synthetic {
+        data_dir: data.path().into(),
+    };
+    run_understand(data.path(), &ticket, &agent).unwrap();
+    let file = source.path().join("late.txt");
+    fs::write(&file, b"late").unwrap();
+    assert_eq!(
+        attach(data.path(), &ticket.id, std::slice::from_ref(&file)).unwrap(),
+        1
+    );
+    assert_eq!(attached(data.path(), &ticket.id).len(), 1);
+    let many = vec![file; autopilot_engine::MAX_ATTACHMENTS];
+    assert!(attach(data.path(), &ticket.id, &many).is_err());
+    assert_eq!(attached(data.path(), &ticket.id).len(), 1);
+}

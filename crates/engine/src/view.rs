@@ -104,6 +104,18 @@ pub struct CostLine {
     pub estimated: bool,
 }
 
+/// One attachment as the window lists it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttachmentView {
+    pub name: String,
+    pub kind: autopilot_core::AttachmentKind,
+    pub bytes: u64,
+    /// Files counted, for a folder; 1 for a file.
+    pub items: u64,
+    /// Where a copied file lives, relative to the data directory, or the folder's own path.
+    pub stored: String,
+}
+
 /// Everything the Run and Step views need for one ticket.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TicketView {
@@ -117,6 +129,7 @@ pub struct TicketView {
     pub costs: Vec<CostLine>,
     /// The recorded result of a step, as readable JSON.
     pub outputs: Vec<(Step, String)>,
+    pub attachments: Vec<AttachmentView>,
     /// Exact spend through an API key.
     pub api: Money,
     /// Estimated spend on a subscription. Never added to `api`.
@@ -183,6 +196,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     let mut log = Vec::new();
     let mut costs = Vec::new();
     let mut outputs: Vec<(Step, String)> = Vec::new();
+    let mut attachments = Vec::new();
     for record in history {
         let at_ms = record.event.at_ms;
         let step = record.event.step;
@@ -196,6 +210,23 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
                 keep_output(&mut outputs, Step::Understand, result);
             }
             Event::PlanResult { plan } => keep_output(&mut outputs, Step::Plan, plan),
+            Event::Attached {
+                name,
+                kind,
+                bytes,
+                items,
+                stored,
+                ..
+            } => {
+                attachments.push(AttachmentView {
+                    name: name.clone(),
+                    kind: *kind,
+                    bytes: *bytes,
+                    items: *items,
+                    stored: stored.clone(),
+                });
+                timeline.push(line(at_ms, format!("Attached {name}")));
+            }
             Event::CostTick { amount, estimated } => {
                 costs.push(CostLine {
                     step,
@@ -288,6 +319,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         log,
         costs,
         outputs,
+        attachments,
         api,
         subscription,
         started_ms: first.event.at_ms,

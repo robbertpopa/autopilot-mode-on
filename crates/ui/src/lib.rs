@@ -178,6 +178,7 @@ mod tests {
             &Action::Start {
                 title: "Real ticket".into(),
                 description: "Show the time in the right zone".into(),
+                attachments: Vec::new(),
             },
         );
         assert!(outcome.is_ok(), "{outcome:?}");
@@ -215,6 +216,7 @@ mod tests {
             &Action::Start {
                 title: "Again".into(),
                 description: "Words kept for the second run".into(),
+                attachments: Vec::new(),
             },
         )
         .unwrap();
@@ -245,6 +247,44 @@ mod tests {
             ticket.step(Step::Understand).unwrap().state,
             autopilot_pipeline::StepState::Passed | autopilot_pipeline::StepState::Asking(_)
         ));
+    }
+
+    // Invariant: a ticket started with a file lists it on the ticket view, and
+    // a refused file stops the start before any ticket exists.
+    #[test]
+    fn starting_with_a_file_lists_it_and_a_bad_path_starts_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        let file = directory.path().join("brief.txt");
+        std::fs::write(&file, b"hello").unwrap();
+        perform(
+            &options,
+            &Action::Start {
+                title: "With a file".into(),
+                description: "See the brief".into(),
+                attachments: vec![file.clone()],
+            },
+        )
+        .unwrap();
+        let snapshot = read(&options);
+        assert_eq!(snapshot.tickets[0].attachments.len(), 1);
+        assert_eq!(snapshot.tickets[0].attachments[0].name, "brief.txt");
+
+        let refused = perform(
+            &options,
+            &Action::Start {
+                title: "Bad".into(),
+                description: "x".into(),
+                attachments: vec![directory.path().join("missing.txt")],
+            },
+        );
+        assert!(refused.is_err());
+        assert_eq!(read(&options).tickets.len(), 1);
     }
 
     // Invariant: the theme choice is kept for the next start.

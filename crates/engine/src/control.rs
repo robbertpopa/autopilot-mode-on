@@ -24,8 +24,8 @@ enum Flag {
     Pause,
 }
 
-fn flag_path(directory: &Path, ticket: &TicketId, flag: Flag) -> Result<PathBuf, Error> {
-    // The id becomes a file name, so only plain ids may.
+/// A ticket id that is safe to use as a file or folder name.
+pub(crate) fn plain_id(ticket: &TicketId) -> Result<&str, Error> {
     let id = ticket.as_str();
     if id.is_empty()
         || id.len() > 64
@@ -35,6 +35,12 @@ fn flag_path(directory: &Path, ticket: &TicketId, flag: Flag) -> Result<PathBuf,
     {
         return Err(Error::InvalidTicket);
     }
+    Ok(id)
+}
+
+fn flag_path(directory: &Path, ticket: &TicketId, flag: Flag) -> Result<PathBuf, Error> {
+    // The id becomes a file name, so only plain ids may.
+    let id = plain_id(ticket)?;
     let extension = match flag {
         Flag::Stop => "stop",
         Flag::Pause => "pause",
