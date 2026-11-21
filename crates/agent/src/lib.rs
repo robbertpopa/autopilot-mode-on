@@ -11,9 +11,15 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use autopilot_core::{Step, Ticket, Understanding};
+use autopilot_core::{Money, Step, Ticket, Understanding};
 
 pub type AgentError = Box<dyn std::error::Error + Send + Sync>;
+
+/// A run that ended at a configured limit. The agent worked as asked, so this
+/// is not a failure and must not be retried as one.
+#[derive(Debug, thiserror::Error)]
+#[error("agent stopped: {0}")]
+pub struct Stopped(pub String);
 
 pub struct StepRequest<'a> {
     pub step: Step,
@@ -23,8 +29,17 @@ pub struct StepRequest<'a> {
 #[derive(Debug)]
 pub enum AgentEvent {
     Started,
-    Message { summary: String },
+    Message {
+        summary: String,
+    },
+    /// Cost reported for the run. `estimated` is true when the provider's own
+    /// figure is not a bill, as with a subscription.
+    Cost {
+        amount: Money,
+        estimated: bool,
+    },
     Result(Understanding),
+    Stopped(String),
     Failed(AgentError),
 }
 
@@ -50,6 +65,10 @@ impl AgentContext {
     /// Report a bounded, safe-to-display activity summary.
     pub fn message(&self, summary: String) {
         let _ = self.events.send(AgentEvent::Message { summary });
+    }
+
+    pub fn cost(&self, amount: Money, estimated: bool) {
+        let _ = self.events.send(AgentEvent::Cost { amount, estimated });
     }
 }
 
@@ -93,7 +112,10 @@ impl AgentRun {
             // The stream must terminate even if another thread retains a context.
             let terminal = match panic::catch_unwind(AssertUnwindSafe(|| work(context))) {
                 Ok(Ok(result)) => AgentEvent::Result(result),
-                Ok(Err(error)) => AgentEvent::Failed(error),
+                Ok(Err(error)) => match error.downcast::<Stopped>() {
+                    Ok(stopped) => AgentEvent::Stopped(stopped.0),
+                    Err(error) => AgentEvent::Failed(error),
+                },
                 Err(_) => AgentEvent::Failed(io::Error::other("agent worker panicked").into()),
             };
             let _ = sender.send(terminal);
@@ -118,7 +140,7 @@ impl Iterator for AgentRun {
         let event = self.events.as_ref()?.recv().ok();
         if !matches!(
             event,
-            Some(AgentEvent::Started | AgentEvent::Message { .. })
+            Some(AgentEvent::Started | AgentEvent::Message { .. } | AgentEvent::Cost { .. })
         ) {
             self.events = None;
         }

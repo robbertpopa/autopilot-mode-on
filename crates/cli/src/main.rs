@@ -7,8 +7,10 @@ use std::{
     process::ExitCode,
 };
 
+use autopilot_agent_claude::{ClaudeAgent, ClaudeConfig};
 use autopilot_agent_fixture::FixtureAgent;
 use autopilot_core::{Ticket, TicketId};
+use autopilot_profile::Auth;
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
@@ -30,6 +32,20 @@ enum Command {
         ticket: PathBuf,
         #[arg(long)]
         agent: Agent,
+        /// How the claude agent is billed. Ignored by the fake agent.
+        #[arg(long, default_value = "subscription")]
+        auth: AuthArg,
+        #[arg(long, default_value = "haiku")]
+        model: String,
+        /// Structured output needs a turn after the answer, so keep this above 1.
+        #[arg(long, default_value_t = 4)]
+        max_turns: u32,
+        /// Dollar cap per call. Applies to --auth api only.
+        #[arg(long, default_value = "0.05")]
+        max_budget_usd: String,
+        /// Absolute path to a native claude executable. Defaults to a PATH search.
+        #[arg(long)]
+        claude_path: Option<PathBuf>,
     },
     /// Replay committed events from the ticket's local history.
     Watch {
@@ -47,6 +63,13 @@ enum Step {
 #[derive(Clone, Copy, ValueEnum)]
 enum Agent {
     Fake,
+    Claude,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum AuthArg {
+    Subscription,
+    Api,
 }
 
 fn main() -> ExitCode {
@@ -65,11 +88,45 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         Command::RunStep {
             step: Step::Understand,
             ticket,
-            agent: Agent::Fake,
+            agent,
+            auth,
+            model,
+            max_turns,
+            max_budget_usd,
+            claude_path,
         } => {
             let ticket = read_ticket(&ticket)?;
-            let agent = FixtureAgent::beside(&env::current_exe()?)?;
-            let result = autopilot_engine::run_understand(&cli.data_dir, &ticket, &agent)?;
+            let exe = env::current_exe()?;
+            let result = match agent {
+                Agent::Fake => {
+                    let agent = FixtureAgent::beside(&exe)?;
+                    autopilot_engine::run_understand(&cli.data_dir, &ticket, &agent)?
+                }
+                Agent::Claude => {
+                    let guardian = exe.with_file_name(format!(
+                        "autopilot-process-guardian{}",
+                        env::consts::EXE_SUFFIX
+                    ));
+                    let agent = ClaudeAgent::new(
+                        ClaudeConfig {
+                            auth: match auth {
+                                AuthArg::Subscription => Auth::Subscription,
+                                AuthArg::Api => Auth::Api,
+                            },
+                            model,
+                            effort: None,
+                            max_turns,
+                            max_budget_usd: Some(max_budget_usd),
+                            executable: claude_path,
+                        },
+                        guardian,
+                    )?;
+                    agent
+                        .preflight()
+                        .map_err(|error| -> Box<dyn Error> { error })?;
+                    autopilot_engine::run_understand(&cli.data_dir, &ticket, &agent)?
+                }
+            };
             serde_json::to_writer(
                 &mut out,
                 &serde_json::json!({"ticket": ticket.id, "result": result}),

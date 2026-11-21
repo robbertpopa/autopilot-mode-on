@@ -11,3 +11,4 @@ workspace = true
 
 [dependencies]
 autopilot-core.workspace = true
+thiserror.workspace = true

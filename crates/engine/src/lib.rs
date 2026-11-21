@@ -28,8 +28,10 @@ pub enum Error {
     UnknownTicket,
     #[error("the current time is outside the supported range")]
     Clock,
-    #[error("fixture execution failed: {0}")]
+    #[error("agent execution failed: {0}")]
     Agent(#[source] AgentError),
+    #[error("the agent stopped at a limit: {0}")]
+    Stopped(String),
     #[error(transparent)]
     Storage(#[from] StoreError),
     #[error(transparent)]
@@ -82,24 +84,43 @@ pub fn run_understand(
             match run.next() {
                 Some(AgentEvent::Started) => {}
                 Some(AgentEvent::Message { summary }) => {
-                    let committed = store.append(
+                    last = record(
+                        &mut store,
                         &ticket.id,
                         last,
-                        &[event(
-                            timestamp()?,
-                            UNDERSTAND,
-                            Event::AgentActivity { summary },
-                        )],
+                        Event::AgentActivity { summary },
                     )?;
-                    last = committed.last().map_or(last, |record| record.seq);
+                }
+                Some(AgentEvent::Cost { amount, estimated }) => {
+                    last = record(
+                        &mut store,
+                        &ticket.id,
+                        last,
+                        Event::CostTick { amount, estimated },
+                    )?;
                 }
                 Some(AgentEvent::Result(result)) => break Ok(result),
-                Some(AgentEvent::Failed(error)) => break Err(error),
-                None => break Err(io::Error::other("agent stream ended without a result").into()),
+                Some(AgentEvent::Stopped(reason)) => break Err(Outcome::Stopped(reason)),
+                Some(AgentEvent::Failed(error)) => break Err(Outcome::Failed(error)),
+                None => {
+                    break Err(Outcome::Failed(
+                        io::Error::other("agent stream ended without a result").into(),
+                    ));
+                }
             }
         },
-        Err(error) => Err(error),
+        Err(error) => Err(Outcome::Failed(error)),
     };
+    conclude(&mut store, &ticket.id, last, response)
+}
+
+/// Record how the attempt ended.
+fn conclude(
+    store: &mut SqliteStore,
+    ticket: &TicketId,
+    last: u64,
+    response: Result<Understanding, Outcome>,
+) -> Result<Understanding, Error> {
     let finished_at = timestamp()?;
     match response {
         Ok(result) => {
@@ -114,24 +135,55 @@ pub fn run_understand(
                 event(finished_at, UNDERSTAND, Event::StepFinished),
                 event(finished_at, None, Event::Done),
             ];
-            store.append(&ticket.id, last, &terminal)?;
+            store.append(ticket, last, &terminal)?;
             Ok(result)
         }
-        Err(error) => {
+        Err(Outcome::Stopped(reason)) => {
             store.append(
-                &ticket.id,
+                ticket,
+                last,
+                &[event(
+                    finished_at,
+                    UNDERSTAND,
+                    Event::Interrupted {
+                        reason: reason.clone(),
+                    },
+                )],
+            )?;
+            Err(Error::Stopped(reason))
+        }
+        Err(Outcome::Failed(error)) => {
+            store.append(
+                ticket,
                 last,
                 &[event(
                     finished_at,
                     UNDERSTAND,
                     Event::Failed {
-                        reason: "Understand fixture failed".into(),
+                        reason: "Understand step failed".into(),
                     },
                 )],
             )?;
             Err(Error::Agent(error))
         }
     }
+}
+
+/// Append one Understand event and return the new last sequence number.
+fn record(
+    store: &mut SqliteStore,
+    ticket: &TicketId,
+    last: u64,
+    kind: Event,
+) -> Result<u64, Error> {
+    let committed = store.append(ticket, last, &[event(timestamp()?, UNDERSTAND, kind)])?;
+    Ok(committed.last().map_or(last, |record| record.seq))
+}
+
+/// A limit stop is kept apart from failure so callers do not retry it blindly.
+enum Outcome {
+    Stopped(String),
+    Failed(AgentError),
 }
 
 /// Replay committed events after a cursor through a read-only connection.

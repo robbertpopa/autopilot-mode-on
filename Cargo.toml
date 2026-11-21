@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/agent",
+    "crates/agent-claude",
     "crates/agent-fixture",
     "crates/cli",
     "crates/core",

@@ -42,7 +42,7 @@ pub struct Ticket {
     pub description: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct Understanding {
     pub summary: String,
     pub assumptions: Vec<String>,
