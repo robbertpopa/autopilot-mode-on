@@ -340,6 +340,11 @@ pub enum Event {
     RoundStarted {
         round: u32,
     },
+    /// The opaque local reference of the agent session a step is using. The
+    /// provider's own identifier is never logged.
+    SessionStarted {
+        session: SessionId,
+    },
     CheckResult {
         check: String,
         passed: bool,

@@ -14,7 +14,7 @@ mod diff_tests;
 #[cfg(test)]
 mod runner_tests;
 
-pub use command::{CommandCheck, Environment, Toolbox, resolve_executable};
+pub use command::{CommandCheck, Environment, Toolbox, plain_directory, resolve_executable};
 pub use criteria::CriteriaCheck;
 pub use diff::DiffCheck;
 pub use review::{ReviewCheck, Reviewer};

@@ -11,12 +11,17 @@ workspace = true
 
 [dependencies]
 autopilot-agent = { path = "../agent" }
+autopilot-checks = { path = "../checks" }
 autopilot-core.workspace = true
+autopilot-git = { path = "../git" }
 autopilot-pipeline = { path = "../pipeline" }
+autopilot-policy = { path = "../policy" }
+autopilot-profile = { path = "../profile" }
 serde_json.workspace = true
 sha2 = { version = "0.11", default-features = false }
 autopilot-store = { path = "../store" }
 thiserror.workspace = true
 
 [dev-dependencies]
+autopilot-agent-claude = { path = "../agent-claude" }
 tempfile.workspace = true

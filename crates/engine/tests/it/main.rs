@@ -6,6 +6,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
+mod build;
+
 use autopilot_agent::{Agent, AgentError, AgentRun, StepRequest, Stopped};
 use autopilot_core::{
     Ambiguity, Clarity, Event, Money, OpenQuestion, Ticket, TicketId, Understanding,

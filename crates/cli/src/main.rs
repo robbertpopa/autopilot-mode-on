@@ -9,7 +9,7 @@ use std::{
 };
 
 use autopilot_accounts::{Accounts, Status};
-use autopilot_agent_claude::{ClaudeAgent, ClaudeConfig};
+use autopilot_agent_claude::{BuildConfig, ClaudeAgent, ClaudeConfig};
 use autopilot_agent_fixture::FixtureAgent;
 use autopilot_core::{
     RequestId, SettingsScope, Step as CoreStep, StepChange, StepOverride, Ticket, TicketId,
@@ -66,6 +66,24 @@ enum Command {
         /// Wait in the inbox for approve, edit or reject before the step passes.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
         ask_after: Option<bool>,
+    },
+    /// Run the Build step for an approved plan in a ticket worktree.
+    Build {
+        #[arg(long)]
+        ticket: PathBuf,
+        /// The repository the ticket changes.
+        #[arg(long)]
+        repo: PathBuf,
+        #[arg(long)]
+        base: String,
+        /// Where ticket checkouts live. Keep it outside the repository.
+        #[arg(long)]
+        worktrees: PathBuf,
+        /// The project profile (TOML) with the check commands.
+        #[arg(long)]
+        profile: PathBuf,
+        #[arg(long)]
+        agent: Agent,
     },
     /// Show which Claude, GitHub and Azure accounts this machine is signed in to.
     Accounts {
@@ -224,13 +242,24 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             )?;
             writeln!(out)?;
         }
-        Command::Hook => {
-            // A bounded read: the hook must answer even for a hostile call.
-            let mut input = Vec::new();
-            io::stdin().lock().take(1 << 20).read_to_end(&mut input)?;
-            let verdict = autopilot_policy::hook::decide(&input);
-            writeln!(out, "{}", autopilot_policy::hook::response(&verdict))?;
+        Command::Build {
+            ticket,
+            repo,
+            base,
+            worktrees,
+            profile,
+            agent,
+        } => {
+            let places = BuildPlaces {
+                repo: &repo,
+                base: &base,
+                worktrees: &worktrees,
+            };
+            let outcome = build_command(&cli.data_dir, &ticket, &profile, agent, &places)?;
+            serde_json::to_writer(&mut out, &outcome)?;
+            writeln!(out)?;
         }
+        Command::Hook => run_hook(&mut out)?,
         Command::Accounts { json } => write_accounts_command(&mut out, json)?,
         Command::Clarify { ticket } => run_clarify(&mut out, &cli.data_dir, ticket)?,
         Command::Recover { ticket } => {
@@ -306,6 +335,94 @@ fn run_step(
             data_dir, ticket, agent, ask_after,
         )?)?,
         Step::Plan => serde_json::to_value(autopilot_engine::run_plan(data_dir, ticket, agent)?)?,
+    })
+}
+
+struct BuildPlaces<'a> {
+    repo: &'a Path,
+    base: &'a str,
+    worktrees: &'a Path,
+}
+
+fn run_hook(out: &mut impl Write) -> Result<(), Box<dyn Error>> {
+    // A bounded read: the hook must answer even for a hostile call.
+    let mut input = Vec::new();
+    io::stdin().lock().take(1 << 20).read_to_end(&mut input)?;
+    let verdict = autopilot_policy::hook::decide(&input);
+    writeln!(out, "{}", autopilot_policy::hook::response(&verdict))?;
+    Ok(())
+}
+
+fn build_command(
+    data_dir: &Path,
+    ticket: &Path,
+    profile: &Path,
+    agent: Agent,
+    places: &BuildPlaces<'_>,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let ticket = read_ticket(ticket)?;
+    let source = std::fs::read_to_string(profile)?;
+    let profile = autopilot_profile::Profile::parse(profile, &source)?;
+    let exe = env::current_exe()?;
+    run_build(data_dir, &ticket, agent, &exe, places, &profile)
+}
+
+/// The fake agent stands in for Claude Code here and is the only agent a
+/// build may use: a real one would run tools in a real repository, and S6 has
+/// not shown how to contain that.
+fn run_build(
+    data_dir: &Path,
+    ticket: &Ticket,
+    agent: Agent,
+    exe: &Path,
+    places: &BuildPlaces<'_>,
+    profile: &autopilot_profile::Profile,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    if matches!(agent, Agent::Claude) {
+        return Err(
+            "a real agent cannot run the Build step until the containment spike S6 \
+                    is settled (docs/spikes/S6-containment.md); use --agent fake"
+                .into(),
+        );
+    }
+    let guardian = exe.with_file_name(format!(
+        "autopilot-process-guardian{}",
+        env::consts::EXE_SUFFIX
+    ));
+    let fake = exe.with_file_name(format!("autopilot-fake-agent{}", env::consts::EXE_SUFFIX));
+    let config = ClaudeConfig {
+        auth: Auth::Subscription,
+        model: "fake".into(),
+        effort: None,
+        max_turns: 8,
+        max_budget_usd: None,
+        executable: Some(fake),
+        timeout: Duration::from_secs(120),
+    };
+    let agent = ClaudeAgent::new(config, guardian.clone())?.with_build(BuildConfig {
+        hook_command: format!("\"{}\" hook", exe.display()),
+        data_dir: data_dir.to_path_buf(),
+    });
+    let setup = autopilot_engine::BuildSetup {
+        repository: places.repo,
+        base_branch: places.base,
+        worktrees: places.worktrees,
+        git: PathBuf::from("git"),
+        guardian,
+        profile,
+    };
+    let outcome = autopilot_engine::run_build(
+        data_dir,
+        ticket,
+        &agent,
+        &setup,
+        autopilot_engine::Isolation::Fixture,
+    )?;
+    Ok(match outcome {
+        autopilot_engine::BuildOutcome::Ready => serde_json::json!({"build": "ready"}),
+        autopilot_engine::BuildOutcome::NeedsYou { request, reason } => {
+            serde_json::json!({"build": "needs_you", "request": request, "reason": reason})
+        }
     })
 }
 

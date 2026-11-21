@@ -204,6 +204,7 @@ impl TicketState {
             | Event::PlanResult { .. }
             | Event::PlanApproved { .. }
             | Event::RoundStarted { .. }
+            | Event::SessionStarted { .. }
             | Event::CheckResult { .. }
             | Event::SettingsOverridden { .. } => {}
         }

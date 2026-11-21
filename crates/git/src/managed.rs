@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Error, GIT_LIMITS, ObjectId, Repository, Worktree, git_os_value, git_path};
 
 mod cleanup;
+mod commit;
 mod fingerprint;
 pub use cleanup::Removal;
 pub use fingerprint::TreeFingerprint;

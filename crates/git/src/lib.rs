@@ -182,6 +182,18 @@ impl Repository {
         limits: Limits,
         index: Option<&Path>,
     ) -> Result<Vec<u8>, Error> {
+        self.git_full(directory, operation, arguments, limits, index, &[])
+    }
+
+    fn git_full(
+        &self,
+        directory: &Path,
+        operation: &'static str,
+        arguments: impl IntoIterator<Item = impl Into<OsString>>,
+        limits: Limits,
+        index: Option<&Path>,
+        extra_environment: &[(OsString, OsString)],
+    ) -> Result<Vec<u8>, Error> {
         let mut args = vec![
             "--no-pager".into(),
             "-c".into(),
@@ -214,6 +226,7 @@ impl Repository {
         if let Some(index) = index {
             environment.push(("GIT_INDEX_FILE".into(), git_path(index)));
         }
+        environment.extend(extra_environment.iter().cloned());
         if cfg!(windows)
             && let Some(root) = env::var_os("SystemRoot")
         {
