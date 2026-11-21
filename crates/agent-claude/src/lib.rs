@@ -17,7 +17,6 @@ use autopilot_agent::{Agent, AgentContext, AgentError, AgentRun, StepRequest, St
 use autopilot_core::{Money, Step, Understanding};
 use autopilot_process::{CommandSpec, Limits, Outcome, Runner};
 use autopilot_profile::Auth;
-use schemars::schema_for;
 
 pub use auth::PreflightError;
 pub use command::ClaudeConfig;
@@ -81,7 +80,7 @@ impl Agent for ClaudeAgent {
             )
             .into());
         }
-        let schema = serde_json::to_string(&schema_for!(Understanding))?;
+        let schema = command::understand_schema()?;
         let spec = CommandSpec {
             program: self.executable.clone(),
             args: command::understand_args(&self.config, &schema),
@@ -139,7 +138,20 @@ fn run_claude(
     if let Some((amount, estimated)) = finish.as_ref().and_then(|f| step_cost(f, auth)) {
         context.cost(Money::from_microusd(amount), estimated);
     }
-    conclude(&output.outcome, finish)
+    conclude(&output.outcome, finish, &stderr_tail(&output.stderr))
+}
+
+/// The last part of stderr, flattened and bounded, for a failure message.
+/// Claude Code explains startup failures there and nowhere else.
+fn stderr_tail(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let flat: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let flat = flat.trim();
+    let skip = flat.chars().count().saturating_sub(300);
+    flat.chars().skip(skip).collect()
 }
 
 /// API steps are billed, so the provider's figure is the cost. A subscription
@@ -162,6 +174,7 @@ fn step_cost(finish: &stream::Finish, auth: Auth) -> Option<(u64, bool)> {
 fn conclude(
     outcome: &Outcome,
     finish: Option<stream::Finish>,
+    stderr: &str,
 ) -> Result<Understanding, AgentError> {
     let exited_ok = match outcome {
         Outcome::Exited(status) => status.success(),
@@ -184,7 +197,7 @@ fn conclude(
     let Some(finish) = finish else {
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
-            "Claude ended without a result",
+            format!("Claude ended without a result ({outcome:?}; stderr: {stderr})"),
         )
         .into());
     };
@@ -246,7 +259,7 @@ mod tests {
     }
 
     fn conclude_with(code: i32, finish: Option<Finish>) -> Result<Understanding, AgentError> {
-        conclude(&Outcome::Exited(status(code)), finish)
+        conclude(&Outcome::Exited(status(code)), finish, "")
     }
 
     #[test]
@@ -284,11 +297,12 @@ mod tests {
         assert!(
             conclude(
                 &Outcome::TimedOut,
-                Some(finish("success", false, Some(good())))
+                Some(finish("success", false, Some(good()))),
+                ""
             )
             .is_err()
         );
-        assert!(conclude(&Outcome::Cancelled, None).is_err());
+        assert!(conclude(&Outcome::Cancelled, None, "").is_err());
     }
 
     fn costed(model: Option<&str>, usage: Option<pricing::Usage>, reported: Option<f64>) -> Finish {
