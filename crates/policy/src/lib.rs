@@ -43,6 +43,9 @@ const SCRIPT_PATTERNS: &[&str] = &[
     "**/.husky/**",
 ];
 
+/// Branches the tool creates for tickets, and the only ones it pushes.
+const TICKET_BRANCH_PREFIX: &str = "ticket/";
+
 const WORKFLOW_PATTERN: &str = ".github/**";
 
 /// Ticket labels that mean the change is security work.
@@ -138,8 +141,17 @@ impl Decision {
     }
 }
 
+/// Why a push was refused.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum PushRefusal {
+    #[error("{0} is a protected branch and is never pushed to")]
+    ProtectedBranch(String),
+    #[error("{0} is not a plain ticket/<id> branch, so it is not pushed")]
+    NotATicketBranch(String),
+}
+
 #[derive(Debug, thiserror::Error)]
-#[error("protected path pattern {pattern:?} is not valid: {source}")]
+#[error("pattern {pattern:?} is not valid: {source}")]
 pub struct PolicyError {
     pattern: String,
     #[source]
@@ -148,6 +160,7 @@ pub struct PolicyError {
 
 pub struct Policy {
     protected: GlobSet,
+    protected_branches: GlobSet,
     protected_patterns: Vec<String>,
     workflow: GlobSet,
     scripts: GlobSet,
@@ -164,6 +177,7 @@ impl Policy {
         let protected_patterns: Vec<String> = profile.protected_paths.clone();
         Ok(Self {
             protected: set(&protected_patterns)?,
+            protected_branches: set(&profile.branch_rules.protected)?,
             protected_patterns,
             workflow: set(&[WORKFLOW_PATTERN.to_owned()])?,
             scripts: set(&SCRIPT_PATTERNS
@@ -239,6 +253,32 @@ impl Policy {
         }
         if self.scripts.is_match(&path) {
             forced.push(Reason::Script(path));
+        }
+    }
+
+    /// Whether the host may push `branch`. The host only ever publishes the
+    /// ticket's own branch, never a protected one, and never through a refspec
+    /// that could mean something else (`+name` forces, `a:b` renames, `:name`
+    /// deletes). This is the code-side half of the rule; the deny hook is the
+    /// other.
+    ///
+    /// # Errors
+    /// Returns why the push is refused.
+    pub fn check_push(&self, branch: &str) -> Result<(), PushRefusal> {
+        let name = branch.strip_prefix("refs/heads/").unwrap_or(branch);
+        if self.protected_branches.is_match(name) {
+            return Err(PushRefusal::ProtectedBranch(name.to_owned()));
+        }
+        let plain = name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'/'));
+        let owned = name
+            .strip_prefix(TICKET_BRANCH_PREFIX)
+            .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'));
+        if plain && owned && !name.contains("..") && !name.contains("//") {
+            Ok(())
+        } else {
+            Err(PushRefusal::NotATicketBranch(name.to_owned()))
         }
     }
 

@@ -242,3 +242,65 @@ fn deciding_for_the_owner_still_records_the_assumption() {
     let touched = paths(&["secrets/x"]);
     assert!(project().evaluate(false, &facts(&touched, &[])).must_ask());
 }
+
+// Invariant: the host pushes only a ticket's own branch. A protected branch
+// is refused under any spelling, and so is anything that could be read as a
+// force, a rename or a delete.
+#[test]
+fn only_plain_ticket_branches_may_be_pushed() {
+    let policy = policy("branch_rules.protected = [\"main\", \"release/*\", \"ticket/frozen\"]");
+    for ok in [
+        "ticket/gh-12",
+        "refs/heads/ticket/42",
+        "ticket/a/b",
+        "ticket/-x",
+    ] {
+        assert_eq!(policy.check_push(ok), Ok(()), "{ok}");
+    }
+    for protected in [
+        "main",
+        "MAIN",
+        "refs/heads/main",
+        "release/1.0",
+        "ticket/frozen",
+    ] {
+        assert!(
+            matches!(
+                policy.check_push(protected),
+                Err(PushRefusal::ProtectedBranch(_))
+            ),
+            "{protected}"
+        );
+    }
+    for odd in [
+        "",
+        "develop",
+        "ticket/",
+        "ticket//x",
+        "ticket/../main",
+        "+ticket/x",
+        "ticket/x:main",
+        ":ticket/x",
+        "ticket/x y",
+        "HEAD",
+        "refs/tags/ticket/x",
+    ] {
+        assert!(
+            matches!(
+                policy.check_push(odd),
+                Err(PushRefusal::NotATicketBranch(_))
+            ),
+            "{odd:?}"
+        );
+    }
+}
+
+// Invariant: the default protected branches are refused with no profile at all.
+#[test]
+fn the_default_profile_protects_the_usual_branches() {
+    let policy = policy("");
+    for name in ["main", "master", "develop"] {
+        assert!(policy.check_push(name).is_err(), "{name}");
+    }
+    assert!(policy.check_push("ticket/1").is_ok());
+}
