@@ -12,7 +12,7 @@ fn layer(name: &str) -> Option<u8> {
     match name.strip_prefix("autopilot-")? {
         "core" => Some(0),
         "store" | "profile" | "process" => Some(1),
-        "git" | "tracker" | "policy" | "accounts" => Some(2),
+        "git" | "tracker" | "policy" | "accounts" | "update" => Some(2),
         "agent" | "checks" => Some(3),
         "agent-claude" | "agent-codex" | "agent-fixture" | "pipeline" => Some(4),
         "engine" => Some(5),
@@ -48,6 +48,7 @@ pub(crate) fn check() -> TaskResult {
                 && !matches!(
                     name,
                     "autopilot-accounts"
+                        | "autopilot-update"
                         | "autopilot-git"
                         | "autopilot-tracker"
                         | "autopilot-checks"

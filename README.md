@@ -23,6 +23,10 @@ ticket -> Understand -> [Clarify] -> [Design] -> Plan -> Build <-> Check -> Pull
 
 The roadmap also includes a read-only codebase review, followed by approved fixes through the ticket pipeline. See the [review pipeline design](docs/REVIEW-PIPELINE.md).
 
+## Install
+
+Download the Windows installer or the macOS disk image from the [releases page](https://github.com/robbertpopa/autopilot-mode-on/releases/latest). The app checks for a signed update when it opens. How releases are built and signed: [docs/releasing.md](docs/releasing.md).
+
 ## Documents
 
 | File | What it is |

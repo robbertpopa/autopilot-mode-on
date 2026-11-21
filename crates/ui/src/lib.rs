@@ -263,4 +263,46 @@ mod tests {
         app.for_project = true;
         frame(&mut app, &context);
     }
+
+    // Invariant: a newer release shows the update button, a failed install
+    // brings it back with the reason instead of closing the window, and a
+    // failed check shows nothing.
+    #[test]
+    fn an_update_is_offered_and_a_failed_install_says_why() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options, false);
+        app.sender
+            .send(backend::Message::Update(Err("offline".into())))
+            .unwrap();
+        frame(&mut app, &context);
+        assert!(app.update_offered().is_none());
+
+        let update = autopilot_update::Update {
+            version: "9.9.9".into(),
+            notes: String::new(),
+            asset: autopilot_update::Asset {
+                url: "https://example.test/x".into(),
+                sha256: "0".repeat(64),
+            },
+        };
+        app.sender
+            .send(backend::Message::Update(Ok(Some(update))))
+            .unwrap();
+        frame(&mut app, &context);
+        assert_eq!(app.update_offered(), Some("9.9.9"));
+
+        app.sender
+            .send(backend::Message::Installing(Err("checksum".into())))
+            .unwrap();
+        frame(&mut app, &context);
+        assert_eq!(app.update_offered(), Some("9.9.9"));
+        assert!(!app.update_installing());
+    }
 }

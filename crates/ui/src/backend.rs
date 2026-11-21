@@ -46,6 +46,10 @@ pub enum Message {
     Accounts(Box<autopilot_accounts::Accounts>),
     /// The outcome of an action: a short confirmation, or the reason it failed.
     Done(Result<String, String>),
+    /// The answer of the release check: a newer version, nothing, or why not.
+    Update(Result<Option<autopilot_update::Update>, String>),
+    /// The installer was downloaded and checked, and handed to the system.
+    Installing(Result<(), String>),
 }
 
 /// What the owner can ask for from the window. Each one is an engine action
@@ -143,6 +147,45 @@ pub fn fetch_accounts(context: egui::Context, sender: Sender<Message>) {
             .unwrap_or_default();
         let accounts = autopilot_accounts::collect(guardian);
         let _ = sender.send(Message::Accounts(Box::new(accounts)));
+        context.request_repaint();
+    });
+}
+
+fn guardian() -> std::path::PathBuf {
+    std::env::current_exe()
+        .map(|exe| {
+            exe.with_file_name(format!(
+                "autopilot-process-guardian{}",
+                std::env::consts::EXE_SUFFIX
+            ))
+        })
+        .unwrap_or_default()
+}
+
+/// Look for a newer signed release. Set `AUTOPILOT_NO_UPDATE_CHECK` to skip it.
+pub fn check_for_update(context: egui::Context, sender: Sender<Message>) {
+    if std::env::var_os("AUTOPILOT_NO_UPDATE_CHECK").is_some() {
+        return;
+    }
+    thread::spawn(move || {
+        let found = autopilot_update::check(&guardian(), env!("CARGO_PKG_VERSION"));
+        let _ = sender.send(Message::Update(found));
+        context.request_repaint();
+    });
+}
+
+/// Download the installer, check it against the signed checksum, and open it.
+pub fn install_update(
+    context: egui::Context,
+    sender: Sender<Message>,
+    update: autopilot_update::Update,
+) {
+    thread::spawn(move || {
+        let guardian = guardian();
+        let directory = std::env::temp_dir().join("pipeline-updates");
+        let outcome = autopilot_update::download(&guardian, &update, &directory)
+            .and_then(|file| autopilot_update::open_installer(&guardian, &file));
+        let _ = sender.send(Message::Installing(outcome));
         context.request_repaint();
     });
 }

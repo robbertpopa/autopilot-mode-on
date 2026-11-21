@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pipeline</title>
+  <meta name="description" content="Pipeline: a desktop app that runs your tickets through understand, plan, build and pull request, and asks you only when it needs you. Free for Windows and macOS.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #ffffff; --ink: #14161a; --soft: #4a5260; --faint: #5f6877;
+      --hair: #dde1e8; --blue: #2f6fe4; --on-blue: #ffffff; --glow: rgba(47, 111, 228, .10);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0e0f11; --card: #17191d; --ink: #eef0f3; --soft: #b4bbc6; --faint: #8b93a1;
+        --hair: #272a30; --blue: #5b9bff; --on-blue: #0b1220; --glow: rgba(91, 155, 255, .10);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: radial-gradient(60rem 30rem at 50% -10%, var(--glow), transparent), var(--bg);
+      color: var(--ink); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; min-height: 100vh;
+    }
+    a { color: inherit; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; }
+    .brand { font-weight: 700; letter-spacing: .01em; }
+    header a { color: var(--soft); display: inline-flex; }
+    header a:hover { color: var(--ink); }
+    main { flex: 1; display: grid; place-items: center; padding: 24px; text-align: center; }
+    .app { width: 112px; height: 112px; border-radius: 26px; box-shadow: 0 0 0 .5px rgba(0,0,0,.14), 0 12px 30px rgba(0,0,0,.18); }
+    h1 { font-size: clamp(2.2rem, 6vw, 3.4rem); margin: 22px 0 8px; letter-spacing: -.02em; }
+    .sub { max-width: 34rem; margin: 0 auto 28px; color: var(--soft); font-size: 1.1rem; }
+    .buttons { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+    .bt {
+      display: inline-flex; align-items: center; gap: 9px; padding: 13px 22px; border-radius: 10px;
+      border: 1px solid var(--blue); background: var(--blue); color: var(--on-blue);
+      font-weight: 600; text-decoration: none;
+    }
+    .bt:hover { filter: brightness(1.06); }
+    .bt:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+    .bt.alt { background: transparent; color: var(--ink); border-color: var(--hair); }
+    .bt.alt:hover { border-color: var(--blue); }
+    .meta { margin: 18px 0 0; color: var(--faint); font-size: .92rem; }
+    .meta .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2fb36d; margin-right: 8px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; max-width: 52rem; margin: 44px auto 0; text-align: left; }
+    .card { background: var(--card); border: 1px solid var(--hair); border-radius: 12px; padding: 16px 18px; }
+    .card h2 { font-size: 1rem; margin: 0 0 4px; }
+    .card p { margin: 0; color: var(--soft); font-size: .95rem; }
+    details { max-width: 40rem; margin: 30px auto 0; text-align: left; color: var(--soft); font-size: .95rem; }
+    summary { cursor: pointer; color: var(--ink); font-weight: 600; }
+    code { background: var(--card); border: 1px solid var(--hair); border-radius: 6px; padding: 1px 6px; font-size: .9em; }
+    footer { padding: 22px 24px 28px; text-align: center; color: var(--faint); font-size: .88rem; }
+    footer a { text-decoration: underline; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand">Pipeline</span>
+    <a href="https://github.com/robbertpopa/autopilot-mode-on" aria-label="Pipeline on GitHub">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.37-3.87-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.7 5.4-5.27 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
+    </a>
+  </header>
+
+  <main>
+    <section>
+      <img class="app" src="icon.png" alt="" width="112" height="112">
+      <h1>Pipeline</h1>
+      <p class="sub">Give it a ticket. It understands, plans, builds and opens the pull request, and asks you only when it needs you.</p>
+
+      <div class="buttons" id="buttons">
+        <a class="bt" id="main" href="https://github.com/robbertpopa/autopilot-mode-on/releases/latest">Download Pipeline</a>
+        <a class="bt alt" id="other" href="#all" hidden>Other downloads</a>
+      </div>
+      <p class="meta"><span class="dot"></span><span id="release">Latest release</span> &middot; free and open source</p>
+      <p class="meta" id="need">Windows 10 or newer, or macOS 11 or newer</p>
+
+      <div class="grid">
+        <div class="card"><h2>Updates itself</h2><p>The app checks for a signed release when it opens and offers a one-click update.</p></div>
+        <div class="card"><h2>Your keys stay yours</h2><p>It reads who is signed in from your own tools and never stores a token.</p></div>
+        <div class="card"><h2>You stay in control</h2><p>Every step shows its cost, and nothing is applied until you say so.</p></div>
+      </div>
+
+      <details id="all">
+        <summary>All downloads and how to check them</summary>
+        <p>
+          <a id="dl-win" href="#">Windows (x64) installer</a> &middot;
+          <a id="dl-arm" href="#">macOS, Apple silicon</a> &middot;
+          <a id="dl-intel" href="#">macOS, Intel</a>
+        </p>
+        <p>Every file has a build attestation on the release page. Check one with <code>gh attestation verify &lt;file&gt; --repo robbertpopa/autopilot-mode-on</code>.</p>
+        <p><strong>macOS:</strong> until the app is notarized, the first launch needs a right-click on Pipeline in Applications and Open.</p>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    &copy; 2026 Robert Popa &middot; Apache-2.0 &middot;
+    <a href="https://github.com/robbertpopa/autopilot-mode-on/releases">All releases</a>
+  </footer>
+
+  <script>
+    // The names never change between releases, so these links always give the newest one.
+    var BASE = 'https://github.com/robbertpopa/autopilot-mode-on/releases/latest/download/';
+    var FILES = {
+      win: ['pipeline-setup-x64.exe', 'Download for Windows'],
+      arm: ['pipeline-macos-arm64.dmg', 'Download for macOS (Apple silicon)'],
+      intel: ['pipeline-macos-x64.dmg', 'Download for macOS (Intel)']
+    };
+    var RELEASES = 'https://github.com/robbertpopa/autopilot-mode-on/releases';
+    var ids = { win: 'dl-win', arm: 'dl-arm', intel: 'dl-intel' };
+    ['win', 'arm', 'intel'].forEach(function (key) { document.getElementById(ids[key]).href = RELEASES; });
+
+    // Best guess from the browser. A Mac cannot tell Apple silicon from Intel
+    // reliably, so it is offered Apple silicon first and Intel is one click away.
+    var platform = ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || '').toLowerCase();
+    var pick = null;
+    if (platform.indexOf('win') !== -1) pick = 'win';
+    else if (platform.indexOf('mac') !== -1) pick = 'arm';
+    if (pick) {
+      document.getElementById('main').textContent = FILES[pick][1];
+      document.getElementById('other').hidden = false;
+    }
+
+    // Until a release exists every button opens the releases page instead of
+    // a missing file. Once one does, they point straight at the installers.
+    fetch('https://api.github.com/repos/robbertpopa/autopilot-mode-on/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' }
+    }).then(function (res) { return res.ok ? res.json() : null; }).then(function (json) {
+      if (!json || typeof json.tag_name !== 'string' || !/^[\w .+-]{1,40}$/.test(json.tag_name)) return;
+      document.getElementById('release').textContent = 'Latest release ' + json.tag_name;
+      ['win', 'arm', 'intel'].forEach(function (key) { document.getElementById(ids[key]).href = BASE + FILES[key][0]; });
+      if (pick) document.getElementById('main').href = BASE + FILES[pick][0];
+    }).catch(function () { /* keep the plain text */ });
+  </script>
+</body>
+</html>
