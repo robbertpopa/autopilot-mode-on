@@ -18,7 +18,7 @@ A ticket goes through Understand, an optional Clarify and a Plan stub, and stops
 - [ ] Pause and resume: store a restricted provider resume reference, repeat captured launch settings on explicit resume, and show interrupted attempts as `Interrupted`.
 - [ ] Code-made "In short" lines (templates over structured results) and an on-request "Explain in plain words" (small model, once, cached in the log).
 - [ ] Profile overrides: `SettingsOverridden{scope: ticket|project}`; a change applies when the next step starts, never to a running step.
-- [ ] CLI: `autopilot inbox list|answer|approve`, `autopilot status --json`.
+- [x] CLI: `autopilot clarify`, `autopilot inbox list|answer|approve`, `autopilot status [--json]` (approve records the reply; applying it comes with the per-step ask item).
 
 ## Tests that must exist
 - Policy table: every forced-confirmation rule asks; the checkbox cannot loosen any rule; `decide_and_tell` still records assumptions.
