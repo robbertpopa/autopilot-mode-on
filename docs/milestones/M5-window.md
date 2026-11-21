@@ -12,8 +12,8 @@ A ticket can be run, watched, answered and made merge-ready entirely from the wi
 `docs/ui.md` and the three local artboards described there.
 
 ## Tasks
-- [ ] `engine` crate: one definition per action (run, pause, stop, re-run, re-run from here, answer, approve, apply pipeline change, open worktree, open terminal, explain) exposed to CLI, MCP and UI.
-- [ ] Event subscription with replay (broadcast channel plus store); the window can open late and show full history.
+- [ ] `engine` crate (done: run steps, answer, approve, pause, resume, stop through flags a run checks between turns, publish, CI; open: re-run, re-run from here, apply pipeline change, open worktree, open terminal, explain): one definition per action (run, pause, stop, re-run, re-run from here, answer, approve, apply pipeline change, open worktree, open terminal, explain) exposed to CLI, MCP and UI.
+- [x] Event subscription with replay: `engine::follow` replays from a sequence number, then delivers new events by polling the store (so a writer in another process is seen); `autopilot watch --follow`. Tested late-open plus live. A broadcast channel was not needed.
 - [ ] Shell: titlebar, ticket sidebar with live chips, notifications (`notify-rust`).
 - [ ] Pipeline view: nodes with settings and the "Ask me after this step" checkbox, Simple and Advanced views, forced-confirmation badges, validation warnings (for example a dollar budget on a subscription step). Edits go to `profile.toml` through `engine`.
 - [ ] Run view: live strip with skip reasons, Build ⟲ Check panel, timeline, cost bars (API exact, subscription estimate shown apart).

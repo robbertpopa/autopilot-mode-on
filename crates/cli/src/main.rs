@@ -162,11 +162,20 @@ enum Command {
     /// prints whether it may run. Claude Code starts this, not people.
     #[command(hide = true)]
     Hook,
+    /// Ask a running ticket to stop at its next turn boundary.
+    Stop { ticket: String },
+    /// Ask a running ticket to hold at its next turn boundary.
+    Pause { ticket: String },
+    /// Let a held ticket go on.
+    Resume { ticket: String },
     /// Replay committed events from the ticket's local history.
     Watch {
         ticket: String,
         #[arg(long, default_value_t = 0)]
         after: u64,
+        /// Keep printing new events as they arrive, until the ticket is done.
+        #[arg(long)]
+        follow: bool,
     },
 }
 
@@ -366,10 +375,48 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             let state = fold(&events)?;
             write_status(&mut out, &state, &summary::from_history(&events), json)?;
         }
-        Command::Watch { ticket, after } => {
-            for record in autopilot_engine::watch(&cli.data_dir, &TicketId::from(ticket), after)? {
-                serde_json::to_writer(&mut out, &record)?;
-                writeln!(out)?;
+        Command::Stop { ticket } => {
+            autopilot_engine::request_stop(&cli.data_dir, &TicketId::from(ticket))?;
+            writeln!(out, "{}", serde_json::json!({"requested": "stop"}))?;
+        }
+        Command::Pause { ticket } => {
+            autopilot_engine::request_pause(&cli.data_dir, &TicketId::from(ticket))?;
+            writeln!(out, "{}", serde_json::json!({"requested": "pause"}))?;
+        }
+        Command::Resume { ticket } => {
+            autopilot_engine::request_resume(&cli.data_dir, &TicketId::from(ticket))?;
+            writeln!(out, "{}", serde_json::json!({"requested": "resume"}))?;
+        }
+        Command::Watch {
+            ticket,
+            after,
+            follow,
+        } => {
+            let ticket = TicketId::from(ticket);
+            if follow {
+                let mut failure = None;
+                autopilot_engine::follow(
+                    &cli.data_dir,
+                    &ticket,
+                    after,
+                    Duration::from_millis(200),
+                    |record| {
+                        let line = serde_json::to_writer(&mut out, record)
+                            .map_err(io::Error::from)
+                            .and_then(|()| writeln!(out))
+                            .and_then(|()| out.flush());
+                        failure = line.err();
+                        failure.is_none()
+                    },
+                )?;
+                if let Some(error) = failure {
+                    return Err(error.into());
+                }
+            } else {
+                for record in autopilot_engine::watch(&cli.data_dir, &ticket, after)? {
+                    serde_json::to_writer(&mut out, &record)?;
+                    writeln!(out)?;
+                }
             }
         }
     }

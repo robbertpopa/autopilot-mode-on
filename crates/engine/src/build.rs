@@ -28,7 +28,7 @@ use autopilot_policy::Policy;
 use autopilot_profile::Profile;
 use autopilot_store::{SqliteStore, Store};
 
-use crate::{DATABASE, Error, event, lock_run, plan, timestamp};
+use crate::{DATABASE, Error, control, event, lock_run, plan, timestamp};
 
 const BUILD: Option<Step> = Some(Step::BuildCheck);
 pub(crate) const STUCK_REQUEST: &str = "build_check-stuck";
@@ -79,6 +79,7 @@ impl Journal {
 }
 
 struct BuildRound<'a, A: Agent> {
+    directory: &'a Path,
     journal: Rc<RefCell<Journal>>,
     agent: &'a A,
     manager: &'a WorktreeManager,
@@ -124,6 +125,20 @@ fn prompt(round: &BuildRound<'_, impl Agent>, request: &BuildRequest) -> Result<
     Ok(text)
 }
 
+impl<A: Agent> BuildRound<'_, A> {
+    /// Look for a stop or pause between turns.
+    fn gate(&self) -> Result<(), Error> {
+        let journal = &self.journal;
+        control::gate(
+            self.directory,
+            &self.ticket.id,
+            || journal.borrow_mut().push(Event::Paused),
+            || journal.borrow_mut().push(Event::Resumed),
+        )
+        .map(|_| ())
+    }
+}
+
 impl<A: Agent> Round for BuildRound<'_, A> {
     type Error = Error;
 
@@ -132,6 +147,7 @@ impl<A: Agent> Round for BuildRound<'_, A> {
     }
 
     fn build(&mut self, request: &BuildRequest) -> Result<BuildTurn, Error> {
+        self.gate()?;
         let session = match (&request.session, &self.session) {
             (Session::Continue, Some(reference)) => SessionUse::Resume(reference.clone()),
             _ => SessionUse::Fresh,
@@ -199,6 +215,7 @@ impl<A: Agent> Round for BuildRound<'_, A> {
     }
 
     fn check(&mut self) -> Result<Vec<autopilot_checks::CheckRun>, Error> {
+        self.gate()?;
         let stats = self.manager.committed_changes(&self.ticket.id)?;
         let changes: Vec<Change> = stats
             .files
@@ -391,6 +408,7 @@ pub fn run_build(
         failure: None,
     }));
     let mut round = BuildRound {
+        directory,
         journal: Rc::clone(&journal),
         agent,
         manager: &manager,
@@ -419,6 +437,16 @@ pub fn run_build(
     if let Some(error) = journal.failure.take() {
         return Err(error);
     }
+    conclude(&mut journal, directory, &ticket.id, outcome)
+}
+
+/// Record how the refine loop ended and, if it needs the owner, ask.
+fn conclude(
+    journal: &mut Journal,
+    directory: &Path,
+    ticket: &TicketId,
+    outcome: Result<Outcome, Error>,
+) -> Result<BuildOutcome, Error> {
     match outcome {
         Err(error) => {
             // A fault of the machinery is not a failed build: record it and
@@ -437,8 +465,8 @@ pub fn run_build(
             journal.push(Event::Asked {
                 request: request.clone(),
             })?;
-            let history = journal.store.events(&ticket.id, 0)?;
-            Inbox::in_data_dir(directory).write_request(&stuck_request(&ticket.id, &history))?;
+            let history = journal.store.events(ticket, 0)?;
+            Inbox::in_data_dir(directory).write_request(&stuck_request(ticket, &history))?;
             Ok(BuildOutcome::NeedsYou {
                 request,
                 reason: describe(&stop),

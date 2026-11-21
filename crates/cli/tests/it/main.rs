@@ -421,3 +421,22 @@ fn publish_refuses_an_unbuilt_ticket_and_a_bad_repository_name() {
     assert!(!bad.status.success());
     assert!(String::from_utf8_lossy(&bad.stderr).contains("not a usable name"));
 }
+
+// Invariant: stop, pause and resume leave and clear flags a running ticket
+// looks for between turns; they never touch the history themselves. A ticket
+// id that could name another path is refused.
+#[test]
+fn stop_pause_and_resume_leave_and_clear_flags() {
+    let scratch = tempfile::tempdir().unwrap();
+    let data = scratch.path().join("data");
+    assert_eq!(
+        json_line(&autopilot(&["stop", "t-1"], &data))["requested"],
+        "stop"
+    );
+    assert!(data.join("control").join("t-1.stop").is_file());
+    json_line(&autopilot(&["pause", "t-1"], &data));
+    assert!(data.join("control").join("t-1.pause").is_file());
+    json_line(&autopilot(&["resume", "t-1"], &data));
+    assert!(!data.join("control").join("t-1.pause").exists());
+    assert!(!autopilot(&["stop", "../x"], &data).status.success());
+}

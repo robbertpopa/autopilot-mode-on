@@ -343,7 +343,10 @@ fn build_waits_for_the_design_when_the_ticket_needs_one() {
 
 // ---- publishing ----
 
-use autopilot_engine::{PublishSetup, ci_status, prepare_publish, run_publish};
+use autopilot_engine::{
+    PublishSetup, ci_status, follow, prepare_publish, request_pause, request_resume, request_stop,
+    run_publish,
+};
 use autopilot_git::WorktreeManager;
 use autopilot_tracker::{Ci, Gh, Published, Repo};
 
@@ -624,4 +627,96 @@ fn ci_is_watched_for_the_published_commit() {
         ci_status(world.data.path(), &world.ticket.id, &gh).unwrap(),
         Ci::Failed(vec!["build".into()])
     );
+}
+
+// Invariant: a stop asked for from outside ends the run at a turn boundary as
+// interrupted, and is used up: the next run is not stopped again.
+#[test]
+fn a_stop_request_interrupts_the_build_once() {
+    let world = world("c-stop", "scenario:build-never-fixes", false);
+    request_stop(world.data.path(), &world.ticket.id).unwrap();
+    let error = build(&world, NEEDS_FIX).unwrap_err();
+    assert!(matches!(error, Error::Stopped(_)), "{error}");
+    assert!(matches!(
+        kinds(&world).last(),
+        Some(Event::Interrupted { .. })
+    ));
+    assert!(matches!(
+        build(&world, NEEDS_FIX).unwrap(),
+        BuildOutcome::NeedsYou { .. }
+    ));
+}
+
+// Invariant: a pause holds the run, records that it did, and resume lets the
+// same run finish.
+#[test]
+fn a_paused_build_waits_for_resume_and_then_finishes() {
+    let world = world("c-pause", "plain", false);
+    request_pause(world.data.path(), &world.ticket.id).unwrap();
+    let outcome = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            // Resume only once the run has really been held.
+            for _ in 0..400 {
+                if kinds(&world).iter().any(|k| matches!(k, Event::Paused)) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            request_resume(world.data.path(), &world.ticket.id).unwrap();
+        });
+        build(&world, NEEDS_FIX).unwrap()
+    });
+    assert_eq!(outcome, BuildOutcome::Ready);
+    let kinds = kinds(&world);
+    let paused = kinds
+        .iter()
+        .position(|k| matches!(k, Event::Paused))
+        .unwrap();
+    let resumed = kinds
+        .iter()
+        .position(|k| matches!(k, Event::Resumed))
+        .unwrap();
+    assert!(paused < resumed);
+}
+
+// Invariant: a late subscriber gets the whole history and then live events,
+// in order, and can stop whenever it likes.
+#[test]
+fn follow_replays_history_then_delivers_live_events() {
+    let world = world("c-follow", "plain", false);
+    let all = watch(world.data.path(), &world.ticket.id, 0).unwrap();
+    let last = all.last().unwrap().seq;
+
+    let mut replayed = 0;
+    follow(
+        world.data.path(),
+        &world.ticket.id,
+        0,
+        std::time::Duration::from_millis(20),
+        |_| {
+            replayed += 1;
+            replayed < all.len()
+        },
+    )
+    .unwrap();
+    assert_eq!(replayed, all.len());
+
+    let mut live = Vec::new();
+    std::thread::scope(|scope| {
+        scope.spawn(|| build(&world, NEEDS_FIX).unwrap());
+        follow(
+            world.data.path(),
+            &world.ticket.id,
+            last,
+            std::time::Duration::from_millis(20),
+            |record| {
+                live.push((record.seq, record.event.kind.clone()));
+                !matches!(record.event.kind, Event::StepFinished)
+            },
+        )
+        .unwrap();
+    });
+    assert!(matches!(live.last(), Some((_, Event::StepFinished))));
+    assert!(live.windows(2).all(|pair| pair[0].0 < pair[1].0));
+    assert!(live.iter().all(|(seq, _)| *seq > last));
 }
