@@ -8,6 +8,7 @@ members = [
     "crates/cli",
     "crates/core",
     "crates/engine",
+    "crates/eval",
     "crates/git",
     "crates/mcp",
     "crates/notify",

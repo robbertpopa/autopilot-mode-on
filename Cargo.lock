@@ -500,6 +500,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "autopilot-eval"
+version = "0.1.0"
+dependencies = [
+ "autopilot-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "autopilot-fake-agent"
 version = "0.1.0"
 dependencies = [

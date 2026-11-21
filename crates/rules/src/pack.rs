@@ -34,6 +34,8 @@ pub enum Severity {
     Medium,
     Low,
     Nit,
+    /// Evidence to report, never a failure.
+    Info,
 }
 
 impl Severity {
@@ -53,6 +55,7 @@ impl Severity {
             "medium" => Ok(Self::Medium),
             "low" => Ok(Self::Low),
             "nit" => Ok(Self::Nit),
+            "info" => Ok(Self::Info),
             other => Err(format!("{other:?} is not a severity")),
         }
     }

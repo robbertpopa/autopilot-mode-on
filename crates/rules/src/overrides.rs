@@ -18,7 +18,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Preset {
-    /// Everything, nits included.
+    /// Everything, nits and information included.
     Strict,
     /// Medium and above.
     Standard,
@@ -30,7 +30,7 @@ impl Preset {
     #[must_use]
     pub const fn floor(self) -> Severity {
         match self {
-            Self::Strict => Severity::Nit,
+            Self::Strict => Severity::Info,
             Self::Standard => Severity::Medium,
             Self::Relaxed => Severity::High,
         }
