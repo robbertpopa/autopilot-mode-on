@@ -6,7 +6,7 @@ use autopilot_engine::{Badge, TicketView, dollars, step_name};
 use autopilot_pipeline::StepState;
 use eframe::egui::{self, Color32, Frame, Margin, RichText, Stroke};
 
-use crate::app::{App, Mode, Screen, badge_colors};
+use crate::app::{App, Screen, badge_colors};
 use crate::backend::{Action, waiting_text};
 use crate::theme;
 
@@ -51,47 +51,196 @@ impl App {
         let Some(view) = self.ticket(id).cloned() else {
             return;
         };
-        self.waiting_card(ui, &view);
-        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Pipeline · live").size(17.0).strong());
+        self.run_header(ui, &view);
+        ui.add_space(14.0);
+        self.next_card(ui, &view);
+        self.step_chips(ui, &view);
+        ui.add_space(14.0);
+        self.build_panel(ui, &view);
+        ui.add_space(6.0);
+        egui::CollapsingHeader::new("History")
+            .id_salt("history")
+            .show(ui, |ui| {
                 ui.label(theme::muted(format!(
-                    "click a step for details · started {} UTC",
+                    "Started {} UTC",
                     clock(view.started_ms)
                 )));
+                for line in &view.timeline {
+                    ui.label(theme::mono(format!(
+                        "{}   {}",
+                        clock(line.at_ms),
+                        line.text
+                    )));
+                }
             });
-            ui.add_space(6.0);
-            // Two rows of three when the window is narrow.
-            let per_row = if ui.available_width() < 900.0 { 3 } else { 6 };
-            for chunk in Step::ALL.chunks(per_row) {
-                ui.columns(per_row, |columns| {
-                    for (index, step) in chunk.iter().enumerate() {
-                        if let Some(card) = view.step(*step)
-                            && columns[index].vertical(|ui| strip_card(ui, card)).inner
-                        {
-                            self.screen = Screen::Step(*step);
-                        }
+        egui::CollapsingHeader::new("Change the settings in plain words")
+            .id_salt("change")
+            .show(ui, |ui| self.change_box(ui));
+    }
+
+    /// Title, status, spend, and the controls that matter.
+    fn run_header(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&view.title).size(28.0).strong());
+            let (text, fill, color) = badge_colors(view.badge, view);
+            theme::pill(ui, &text, fill, color);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.menu_button("More", |ui| {
+                    for (text, why) in [
+                        (
+                            "Open the worktree",
+                            "coming soon: the window cannot open a folder yet",
+                        ),
+                        (
+                            "Open in a terminal",
+                            "coming soon: it needs the real agent session (S6)",
+                        ),
+                        (
+                            "Run a step again",
+                            "coming soon: the history needs a step-reset event first",
+                        ),
+                    ] {
+                        ui.add_enabled(false, egui::Button::new(text))
+                            .on_disabled_hover_text(why);
+                        ui.label(theme::muted(why));
                     }
                 });
+                let live = matches!(view.badge, Badge::Running | Badge::NeedsYou | Badge::Paused);
+                if live
+                    && ui
+                        .button(RichText::new("Stop").color(theme::RED()))
+                        .on_hover_text("Stops between turns")
+                        .clicked()
+                {
+                    self.act(Action::Stop(view.id.clone()));
+                }
+                let paused = view.badge == Badge::Paused;
+                if (view.badge == Badge::Running || paused)
+                    && ui
+                        .button(if paused { "Resume" } else { "Pause" })
+                        .on_hover_text("Takes effect between turns")
+                        .clicked()
+                {
+                    self.act(if paused {
+                        Action::Resume(view.id.clone())
+                    } else {
+                        Action::Pause(view.id.clone())
+                    });
+                }
+            });
+        });
+        ui.horizontal(|ui| {
+            theme::cost_tag(ui, false);
+            let spent = dollars(view.api);
+            let limit = self
+                .profile
+                .as_ref()
+                .ok()
+                .and_then(|profile| profile.budgets.per_ticket_microusd);
+            ui.label(match limit {
+                Some(limit) => format!(
+                    "{spent} of {}",
+                    dollars(autopilot_core::Money::from_microusd(limit.get()))
+                ),
+                None => spent,
+            });
+            ui.add_space(10.0);
+            theme::cost_tag(ui, true);
+            ui.label(format!("{} estimated", dollars(view.subscription)));
+        });
+    }
+
+    /// The one thing to know or do right now.
+    fn next_card(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+        if view.asking.is_some() {
+            self.waiting_card(ui, view);
+            return;
+        }
+        let problem = view
+            .steps
+            .iter()
+            .find(|card| matches!(card.state, StepState::Failed(_) | StepState::Interrupted(_)));
+        let (fill, color, text) = if let Some(card) = problem {
+            (
+                theme::RED_FILL(),
+                theme::RED(),
+                format!("{} {}", step_name(card.step), state_text(&card.state)),
+            )
+        } else if view.badge == Badge::Done {
+            (
+                theme::GREEN_FILL(),
+                theme::GREEN(),
+                "All steps are done.".to_owned(),
+            )
+        } else if view.badge == Badge::Paused {
+            (
+                theme::GREY_FILL(),
+                theme::GREY_TEXT(),
+                "Paused. Press Resume to carry on.".to_owned(),
+            )
+        } else if let Some(card) = view.steps.iter().find(|card| card.state.is_active()) {
+            (
+                theme::BLUE_FILL(),
+                theme::BLUE_TEXT(),
+                format!("Working on {}.", step_name(card.step)),
+            )
+        } else {
+            return;
+        };
+        Frame::new()
+            .fill(fill)
+            .corner_radius(egui::CornerRadius::same(10))
+            .inner_margin(Margin::symmetric(16, 12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width() - 34.0);
+                ui.label(RichText::new(text).size(16.0).strong().color(color));
+                if problem.is_some() {
+                    ui.add_enabled(false, egui::Button::new("Try again"))
+                        .on_disabled_hover_text(
+                            "coming soon: a failed step cannot restart until the history has a step-reset event",
+                        );
+                    ui.label(theme::muted("Try again is coming soon."));
+                }
+            });
+        ui.add_space(14.0);
+    }
+
+    /// The six steps as one row of chips. Click one for its details.
+    fn step_chips(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+        ui.horizontal_wrapped(|ui| {
+            for card in &view.steps {
+                let (mark, color) = glyph(&card.state);
+                let active = card.state.is_active();
+                let skipped = matches!(card.state, StepState::Skipped(_));
+                let name = RichText::new(format!("{mark}  {}", step_name(card.step))).size(15.0);
+                let chip = egui::Button::new(if skipped {
+                    name.weak()
+                } else {
+                    name.color(color)
+                })
+                .fill(if active {
+                    theme::BLUE_FILL()
+                } else {
+                    theme::CARD()
+                })
+                .stroke(Stroke::new(
+                    if active { 2.0_f32 } else { 1.0_f32 },
+                    if active {
+                        theme::BLUE()
+                    } else {
+                        theme::BORDER()
+                    },
+                ))
+                .min_size(egui::vec2(0.0, 38.0));
+                let detail = card
+                    .in_short
+                    .clone()
+                    .unwrap_or_else(|| state_text(&card.state));
+                if ui.add(chip).on_hover_text(detail).clicked() {
+                    self.screen = Screen::Step(card.step);
+                }
             }
         });
-        ui.add_space(10.0);
-        self.build_panel(ui, &view);
-        ui.add_space(10.0);
-        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
-            ui.label(theme::muted("Timeline (UTC)"));
-            for line in &view.timeline {
-                ui.label(theme::mono(format!(
-                    "{}   {}",
-                    clock(line.at_ms),
-                    line.text
-                )));
-            }
-        });
-        ui.add_space(10.0);
-        self.change_box(ui);
     }
 
     fn waiting_card(&mut self, ui: &mut egui::Ui, view: &TicketView) {
@@ -375,188 +524,10 @@ impl App {
             )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    if self.screen == Screen::Run {
-                        self.run_side(ui, &view);
-                    } else if let Screen::Step(step) = self.screen {
+                    if let Screen::Step(step) = self.screen {
                         self.step_side(ui, &view, step);
                     }
                 });
             });
     }
-
-    fn run_side(&mut self, ui: &mut egui::Ui, view: &TicketView) {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(&view.title).size(21.0).strong());
-        });
-        let (text, fill, color) = badge_colors(view.badge, view);
-        theme::pill(ui, &text, fill, color);
-        ui.add_space(8.0);
-        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
-            ui.label(theme::muted("Progress"));
-            for step in &view.steps {
-                let (mark, color) = glyph(&step.state);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(mark).color(color));
-                    let name = RichText::new(step_name(step.step)).size(16.0);
-                    ui.label(if step.state.is_active() {
-                        name.strong()
-                    } else {
-                        name
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(theme::muted(state_text(&step.state)));
-                    });
-                });
-            }
-            ui.separator();
-            ui.horizontal(|ui| {
-                theme::cost_tag(ui, false);
-                ui.label(theme::muted("spent"));
-                let limit = self
-                    .profile
-                    .as_ref()
-                    .ok()
-                    .and_then(|profile| profile.budgets.per_ticket_microusd);
-                let spent = dollars(view.api);
-                ui.label(match limit {
-                    Some(limit) => format!(
-                        "{spent} of {}",
-                        dollars(autopilot_core::Money::from_microusd(limit.get()))
-                    ),
-                    None => spent,
-                });
-            });
-            ui.horizontal(|ui| {
-                theme::cost_tag(ui, true);
-                ui.label(theme::muted("estimated"));
-                ui.label(dollars(view.subscription));
-            });
-        });
-        self.other_needs_you(ui, view);
-        self.ticket_actions(ui, view);
-    }
-
-    fn other_needs_you(&mut self, ui: &mut egui::Ui, view: &TicketView) {
-        let other = self
-            .snapshot
-            .tickets
-            .iter()
-            .find(|other| other.id != view.id && other.badge == Badge::NeedsYou)
-            .map(|other| (other.id.clone(), other.title.clone()));
-        if let Some((id, title)) = other {
-            ui.add_space(8.0);
-            Frame::new()
-                .fill(theme::AMBER_FILL())
-                .stroke(Stroke::new(1.0_f32, theme::AMBER()))
-                .corner_radius(egui::CornerRadius::same(10))
-                .inner_margin(Margin::same(16))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width() - 34.0);
-                    ui.label(
-                        RichText::new("Another ticket needs you")
-                            .strong()
-                            .color(theme::AMBER()),
-                    );
-                    ui.label(format!("{title}: waiting for your answer."));
-                    if ui.add(theme::primary("Open it")).clicked() {
-                        self.open(&id);
-                    }
-                });
-        }
-    }
-
-    pub(crate) fn ticket_actions(&mut self, ui: &mut egui::Ui, view: &TicketView) {
-        ui.add_space(8.0);
-        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
-            let off = |ui: &mut egui::Ui, text: &str, why: &str| {
-                ui.add_enabled(
-                    false,
-                    egui::Button::new(text).min_size(egui::vec2(ui.available_width(), 36.0)),
-                )
-                .on_disabled_hover_text(why);
-            };
-            off(
-                ui,
-                "Open worktree",
-                "Not built yet: the window cannot open a folder or a terminal",
-            );
-            off(
-                ui,
-                "Open in terminal (resume)",
-                "Not built yet: it needs the real agent session (S6)",
-            );
-            let paused = view.badge == Badge::Paused;
-            let label = if paused { "Resume" } else { "Pause" };
-            if ui
-                .add(egui::Button::new(label).min_size(egui::vec2(ui.available_width(), 36.0)))
-                .on_hover_text("Takes effect between turns")
-                .clicked()
-            {
-                self.act(if paused {
-                    Action::Resume(view.id.clone())
-                } else {
-                    Action::Pause(view.id.clone())
-                });
-            }
-            let stop = egui::Button::new(RichText::new("Stop the ticket").color(theme::RED()))
-                .min_size(egui::vec2(ui.available_width(), 36.0));
-            if ui
-                .add(stop)
-                .on_hover_text("Stops between turns. Deleting a ticket is not built yet.")
-                .clicked()
-            {
-                self.act(Action::Stop(view.id.clone()));
-            }
-            if ui.button("Back to the pipeline design").clicked() {
-                self.mode = Mode::Design;
-            }
-        });
-    }
-}
-
-fn strip_card(ui: &mut egui::Ui, card: &autopilot_engine::StepView) -> bool {
-    let skipped = matches!(card.state, StepState::Skipped(_));
-    let active = card.state.is_active();
-    let (fill, border, width) = if active {
-        (theme::BLUE_FILL(), theme::BLUE(), 2.0_f32)
-    } else if skipped || matches!(card.state, StepState::Idle) {
-        (Color32::TRANSPARENT, theme::BORDER_STRONG(), 1.0_f32)
-    } else {
-        (theme::NODE(), theme::BORDER(), 1.0_f32)
-    };
-    let (mark, color) = glyph(&card.state);
-    let response = Frame::new()
-        .fill(fill)
-        .stroke(Stroke::new(width, border))
-        .corner_radius(egui::CornerRadius::same(8))
-        .inner_margin(Margin::symmetric(12, 10))
-        .show(ui, |ui| {
-            ui.set_min_height(86.0);
-            ui.set_width(ui.available_width() - 34.0);
-            ui.label(
-                RichText::new(format!("{mark} {}", step_name(card.step)))
-                    .size(15.0)
-                    .strong()
-                    .color(if skipped {
-                        theme::TEXT_MUTED()
-                    } else {
-                        theme::TEXT()
-                    }),
-            );
-            let detail = card
-                .in_short
-                .clone()
-                .unwrap_or_else(|| state_text(&card.state));
-            ui.label(RichText::new(detail).size(12.5).color(if active {
-                theme::BLUE_TEXT()
-            } else {
-                theme::TEXT_SOFT()
-            }));
-            let _ = color;
-        })
-        .response
-        .interact(egui::Sense::click());
-    response.clicked()
 }
