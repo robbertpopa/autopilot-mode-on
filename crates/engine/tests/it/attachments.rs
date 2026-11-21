@@ -158,3 +158,46 @@ fn attaching_later_appends_and_respects_the_count_limit() {
     assert!(attach(data.path(), &ticket.id, &many).is_err());
     assert_eq!(attached(data.path(), &ticket.id).len(), 1);
 }
+
+// Invariant: the agent's note quotes small text files, only names images and
+// folders, skips binary files, and cuts long text. A change that quoted a
+// folder listing or an image's bytes would fail here.
+#[test]
+fn the_note_quotes_text_and_only_names_the_rest() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let text = source.path().join("spec.md");
+    fs::write(&text, "key is zebra-todos-v7").unwrap();
+    let binary = source.path().join("blob.bin");
+    fs::write(&binary, [0xff_u8, 0xfe, 0x00, 0x01]).unwrap();
+    let image = source.path().join("shot.png");
+    fs::write(&image, b"not really a png but named like one").unwrap();
+    let folder = source.path().join("proj");
+    fs::create_dir(&folder).unwrap();
+    fs::write(folder.join("secret.txt"), "do not quote me").unwrap();
+    let long = source.path().join("long.txt");
+    fs::write(&long, "a".repeat(40_000)).unwrap();
+
+    let ticket = ticket("t-6");
+    let staged = stage(
+        data.path(),
+        &ticket.id,
+        &[text, binary, image, folder, long],
+        (0, 0),
+    )
+    .unwrap();
+    let agent = Synthetic {
+        data_dir: data.path().into(),
+    };
+    run_understand_attached(data.path(), &ticket, &agent, None, &staged).unwrap();
+    let history = watch(data.path(), &ticket.id, 0).unwrap();
+    let note = autopilot_engine::note(data.path(), &history);
+    assert!(note.contains("zebra-todos-v7"));
+    assert!(note.contains("- image shot.png"));
+    assert!(note.contains("- folder proj: 1 items"));
+    assert!(!note.contains("do not quote me"));
+    assert!(!note.contains("not really a png"));
+    // The binary file is named but has no quoted body, and the long one is cut.
+    assert!(note.contains("- file blob.bin"));
+    assert!(note.len() < 20_000, "{}", note.len());
+}

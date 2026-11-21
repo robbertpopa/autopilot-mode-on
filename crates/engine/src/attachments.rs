@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use autopilot_core::{AttachmentKind, Event, TicketId};
+use autopilot_core::{AttachmentKind, Event, RecordedEvent, TicketId};
 use autopilot_pipeline::fold;
 use autopilot_store::{SqliteStore, Store};
 use sha2::{Digest, Sha256};
@@ -297,6 +297,79 @@ pub fn stage(
         return Err(error);
     }
     Ok(staged)
+}
+
+/// How much of one text file goes into a prompt, and of all of them together.
+const EXCERPT_BYTES: usize = 16 * 1024;
+const NOTE_BYTES: usize = 48 * 1024;
+
+/// What the agent is told about a ticket's attachments, as plain text.
+///
+/// Small UTF-8 text files are quoted (up to 16 KiB each, 48 KiB in all);
+/// images are only named, because the agent cannot see them; a folder gives
+/// its name, item count and size, never a listing. All of it is data and the
+/// prompt says so. Empty when there are no attachments.
+#[must_use]
+pub fn note(directory: &Path, history: &[RecordedEvent]) -> String {
+    let mut text = String::new();
+    for record in history {
+        let Event::Attached {
+            name,
+            kind,
+            bytes,
+            items,
+            stored,
+            ..
+        } = &record.event.kind
+        else {
+            continue;
+        };
+        let line = match kind {
+            AttachmentKind::Folder => format!("- folder {name}: {items} items, {bytes} bytes\n"),
+            AttachmentKind::Image => {
+                format!("- image {name}: {bytes} bytes (you cannot see images)\n")
+            }
+            AttachmentKind::File => format!("- file {name}: {bytes} bytes\n"),
+        };
+        text.push_str(&line);
+        if matches!(kind, AttachmentKind::File)
+            && text.len() < NOTE_BYTES
+            && let Some(excerpt) = excerpt(&directory.join(stored))
+        {
+            text.push_str("  ~~~\n");
+            text.push_str(&excerpt);
+            text.push_str("\n  ~~~\n");
+        }
+    }
+    text
+}
+
+/// The first bytes of a text file, cut on a character boundary, or `None`
+/// for a file that is not valid UTF-8 text.
+fn excerpt(path: &Path) -> Option<String> {
+    let mut buffer = Vec::new();
+    File::open(path)
+        .ok()?
+        .take(EXCERPT_BYTES as u64 + 4)
+        .read_to_end(&mut buffer)
+        .ok()?;
+    let text = match String::from_utf8(buffer) {
+        Ok(text) => text,
+        // The cut may land inside a character; trim back to a boundary.
+        Err(error) => {
+            let valid = error.utf8_error().valid_up_to();
+            if error.as_bytes().len() <= valid + 3 {
+                String::from_utf8(error.as_bytes()[..valid].to_vec()).ok()?
+            } else {
+                return None;
+            }
+        }
+    };
+    let mut end = text.len().min(EXCERPT_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(text[..end].replace("~~~", "- - -"))
 }
 
 /// Attach files, images or folders to a ticket that already exists.
