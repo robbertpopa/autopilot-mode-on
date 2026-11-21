@@ -1,4 +1,5 @@
 mod layers;
+mod sanitize;
 
 use std::{
     env,
@@ -10,13 +11,15 @@ use std::{
 type TaskResult = Result<(), Box<dyn Error>>;
 
 fn main() -> ExitCode {
-    let result = match env::args().skip(1).collect::<Vec<_>>().as_slice() {
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    let result = match args.as_slice() {
+        [task, raw, out] if task == "sanitize-claude" => sanitize_claude(raw, out),
         [task] if task == "layers" => layers::check(),
         [task] if task == "ci" => ci(),
         [task] if task == "secrets" => {
             run("gitleaks", &["git", "--staged", "--redact", "--no-banner"])
         }
-        _ => Err("usage: cargo xtask <ci|layers|secrets>".into()),
+        _ => Err("usage: cargo xtask <ci|layers|secrets|sanitize-claude RAW OUT>".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -25,6 +28,17 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Write a fixture-safe copy of a raw capture. Nothing is written if the scan fails.
+fn sanitize_claude(raw: &str, out: &str) -> TaskResult {
+    let local: Vec<String> = ["USERPROFILE", "HOME", "USERNAME", "USER", "COMPUTERNAME"]
+        .iter()
+        .filter_map(|name| env::var(name).ok())
+        .collect();
+    let clean = sanitize::Sanitizer::new(&local).run(&fs::read_to_string(raw)?)?;
+    fs::write(out, clean)?;
+    Ok(())
 }
 
 fn ci() -> TaskResult {
