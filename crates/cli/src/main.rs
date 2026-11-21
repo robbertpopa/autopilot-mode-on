@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use autopilot_accounts::{Accounts, Status};
 use autopilot_agent_claude::{ClaudeAgent, ClaudeConfig};
 use autopilot_agent_fixture::FixtureAgent;
 use autopilot_core::{Ticket, TicketId};
@@ -50,6 +51,12 @@ enum Command {
         /// Wall-clock limit for the claude run, in seconds.
         #[arg(long, default_value_t = 300)]
         timeout_seconds: u64,
+    },
+    /// Show which Claude, GitHub and Azure accounts this machine is signed in to.
+    Accounts {
+        /// Print machine-readable JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
     /// Replay committed events from the ticket's local history.
     Watch {
@@ -139,6 +146,20 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             )?;
             writeln!(out)?;
         }
+        Command::Accounts { json } => {
+            let exe = env::current_exe()?;
+            let guardian = exe.with_file_name(format!(
+                "autopilot-process-guardian{}",
+                env::consts::EXE_SUFFIX
+            ));
+            let accounts = autopilot_accounts::collect(guardian);
+            if json {
+                serde_json::to_writer_pretty(&mut out, &accounts)?;
+                writeln!(out)?;
+            } else {
+                write_accounts(&mut out, &accounts)?;
+            }
+        }
         Command::Watch { ticket, after } => {
             for record in autopilot_engine::watch(&cli.data_dir, &TicketId::from(ticket), after)? {
                 serde_json::to_writer(&mut out, &record)?;
@@ -147,6 +168,69 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+fn write_accounts(out: &mut impl Write, accounts: &Accounts) -> io::Result<()> {
+    match &accounts.claude {
+        Status::SignedIn(account) => {
+            let kind = if account.method == "claude.ai" {
+                "subscription"
+            } else {
+                "API key"
+            };
+            let mut line = format!("Claude  signed in with {kind}");
+            for part in [&account.email, &account.organization, &account.plan]
+                .into_iter()
+                .flatten()
+            {
+                line.push_str(" | ");
+                line.push_str(part);
+            }
+            writeln!(out, "{line}")?;
+        }
+        other => writeln!(out, "Claude  {}", unavailable(other))?,
+    }
+    match &accounts.github {
+        Status::SignedIn(list) => {
+            for (index, account) in list.iter().enumerate() {
+                let label = if index == 0 { "GitHub " } else { "       " };
+                let mut flags = Vec::new();
+                if account.active {
+                    flags.push("active");
+                }
+                if !account.valid {
+                    flags.push("token rejected");
+                }
+                let flags = if flags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", flags.join(", "))
+                };
+                writeln!(out, "{label} {}{flags} on {}", account.login, account.host)?;
+            }
+        }
+        other => writeln!(out, "GitHub  {}", unavailable(other))?,
+    }
+    match &accounts.azure {
+        Status::SignedIn(account) => {
+            writeln!(
+                out,
+                "Azure   {} | subscription {}",
+                account.user, account.subscription
+            )?;
+        }
+        other => writeln!(out, "Azure   {}", unavailable(other))?,
+    }
+    Ok(())
+}
+
+fn unavailable<T>(status: &Status<T>) -> String {
+    match status {
+        Status::SignedIn(_) => String::new(),
+        Status::SignedOut => "not signed in".into(),
+        Status::NotInstalled => "not installed".into(),
+        Status::Failed(reason) => format!("could not be checked: {reason}"),
+    }
 }
 
 fn read_ticket(path: &Path) -> Result<Ticket, Box<dyn Error>> {
