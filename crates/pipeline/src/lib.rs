@@ -11,6 +11,7 @@ pub mod analyze;
 pub mod clarify;
 pub mod inbox;
 pub mod overrides;
+pub mod refine;
 pub mod summary;
 
 use autopilot_core::{Event, Money, NewEvent, RecordedEvent, RequestId, Step};
@@ -245,5 +246,7 @@ pub fn fold<'a>(
     Ok(state)
 }
 
+#[cfg(test)]
+mod refine_tests;
 #[cfg(test)]
 mod tests;

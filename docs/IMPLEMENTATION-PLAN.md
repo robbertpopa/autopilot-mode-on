@@ -288,7 +288,7 @@ If it needs a change there, it adds one line under "Requests to other tabs" belo
 The engine starts in M1 and follows the CLI action work. Sequence M2, M3 and M4 edits to `pipeline` so there is one owner at a time. Sequence S5 and M1 edits to the launch test fixtures the same way.
 
 Requests to other tabs:
-- `process` (tab 2): add an optional working directory to `CommandSpec`. The Claude adapter currently inherits the launch directory, so Understand and the later steps cannot be pinned to a ticket or worktree.
+- None open.
 
 ## 9. How we work on it
 

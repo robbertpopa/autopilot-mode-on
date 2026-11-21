@@ -61,6 +61,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "autopilot-checks"
+version = "0.1.0"
+dependencies = [
+ "autopilot-core",
+ "autopilot-policy",
+ "autopilot-process",
+ "autopilot-profile",
+ "sha2",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "autopilot-cli"
 version = "0.1.0"
 dependencies = [
@@ -131,8 +144,10 @@ name = "autopilot-pipeline"
 version = "0.1.0"
 dependencies = [
  "autopilot-agent",
+ "autopilot-checks",
  "autopilot-core",
  "autopilot-engine",
+ "autopilot-profile",
  "serde",
  "serde_json",
  "tempfile",

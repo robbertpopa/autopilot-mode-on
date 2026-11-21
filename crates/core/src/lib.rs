@@ -344,6 +344,15 @@ pub enum Event {
         check: String,
         passed: bool,
         note: String,
+        /// Files a check produced, such as a log. Absent in older histories.
+        #[serde(default)]
+        artifacts: Vec<String>,
+        /// What the check could not verify. Anything here means "not yet".
+        #[serde(default)]
+        unknowns: Vec<String>,
+        /// True when a kept green result stood in for a run.
+        #[serde(default)]
+        reused: bool,
     },
     Asked {
         request: RequestId,
