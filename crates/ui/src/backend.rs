@@ -304,6 +304,16 @@ impl autopilot_agent::Agent for Chosen {
             Self::Claude(agent) => agent.start_plan(request),
         }
     }
+
+    fn start_design(
+        &self,
+        request: autopilot_agent::StepRequest<'_>,
+    ) -> Result<autopilot_agent::AgentRun, autopilot_agent::AgentError> {
+        match self {
+            Self::Practice(agent) => agent.start_design(request),
+            Self::Claude(agent) => agent.start_design(request),
+        }
+    }
 }
 
 /// A helper binary that sits next to the window, or one folder up when the

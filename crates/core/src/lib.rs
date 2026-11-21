@@ -114,7 +114,7 @@ impl Design {
                 "<embed",
                 "<link",
                 "<base",
-                "<meta",
+                "http-equiv",
                 "@import",
                 "javascript:",
                 "http://",
@@ -659,5 +659,41 @@ mod plan_tests {
         });
         let parsed: Plan = serde_json::from_value(reply).unwrap();
         assert!(!serde_json::to_string(&parsed).unwrap().contains("passes"));
+    }
+}
+
+#[cfg(test)]
+mod design_tests {
+    use super::*;
+
+    fn design(html: &str) -> Design {
+        Design {
+            mockups: vec![Mockup {
+                name: "home.html".into(),
+                html: html.into(),
+            }],
+            notes: "n".into(),
+        }
+    }
+
+    // Invariant: a plain page, with the usual charset and viewport tags, is
+    // allowed; anything that runs code, loads from elsewhere or redirects is
+    // refused. This is what lets the saved mockups be opened without risk.
+    #[test]
+    fn a_mockup_may_not_run_code_or_reach_out() {
+        let fine = "<!doctype html><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><style>p{color:red}</style><p>Hi</p>";
+        assert_eq!(design(fine).validate(), Ok(()));
+        for bad in [
+            "<script>1</script>",
+            "<iframe src=a></iframe>",
+            "<meta http-equiv=\"refresh\" content=\"0;url=x\">",
+            "<link rel=stylesheet href=a.css>",
+            "<img src=\"https://example.com/a.png\">",
+            "<style>@import 'a.css';</style>",
+            "<a href=\"javascript:alert(1)\">x</a>",
+            "<p onclick=\"x()\">x</p>",
+        ] {
+            assert!(design(bad).validate().is_err(), "{bad}");
+        }
     }
 }

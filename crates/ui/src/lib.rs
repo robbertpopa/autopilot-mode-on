@@ -369,6 +369,21 @@ mod tests {
         if read(&options).tickets[0].asking.is_some() {
             perform(&options, &Action::AcceptDefaults { ticket: id.clone() }).unwrap();
         }
+        // A ticket that changes a screen gets a design, approved before the plan.
+        if read(&options).tickets[0].needs_design {
+            let designed = perform(&options, &Action::MakeDesign(id.clone()));
+            assert!(designed.is_ok(), "{designed:?}");
+            assert!(autopilot_engine::design_folder(&options.data_dir, &id).is_dir());
+            perform(
+                &options,
+                &Action::Decide {
+                    ticket: id.clone(),
+                    approve: true,
+                    always: false,
+                },
+            )
+            .unwrap();
+        }
         let planned = perform(&options, &Action::MakePlan(id));
         assert!(planned.is_ok(), "{planned:?}");
         assert!(matches!(
