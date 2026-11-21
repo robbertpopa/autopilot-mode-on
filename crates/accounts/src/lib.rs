@@ -91,8 +91,15 @@ pub struct AzureAccount {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CodexAccount {
+    /// `ChatGPT subscription` or `API key`.
+    pub method: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Accounts {
     pub claude: Status<ClaudeAccount>,
+    pub codex: Status<CodexAccount>,
     pub github: Status<Vec<GithubAccount>>,
     pub azure: Status<AzureAccount>,
 }
@@ -117,6 +124,10 @@ pub fn collect(guardian: PathBuf) -> Accounts {
             );
             finish(ask(launch), parse_claude)
         });
+        let codex = scope.spawn(|| {
+            let launch = on_path(&path, &["codex.exe", "codex"], &["login", "status"]);
+            finish(ask(launch), parse_codex)
+        });
         let github = scope.spawn(|| {
             let launch = on_path(
                 &path,
@@ -128,6 +139,7 @@ pub fn collect(guardian: PathBuf) -> Accounts {
         let azure = scope.spawn(|| finish(ask(azure_launch(&path)), parse_azure));
         Accounts {
             claude: claude.join().unwrap_or_else(|_| panicked()),
+            codex: codex.join().unwrap_or_else(|_| panicked()),
             github: github.join().unwrap_or_else(|_| panicked()),
             azure: azure.join().unwrap_or_else(|_| panicked()),
         }
@@ -189,12 +201,19 @@ fn lookup(runner: &Runner, parent: &[(OsString, OsString)], launch: Option<Launc
     };
     match output.outcome {
         Outcome::Exited(status) if status.success() => {
-            Lookup::Output(String::from_utf8_lossy(&output.stdout).into_owned())
+            // Some tools print a plain status line on stderr instead.
+            let from = if output.stdout.is_empty() {
+                &output.stderr
+            } else {
+                &output.stdout
+            };
+            Lookup::Output(String::from_utf8_lossy(from).into_owned())
         }
         Outcome::Exited(_) => {
             let text = String::from_utf8_lossy(&output.stderr).into_owned();
             // Each tool tells a signed-out user to log in, in those words.
-            if text.to_ascii_lowercase().contains("login") {
+            let lower = text.to_ascii_lowercase();
+            if lower.contains("login") || lower.contains("not logged in") {
                 Lookup::SignedOut
             } else {
                 Lookup::Failed(clean(&text))
@@ -271,6 +290,29 @@ fn text(value: &Value, pointer: &str) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
+/// `codex login status` says `Logged in using ChatGPT` or `Logged in using an API key`.
+#[must_use]
+pub fn parse_codex(input: &str) -> Status<CodexAccount> {
+    let lower = input.to_ascii_lowercase();
+    if lower.contains("not logged in") {
+        Status::SignedOut
+    } else if lower.contains("chatgpt") {
+        Status::SignedIn(CodexAccount {
+            method: "ChatGPT subscription".into(),
+        })
+    } else if lower.contains("api key") {
+        Status::SignedIn(CodexAccount {
+            method: "API key".into(),
+        })
+    } else if lower.contains("logged in") {
+        Status::SignedIn(CodexAccount {
+            method: "signed in".into(),
+        })
+    } else {
+        Status::Failed(clean(input))
+    }
+}
+
 #[must_use]
 pub fn parse_claude(input: &str) -> Status<ClaudeAccount> {
     let Ok(value) = serde_json::from_str::<Value>(input) else {
@@ -334,6 +376,24 @@ mod tests {
     const CLAUDE: &str = r#"{"loggedIn":true,"authMethod":"claude.ai","email":"a@example.test","orgName":"Org","subscriptionType":"pro","loginExpiresAt":"x"}"#;
     const GITHUB: &str = r#"{"hosts":{"github.com":[{"state":"success","active":true,"host":"github.com","login":"one","tokenSource":"keyring","scopes":"repo"},{"state":"error","active":false,"host":"github.com","login":"two","tokenSource":"keyring"}]}}"#;
     const AZURE: &str = r#"{"environmentName":"AzureCloud","id":"sub-id","name":"dev-subscription","tenantId":"t","user":{"name":"me@example.test","type":"user"}}"#;
+
+    #[test]
+    fn codex_reports_how_it_is_signed_in_and_when_it_is_not() {
+        let method = |text: &str| match parse_codex(text) {
+            Status::SignedIn(account) => account.method,
+            other => format!("{other:?}"),
+        };
+        assert_eq!(
+            method(
+                "Logged in using ChatGPT
+"
+            ),
+            "ChatGPT subscription"
+        );
+        assert_eq!(method("Logged in using an API key - sk-***"), "API key");
+        assert_eq!(parse_codex("Not logged in"), Status::SignedOut);
+        assert!(matches!(parse_codex("boom"), Status::Failed(_)));
+    }
 
     #[test]
     fn claude_reports_the_method_and_who_is_signed_in() {

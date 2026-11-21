@@ -23,6 +23,7 @@ sha2 = { version = "0.11", default-features = false }
 autopilot-store = { path = "../store" }
 autopilot-tracker = { path = "../tracker" }
 thiserror.workspace = true
+toml_edit.workspace = true
 
 [dev-dependencies]
 autopilot-agent-claude = { path = "../agent-claude" }
