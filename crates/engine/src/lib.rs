@@ -4,7 +4,8 @@ use std::{
     fs::{self, File, OpenOptions, TryLockError},
     io,
     path::Path,
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use autopilot_agent::{Agent, AgentError, AgentEvent, AgentRun, StepRequest};
@@ -21,11 +22,13 @@ use autopilot_pipeline::{
 use autopilot_store::{SqliteStore, Store, StoreError};
 
 mod build;
+mod control;
 mod plan;
 mod publish;
 mod settings;
 pub use autopilot_checks::resolve_executable;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
+pub use control::{request_pause, request_resume, request_stop};
 pub use plan::{approved_plan, run_plan};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use settings::{effective_overrides, override_settings, project_overrides};
@@ -627,6 +630,44 @@ pub fn watch(directory: &Path, ticket: &TicketId, after: u64) -> Result<Vec<Reco
         return Err(Error::UnknownTicket);
     }
     Ok(events)
+}
+
+/// Replay a ticket's history after `after`, then keep delivering new events
+/// as they are committed. This is what a window uses to open late and still
+/// show everything, then update on events only.
+///
+/// `on_event` is called once per event, in order. Return `false` from it to
+/// stop. The call also ends after the `Done` event has been delivered.
+///
+/// # Errors
+/// Returns an error if the ticket has no history or the store cannot be read.
+pub fn follow(
+    directory: &Path,
+    ticket: &TicketId,
+    after: u64,
+    poll: Duration,
+    mut on_event: impl FnMut(&RecordedEvent) -> bool,
+) -> Result<(), Error> {
+    let mut seen = after;
+    let mut first = true;
+    loop {
+        // A new handle each time, so a writer in another process is seen.
+        let events = if first {
+            watch(directory, ticket, seen)?
+        } else {
+            SqliteStore::open_read_only(directory.join(DATABASE))?.events(ticket, seen)?
+        };
+        first = false;
+        for record in &events {
+            seen = record.seq;
+            if !on_event(record) || matches!(record.event.kind, Event::Done) {
+                return Ok(());
+            }
+        }
+        if events.is_empty() {
+            thread::sleep(poll);
+        }
+    }
 }
 
 fn lock_run(directory: &Path) -> Result<File, Error> {
