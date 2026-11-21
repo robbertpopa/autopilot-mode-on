@@ -12,8 +12,10 @@ Demonstrate a replayable Understand run with fixtures, then run one synthetic ti
 - [ ] `agent` crate: `Agent` trait (`start(step_request) -> event stream + handle`), normalised `AgentEvent` (`Started`, `Message`, `Tool`, `FileChange`, `Usage`, `Retry`, `RateLimited`, `Result`, `Failed`) and provider-neutral result types. Use `crates/process` for bounded stdout and stderr, prompt on stdin, timeouts, cancellation and platform process-tree cleanup.
   - [x] Stream `Started`, `Message`, `Result` and `Failed` from fixture runs. Persist complete activity while the worker is alive and retain it if the run fails. The run handle requests cancellation if the consumer drops it.
 - [ ] `agent-claude`: command builder (model, effort, max turns, budget, allowed and disallowed tools, `--settings` with deny hooks, `--session-id`, `--json-schema`, `--append-system-prompt`); stream-json parser from the S1 fixtures; `Result` subtypes; rate-limit and retry detection per S2; record `claude_code_version`.
-- [ ] Per-step auth: build the child environment from scratch. Subscription: remove `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_*`. API: inject the dedicated key only into the provider environment verified for that step. Preflight with `claude auth status` (exit code and `authMethod`); a clear message if not signed in or if the method does not match the step's `auth`.
-- [ ] Cost ledger: API steps use `total_cost_usd`; subscription steps estimate from token usage and a price table (from the pricing page, with cache read and write multipliers), always labelled "estimate".
+  - [x] Offline slice (PR 23 and 26): Understand-only command builder with no tools and no permission bypass, tolerant stream-json decoder, limit stops kept apart from failures, reported cost. Checked against the S2 loopback frames and a hand-written synthetic transcript, and end to end against a fake `claude`. Not checked against real output.
+  - [ ] `--settings` deny hooks, `--session-id`/resume, per-step effort from the profile and `claude_code_version` recording wait for S1.
+- [ ] Per-step auth (the allowlisted environment, the dedicated `AUTOPILOT_ANTHROPIC_API_KEY` source and the `claude auth status` check are in and unit-tested; the `authMethod` value for API use is unobserved): build the child environment from scratch. Subscription: remove `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_USE_*`. API: inject the dedicated key only into the provider environment verified for that step. Preflight with `claude auth status` (exit code and `authMethod`); a clear message if not signed in or if the method does not match the step's `auth`.
+- [ ] Cost ledger (the CLI's reported `total_cost_usd` is recorded, labelled an estimate for subscriptions; the token price table is not built): API steps use `total_cost_usd`; subscription steps estimate from token usage and a price table (from the pricing page, with cache read and write multipliers), always labelled "estimate".
 - [x] `tools/fake-agent` replays the synthetic transcript and can emit `truncated`, `partial-utf8`, `oversized`, `hang` and `crash` variants via `replay <fault>`.
 - [ ] Add replay cases for the observed Claude rate-limit and turn-cap outcomes after S1 and S2.
 - [x] Save the fixture result through `engine`. Run `autopilot run-step --step understand --ticket <file> --agent fake` and `autopilot watch <ticket-id>` from separate processes. Add `--after <sequence>` to resume replay.
@@ -30,6 +32,10 @@ Demonstrate a replayable Understand run with fixtures, then run one synthetic ti
 ## Fixture verification
 
 On 2026-11-20, the Windows and Linux CLI runs both recorded the `sample-export` Understand result. A second process replayed all six events. `watch --after 3` returned the three later events, including the structured result. The watcher reads committed history and exits. `cargo xtask ci` passed with 19 tests on each platform.
+
+## Adapter verification without a live model
+
+The adapter runs against `tools/fake-agent` in `-p` and `auth status` modes. The tests cover a good run, a turn-limit stop, a rate-limited failure, a crash, a truncated result, output past the 16 MiB cap and cancellation of a hung run. The engine test checks that a stop is stored as `Interrupted` with its cost. `cargo xtask sanitize-claude RAW OUT` prepares real captures for `fixtures/claude/`. None of this replaces the live exit check below.
 
 ## Exit criteria
 A fake Understand run replays from a separate CLI process. A manual synthetic Understand call with repository tools disabled returns structured output, tokens and reported or estimated cost on the validated Windows configuration. Keep sanitized fixtures and the versioned contract note.
