@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 
 pub mod clarify;
+pub mod inbox;
 
 use autopilot_core::{Event, Money, NewEvent, RecordedEvent, RequestId, Step};
 

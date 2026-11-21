@@ -19,7 +19,8 @@ pub enum ClarifyPlan {
 }
 
 /// How the owner answered one question.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Choice {
     /// Take the model's recommended option.
     Recommended,
