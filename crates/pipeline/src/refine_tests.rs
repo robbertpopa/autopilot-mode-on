@@ -141,6 +141,8 @@ fn the_turn_cap_stops_before_another_build_turn() {
     script.turn.turns = 5;
     let (outcome, _) = go(limits(10, 7, None), &mut script);
     assert_eq!(script.requests.len(), 2, "5 turns is under 7, 10 is not");
+    let left: Vec<u32> = script.requests.iter().map(|r| r.turns_left).collect();
+    assert_eq!(left, [7, 2], "each call is launched with what remains");
     assert_eq!(needs_you(&outcome).0, &Stop::TurnCap { turns: 10 });
 }
 
@@ -150,6 +152,12 @@ fn the_budget_cap_stops_before_another_build_turn() {
     script.turn.cost = Money::from_microusd(400);
     let (outcome, _) = go(limits(10, 100, Some(1000)), &mut script);
     assert_eq!(script.requests.len(), 3, "400, 800, then 1200 reaches 1000");
+    let left: Vec<Option<u64>> = script
+        .requests
+        .iter()
+        .map(|r| r.budget_left.map(Money::as_microusd))
+        .collect();
+    assert_eq!(left, [Some(1000), Some(600), Some(200)]);
     assert_eq!(
         needs_you(&outcome).0,
         &Stop::BudgetCap {

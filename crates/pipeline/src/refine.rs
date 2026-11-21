@@ -45,6 +45,11 @@ pub struct BuildRequest {
     pub session: Session,
     /// The last failure note. `None` in the first round.
     pub failed: Option<String>,
+    /// What is left of the turn and dollar caps. The agent call must be
+    /// launched with these as its own limits, or one call could overshoot a
+    /// cap that the loop only checks between calls.
+    pub turns_left: u32,
+    pub budget_left: Option<Money>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -193,6 +198,10 @@ pub fn refine<R: Round>(
             round: number,
             session,
             failed: last_note.clone(),
+            turns_left: limits.turns.saturating_sub(turns_used),
+            budget_left: limits.budget.map(|budget| {
+                Money::from_microusd(budget.as_microusd().saturating_sub(spent.as_microusd()))
+            }),
         })?;
         turns_used = turns_used.saturating_add(turn.turns);
         spent = spent.checked_add(turn.cost).unwrap_or(spent);

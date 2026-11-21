@@ -79,6 +79,22 @@ pub fn resolve_executable(name: &str, path_var: &OsStr) -> Option<PathBuf> {
         .find(|candidate| candidate.is_absolute() && candidate.is_file())
 }
 
+/// The spelling of a directory that build tools cope with. Managed worktrees
+/// are canonical, which on Windows means `\\?\C:\...`, and the MinGW linker
+/// cannot find its object files from a working directory in that form.
+fn plain_directory(path: &Path) -> PathBuf {
+    if cfg!(windows)
+        && let Some(text) = path.to_str()
+        && let Some(rest) = text.strip_prefix(r"\\?\")
+        // Only a drive path. A verbatim UNC path means something else.
+        && rest.as_bytes().get(1..3) == Some(b":\\".as_slice())
+        && rest.len() < 240
+    {
+        return PathBuf::from(rest);
+    }
+    path.to_path_buf()
+}
+
 struct Launch {
     program: PathBuf,
     args: Vec<String>,
@@ -190,7 +206,7 @@ impl Toolbox {
                 .map(OsString::from)
                 .collect(),
             env: self.environment.0.clone(),
-            cwd: Some(context.worktree.to_path_buf()),
+            cwd: Some(plain_directory(context.worktree)),
         };
         let limits = Limits {
             timeout: TIMEOUT,
@@ -275,5 +291,30 @@ impl Check for CommandCheck {
         } else {
             Report::fail(executed.note)
         })
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use std::path::Path;
+
+    use super::plain_directory;
+
+    // Invariant: a canonical worktree path reaches the build tool as a plain
+    // drive path. The MinGW linker fails from a `\\?\` working directory, and
+    // managed worktrees are always canonical, so only a real cargo build
+    // would otherwise catch this.
+    #[test]
+    fn a_verbatim_drive_path_is_simplified_and_other_paths_are_left_alone() {
+        assert_eq!(
+            plain_directory(Path::new(r"\\?\C:\work\tree")),
+            Path::new(r"C:\work\tree")
+        );
+        assert_eq!(
+            plain_directory(Path::new(r"C:\work\tree")),
+            Path::new(r"C:\work\tree")
+        );
+        let unc = Path::new(r"\\?\UNC\server\share\tree");
+        assert_eq!(plain_directory(unc), unc);
     }
 }

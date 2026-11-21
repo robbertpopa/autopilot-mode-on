@@ -26,7 +26,8 @@ impl CriteriaCheck {
 fn usable_test_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 200
-        && !name.starts_with('-')
+        // A leading `@` is a response file for some tools, such as dotnet.
+        && !name.starts_with(['-', '@'])
         && name.chars().all(|c| !c.is_whitespace() && !c.is_control())
 }
 
@@ -142,6 +143,7 @@ mod tests {
             "",
             "--ignored",
             "-x",
+            "@file",
             "two words",
             "a\tb",
             "a\nb",
