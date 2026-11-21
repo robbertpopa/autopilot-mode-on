@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, RichText};
 
-use crate::{backend::Action, theme};
+use crate::{
+    backend::{Action, AgentChoice},
+    theme,
+};
 
 #[derive(Default)]
 pub struct NewTicket {
@@ -112,7 +115,12 @@ fn chip(ui: &mut egui::Ui, path: &Path) -> bool {
 }
 
 /// Draw the composer. Returns the action to run when the owner starts.
-pub fn show(ui: &mut egui::Ui, form: &mut NewTicket, hint: &str) -> Option<Action> {
+pub fn show(
+    ui: &mut egui::Ui,
+    form: &mut NewTicket,
+    hint: &str,
+    agent: &mut AgentChoice,
+) -> Option<Action> {
     let mut start = None;
     let hovering = ui.input(|input| !input.raw.hovered_files.is_empty());
     let border = if hovering {
@@ -155,6 +163,15 @@ pub fn show(ui: &mut egui::Ui, form: &mut NewTicket, hint: &str) -> Option<Actio
         }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
+            ui.label(theme::muted("Agent"));
+            theme::segmented(
+                ui,
+                agent,
+                &[
+                    (AgentChoice::Practice, "Practice"),
+                    (AgentChoice::Claude, "Claude"),
+                ],
+            );
             if has_picker() {
                 if ui
                     .button("Add files")

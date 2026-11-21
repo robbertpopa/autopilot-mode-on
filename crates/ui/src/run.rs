@@ -10,6 +10,22 @@ use crate::app::{App, Screen, badge_colors};
 use crate::backend::{Action, waiting_text};
 use crate::theme;
 
+/// Understand and Clarify are settled and Plan has not started.
+fn ready_to_plan(view: &TicketView) -> bool {
+    let state = |step| {
+        view.steps
+            .iter()
+            .find(|card| card.step == step)
+            .map(|card| &card.state)
+    };
+    state(Step::Understand) == Some(&StepState::Passed)
+        && matches!(
+            state(Step::Clarify),
+            Some(StepState::Passed | StepState::Skipped(_))
+        )
+        && state(Step::Plan) == Some(&StepState::Idle)
+}
+
 /// A size in plain units: `12 KB`, `3.4 MB`.
 #[must_use]
 pub fn size_text(bytes: u64) -> String {
@@ -254,6 +270,12 @@ impl App {
                 theme::BLUE_TEXT(),
                 format!("Working on {}.", step_name(card.step)),
             )
+        } else if ready_to_plan(view) {
+            (
+                theme::BLUE_FILL(),
+                theme::BLUE_TEXT(),
+                "Ready to make a plan.".to_owned(),
+            )
         } else {
             return;
         };
@@ -264,6 +286,16 @@ impl App {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width() - 38.0);
                 ui.label(RichText::new(text).size(16.0).strong().color(color));
+                if problem.is_none() && ready_to_plan(view) {
+                    let busy = self.busy;
+                    if ui
+                        .add_enabled(!busy, theme::primary("Make the plan"))
+                        .on_hover_text("The agent writes the plan. You approve it before anything is built.")
+                        .clicked()
+                    {
+                        self.act(Action::MakePlan(view.id.clone()));
+                    }
+                }
                 if let Some(card) = problem {
                     if card.step == Step::Understand {
                         if ui.add(theme::primary("Try again")).clicked() {

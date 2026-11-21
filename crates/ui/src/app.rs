@@ -64,6 +64,7 @@ pub struct App {
     pub(crate) busy: bool,
     new_started: bool,
     pub(crate) light: bool,
+    pub(crate) agent: backend::AgentChoice,
     update: Option<autopilot_update::Update>,
     installing: bool,
     home: NewTicket,
@@ -83,6 +84,7 @@ impl App {
     #[must_use]
     pub fn new(context: &egui::Context, options: Options, watch: bool) -> Self {
         let light = read_theme(&options);
+        let agent = backend::AgentChoice::read(&options.data_dir);
         theme::apply(context, light);
         let (sender, receiver) = mpsc::channel();
         if watch {
@@ -110,6 +112,7 @@ impl App {
             busy: false,
             new_started: false,
             light,
+            agent,
             update: None,
             installing: false,
             home: NewTicket::default(),
@@ -471,7 +474,7 @@ impl App {
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .show(ctx, |ui| {
                     ui.set_width(520.0);
-                    start = composer::show(ui, form, "Ctrl+Enter");
+                    start = composer::show(ui, form, "Ctrl+Enter", &mut self.agent);
                     if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
                         close = true;
                     }
@@ -731,10 +734,13 @@ impl App {
     fn home_screen(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("What should it work on?").size(32.0).strong());
         ui.label(theme::muted(
-            "Describe a change. It reads the code, asks only what it must, and shows every step. Real agents are coming soon: for now a practice agent runs.",
+            "Describe a change. It reads the code, asks only what it must, and shows every step. Claude uses your subscription; Practice is offline. Writing code is not switched on yet.",
         ));
         ui.add_space(14.0);
-        let start = composer::show(ui, &mut self.home, "Ctrl+Enter");
+        let start = composer::show(ui, &mut self.home, "Ctrl+Enter", &mut self.agent);
+        if self.agent != backend::AgentChoice::read(&self.options.data_dir) {
+            self.agent.save(&self.options.data_dir);
+        }
         if let Some(action) = start {
             self.home = NewTicket::default();
             self.new_started = true;

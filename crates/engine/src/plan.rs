@@ -67,6 +67,40 @@ fn brief(history: &[RecordedEvent]) -> String {
     )
 }
 
+/// Run the Plan step for a ticket that is already recorded, using the title
+/// and words it started with.
+///
+/// # Errors
+/// Returns an error if the ticket is unknown, not ready to plan, or the agent
+/// or store cannot be used.
+pub fn plan_ticket(directory: &Path, id: &TicketId, agent: &impl Agent) -> Result<Plan, Error> {
+    let history = {
+        let store = SqliteStore::open(directory.join(DATABASE))?;
+        store.events(id, 0)?
+    };
+    let title = history
+        .iter()
+        .find_map(|record| match &record.event.kind {
+            Event::TicketCreated { title } => Some(title.clone()),
+            _ => None,
+        })
+        .ok_or(Error::UnknownTicket)?;
+    let description = history
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event.kind {
+            Event::Described { text } => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let ticket = Ticket {
+        id: id.clone(),
+        title,
+        description,
+    };
+    run_plan(directory, &ticket, agent)
+}
+
 /// Run the Plan step and leave the plan waiting for the owner's approval.
 ///
 /// # Errors

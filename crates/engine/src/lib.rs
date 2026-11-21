@@ -39,7 +39,7 @@ pub use autopilot_checks::resolve_executable;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
 pub use change::{Proposal, Reading, apply_to_project, apply_to_ticket, propose};
 pub use control::{request_pause, request_resume, request_stop};
-pub use plan::{approved_plan, run_plan};
+pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use rerun::{rerun_understand, reset_step};
