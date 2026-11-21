@@ -10,9 +10,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+autopilot-agent-claude = { path = "../agent-claude" }
 autopilot-agent-fixture = { path = "../agent-fixture" }
 autopilot-core.workspace = true
 autopilot-engine = { path = "../engine" }
+autopilot-profile = { path = "../profile" }
 clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 serde_json.workspace = true
 

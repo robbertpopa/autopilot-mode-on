@@ -13,6 +13,21 @@ name = "autopilot-agent"
 version = "0.1.0"
 dependencies = [
  "autopilot-core",
+ "thiserror",
+]
+
+[[package]]
+name = "autopilot-agent-claude"
+version = "0.1.0"
+dependencies = [
+ "autopilot-agent",
+ "autopilot-core",
+ "autopilot-process",
+ "autopilot-profile",
+ "schemars",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -30,9 +45,11 @@ dependencies = [
 name = "autopilot-cli"
 version = "0.1.0"
 dependencies = [
+ "autopilot-agent-claude",
  "autopilot-agent-fixture",
  "autopilot-core",
  "autopilot-engine",
+ "autopilot-profile",
  "clap",
  "serde_json",
 ]
