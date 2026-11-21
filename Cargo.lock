@@ -133,6 +133,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "autopilot-fake-gh"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "autopilot-git"
 version = "0.1.0"
 dependencies = [
@@ -201,6 +209,18 @@ version = "0.1.0"
 dependencies = [
  "autopilot-core",
  "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "autopilot-tracker"
+version = "0.1.0"
+dependencies = [
+ "autopilot-core",
+ "autopilot-process",
  "serde",
  "serde_json",
  "tempfile",
