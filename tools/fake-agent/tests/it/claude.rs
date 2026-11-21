@@ -2,7 +2,10 @@
 // Helpers outside #[test] functions are not covered by the unwrap allowance.
 #![allow(clippy::unwrap_used)]
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use autopilot_agent::{Agent, AgentEvent, StepRequest};
 use autopilot_agent_claude::{ClaudeAgent, ClaudeConfig};
@@ -96,4 +99,56 @@ fn a_rate_limited_run_fails_but_keeps_its_retry_activity() {
             |e| matches!(e, AgentEvent::Message { summary } if summary.starts_with("api retry"))
         )
     );
+}
+
+#[test]
+fn a_crash_after_activity_fails_and_keeps_the_activity() {
+    let events = run("scenario:crash");
+    assert!(matches!(events.last(), Some(AgentEvent::Failed(_))));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::Message { summary } if summary == "session started"))
+    );
+}
+
+// Invariant: a result cut short by the process ending is never accepted, even
+// after a clean exit. Parsing the partial tail as a frame would invent a result.
+#[test]
+fn a_truncated_result_is_a_failure_not_a_result() {
+    let events = run("scenario:truncated");
+    assert!(matches!(events.last(), Some(AgentEvent::Failed(_))));
+    assert!(!events.iter().any(|e| matches!(e, AgentEvent::Result(_))));
+}
+
+#[test]
+fn output_beyond_the_stream_cap_fails_the_run() {
+    let events = run("scenario:oversized");
+    assert!(matches!(events.last(), Some(AgentEvent::Failed(_))));
+}
+
+#[test]
+fn cancelling_a_hung_run_ends_it_promptly() {
+    let ticket = Ticket {
+        id: "claude-hang".into(),
+        title: "Sample".into(),
+        description: "scenario:hang".into(),
+    };
+    let run = agent()
+        .start(StepRequest {
+            step: Step::Understand,
+            ticket: &ticket,
+        })
+        .unwrap();
+    let cancel = run.cancellation();
+    let started = Instant::now();
+    let mut last = None;
+    for event in run {
+        if matches!(event, AgentEvent::Message { .. }) {
+            cancel.cancel();
+        }
+        last = Some(event);
+    }
+    assert!(matches!(last, Some(AgentEvent::Failed(_))));
+    assert!(started.elapsed() < Duration::from_secs(20));
 }

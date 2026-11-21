@@ -45,6 +45,30 @@ fn claude_print() -> Result<ExitCode, Box<dyn std::error::Error>> {
     io::stdin().lock().read_to_string(&mut prompt)?;
     let mut output = io::stdout().lock();
     let init = "{\"type\":\"system\",\"subtype\":\"init\"}\n";
+    if prompt.contains("scenario:crash") {
+        output.write_all(init.as_bytes())?;
+        output.flush()?;
+        return Ok(ExitCode::from(23));
+    }
+    if prompt.contains("scenario:truncated") {
+        output.write_all(&CLAUDE_SUCCESS[..CLAUDE_SUCCESS.len() - 20])?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    if prompt.contains("scenario:oversized") {
+        output.write_all(init.as_bytes())?;
+        let chunk = vec![b'x'; 64 * 1024];
+        // The adapter caps a stream at 16 MiB, so this must cross it.
+        for _ in 0..300 {
+            output.write_all(&chunk)?;
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    if prompt.contains("scenario:hang") {
+        output.write_all(init.as_bytes())?;
+        output.flush()?;
+        thread::sleep(Duration::from_secs(60));
+        return Ok(ExitCode::SUCCESS);
+    }
     if prompt.contains("scenario:max-turns") {
         writeln!(
             output,
