@@ -8,7 +8,9 @@ use std::{
     time::Duration,
 };
 
+use autopilot_core::Understanding;
 use autopilot_profile::Auth;
+use schemars::schema_for;
 
 #[derive(Clone, Debug)]
 pub struct ClaudeConfig {
@@ -66,6 +68,22 @@ pub fn understand_args(config: &ClaudeConfig, schema: &str) -> Vec<OsString> {
         args.extend(["--max-budget-usd".into(), budget.into()]);
     }
     args
+}
+
+/// The JSON Schema for `--json-schema`.
+///
+/// `schemars` names draft 2020-12 in a `$schema` key. Claude Code 2.1.330
+/// rejects that URI ("no schema with key or ref"), so the key is dropped and
+/// the schema is sent without a dialect.
+///
+/// # Errors
+/// Returns an error if the schema cannot be serialised.
+pub fn understand_schema() -> Result<String, serde_json::Error> {
+    let mut schema = serde_json::to_value(schema_for!(Understanding))?;
+    if let Some(object) = schema.as_object_mut() {
+        object.remove("$schema");
+    }
+    serde_json::to_string(&schema)
 }
 
 #[must_use]
@@ -156,6 +174,23 @@ mod tests {
         assert!(api.contains(&"--max-budget-usd".to_string()));
         let subscription = strings(&understand_args(&config(Auth::Subscription), "{}"));
         assert!(!subscription.contains(&"--max-budget-usd".to_string()));
+    }
+
+    // Invariant: the schema names no dialect. Live Claude Code rejected the
+    // 2020-12 URI schemars adds, which failed every real run.
+    #[test]
+    fn the_schema_has_no_dialect_uri_and_requires_every_field() {
+        let schema: serde_json::Value =
+            serde_json::from_str(&understand_schema().unwrap()).unwrap();
+        assert!(schema.get("$schema").is_none());
+        assert!(!schema.to_string().contains("json-schema.org"));
+        let required: Vec<_> = schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(required, ["summary", "assumptions", "needs_design"]);
     }
 
     #[test]
