@@ -24,13 +24,13 @@ pub fn run(options: Options) -> eframe::Result {
     }
     let native = eframe::NativeOptions {
         viewport: viewport
-            .with_title("Pipeline")
+            .with_title("Autopilot Mode On")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([980.0, 620.0]),
         ..Default::default()
     };
     eframe::run_native(
-        "Pipeline",
+        "Autopilot Mode On",
         native,
         Box::new(|creation| {
             Ok(Box::new(Window(App::new(

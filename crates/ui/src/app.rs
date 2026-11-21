@@ -278,7 +278,7 @@ impl App {
                     if let Some(icon) = &self.icon {
                         ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(30.0, 30.0)));
                     }
-                    ui.label(RichText::new("Pipeline").size(16.0).strong());
+                    ui.label(RichText::new("Autopilot Mode On").size(16.0).strong());
                     ui.separator();
                     self.crumbs(ui);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

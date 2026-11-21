@@ -1,5 +1,5 @@
-; Pipeline installer for Windows. Build with:
-;   makensis /DVERSION=0.1.0 /DEXE=path\to\autopilot-ui.exe /DICON=path\to\icon.ico /DOUT=pipeline-setup-x64.exe installer.nsi
+; Autopilot Mode On installer for Windows. Build with:
+;   makensis /DVERSION=0.1.0 /DEXE=path\to\autopilot-ui.exe /DICON=path\to\icon.ico /DOUT=autopilot-mode-on-setup-x64.exe installer.nsi
 ;
 ; It installs for the current user only, so it never asks for administrator
 ; rights and an in-app update can run it without a prompt. Running it again
@@ -9,8 +9,8 @@ Unicode true
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 
-!define NAME "Pipeline"
-!define KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Pipeline"
+!define NAME "Autopilot Mode On"
+!define KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Autopilot Mode On"
 
 Name "${NAME}"
 OutFile "${OUT}"

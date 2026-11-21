@@ -24,9 +24,9 @@ entry() {
 }
 
 assets=""
-for pair in "windows-x64:pipeline-setup-x64.exe" \
-            "macos-arm64:pipeline-macos-arm64.dmg" \
-            "macos-x64:pipeline-macos-x64.dmg"; do
+for pair in "windows-x64:autopilot-mode-on-setup-x64.exe" \
+            "macos-arm64:autopilot-mode-on-macos-arm64.dmg" \
+            "macos-x64:autopilot-mode-on-macos-x64.dmg"; do
   item="$(entry "${pair%%:*}" "${pair#*:}")"
   [ -n "$item" ] && assets="${assets:+$assets,}$item"
 done

@@ -1,14 +1,14 @@
-# Releasing Pipeline
+# Releasing Autopilot Mode On
 
-Pipeline ships as a Windows installer and two macOS disk images, offered on a small website and updated from inside the app.
+Autopilot Mode On ships as a Windows installer and two macOS disk images, offered on a small website and updated from inside the app.
 
 ## How a release happens
 
 1. Commits to `master` use `type: subject` titles. `release-please.yml` keeps a release pull request open from them.
 2. Merging that pull request tags `vX.Y.Z` and publishes a GitHub release (it also bumps `Cargo.toml` and the changelog).
 3. Publishing the release starts `release.yml`:
-   - `windows`: builds `autopilot-ui.exe`, then `packaging/windows/installer.nsi` makes `pipeline-setup-x64.exe`. The installer is per-user, needs no administrator rights, and upgrades in place.
-   - `macos`: builds on Apple silicon and Intel runners, then `packaging/macos/build-dmg.sh` makes `Pipeline.app` and `pipeline-macos-arm64.dmg` / `pipeline-macos-x64.dmg`.
+   - `windows`: builds `autopilot-ui.exe`, then `packaging/windows/installer.nsi` makes `autopilot-mode-on-setup-x64.exe`. The installer is per-user, needs no administrator rights, and upgrades in place.
+   - `macos`: builds on Apple silicon and Intel runners, then `packaging/macos/build-dmg.sh` makes `Autopilot Mode On.app` and `autopilot-mode-on-macos-arm64.dmg` / `autopilot-mode-on-macos-x64.dmg`.
    - `publish`: `packaging/manifest.sh` writes `latest.json` (version, notes, URL and SHA-256 per platform) and signs it into `latest.json.sig`. Everything gets a build attestation and is attached to the release.
 4. `pages.yml` publishes `site/` when it changes on `master`. The site links to `releases/latest/download/<name>`, and the names never change.
 

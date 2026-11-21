@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pipeline</title>
-  <meta name="description" content="Pipeline: a desktop app that runs your tickets through understand, plan, build and pull request, and asks you only when it needs you. Free for Windows and macOS.">
+  <title>Autopilot Mode On</title>
+  <meta name="description" content="Autopilot Mode On: a desktop app that runs your tickets through understand, plan, build and pull request, and asks you only when it needs you. Free for Windows and macOS.">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <style>
     :root {
@@ -59,8 +59,8 @@
 </head>
 <body>
   <header>
-    <span class="brand">Pipeline</span>
-    <a href="https://github.com/robbertpopa/autopilot-mode-on" aria-label="Pipeline on GitHub">
+    <span class="brand">Autopilot Mode On</span>
+    <a href="https://github.com/robbertpopa/autopilot-mode-on" aria-label="Autopilot Mode On on GitHub">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.37-3.87-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.7 5.4-5.27 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
     </a>
   </header>
@@ -68,11 +68,11 @@
   <main>
     <section>
       <img class="app" src="icon.png" alt="" width="112" height="112">
-      <h1>Pipeline</h1>
+      <h1>Autopilot Mode On</h1>
       <p class="sub">Give it a ticket. It understands, plans, builds and opens the pull request, and asks you only when it needs you.</p>
 
       <div class="buttons" id="buttons">
-        <a class="bt" id="main" href="https://github.com/robbertpopa/autopilot-mode-on/releases/latest">Download Pipeline</a>
+        <a class="bt" id="main" href="https://github.com/robbertpopa/autopilot-mode-on/releases/latest">Download Autopilot Mode On</a>
         <a class="bt alt" id="other" href="#all" hidden>Other downloads</a>
       </div>
       <p class="meta"><span class="dot"></span><span id="release">Latest release</span> &middot; free and open source</p>
@@ -92,7 +92,7 @@
           <a id="dl-intel" href="#">macOS, Intel</a>
         </p>
         <p>Every file has a build attestation on the release page. Check one with <code>gh attestation verify &lt;file&gt; --repo robbertpopa/autopilot-mode-on</code>.</p>
-        <p><strong>macOS:</strong> until the app is notarized, the first launch needs a right-click on Pipeline in Applications and Open.</p>
+        <p><strong>macOS:</strong> until the app is notarized, the first launch needs a right-click on Autopilot Mode On in Applications and Open.</p>
       </details>
     </section>
   </main>
@@ -106,9 +106,9 @@
     // The names never change between releases, so these links always give the newest one.
     var BASE = 'https://github.com/robbertpopa/autopilot-mode-on/releases/latest/download/';
     var FILES = {
-      win: ['pipeline-setup-x64.exe', 'Download for Windows'],
-      arm: ['pipeline-macos-arm64.dmg', 'Download for macOS (Apple silicon)'],
-      intel: ['pipeline-macos-x64.dmg', 'Download for macOS (Intel)']
+      win: ['autopilot-mode-on-setup-x64.exe', 'Download for Windows'],
+      arm: ['autopilot-mode-on-macos-arm64.dmg', 'Download for macOS (Apple silicon)'],
+      intel: ['autopilot-mode-on-macos-x64.dmg', 'Download for macOS (Intel)']
     };
     var RELEASES = 'https://github.com/robbertpopa/autopilot-mode-on/releases';
     var ids = { win: 'dl-win', arm: 'dl-arm', intel: 'dl-intel' };
