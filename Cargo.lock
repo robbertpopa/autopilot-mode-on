@@ -87,6 +87,7 @@ dependencies = [
  "autopilot-pipeline",
  "autopilot-policy",
  "autopilot-profile",
+ "autopilot-tracker",
  "clap",
  "serde_json",
  "tempfile",

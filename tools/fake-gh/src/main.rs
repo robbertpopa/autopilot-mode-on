@@ -32,7 +32,11 @@ fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
-    let path = env::var("FAKE_GH_STATE")?;
+    // The state file is named directly, or sits in gh's config folder, which
+    // is the one variable the tracker passes on to gh.
+    let path = env::var("FAKE_GH_STATE").or_else(|_| {
+        env::var("GH_CONFIG_DIR").map(|directory| format!("{directory}/fake-gh-state.json"))
+    })?;
     let mut state: Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
     let leaked: Vec<String> = env::vars()
         .map(|(name, _)| name)

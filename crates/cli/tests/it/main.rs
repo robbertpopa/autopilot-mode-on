@@ -380,3 +380,44 @@ fn a_real_agent_is_refused_for_build_and_the_refusal_names_s6() {
     let message = String::from_utf8_lossy(&output.stderr);
     assert!(message.contains("S6"), "{message}");
 }
+
+// Invariant: `publish` refuses a ticket whose build has not passed, and a
+// repository name that is not plain owner/name, before it touches anything.
+#[test]
+fn publish_refuses_an_unbuilt_ticket_and_a_bad_repository_name() {
+    let scratch = tempfile::tempdir().unwrap();
+    let data = scratch.path().join("data");
+    assert!(run_claude("plain", &data, scratch.path()).status.success());
+    let profile = scratch.path().join("profile.toml");
+    std::fs::write(&profile, "").unwrap();
+    let ticket = scratch.path().join("ticket.json");
+    let publish = |github: &str| {
+        let github = format!("--github={github}");
+        autopilot(
+            &[
+                "publish",
+                "--step",
+                "prepare",
+                "--ticket",
+                ticket.to_str().unwrap(),
+                "--repo",
+                scratch.path().to_str().unwrap(),
+                "--base",
+                "main",
+                "--worktrees",
+                scratch.path().join("wt").to_str().unwrap(),
+                "--profile",
+                profile.to_str().unwrap(),
+                &github,
+            ],
+            &data,
+        )
+    };
+    let unbuilt = publish("owner/name");
+    assert!(!unbuilt.status.success());
+    let message = String::from_utf8_lossy(&unbuilt.stderr);
+    assert!(message.contains("build has not passed"), "{message}");
+    let bad = publish("-evil/name");
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("not a usable name"));
+}

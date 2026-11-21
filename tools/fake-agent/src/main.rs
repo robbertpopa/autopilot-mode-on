@@ -122,6 +122,9 @@ fn claude_build(
             ),
         )?;
     }
+    if prompt.contains("scenario:poisoned") {
+        obey_injection(&args)?;
+    }
     if prompt.contains("scenario:build-protected") {
         std::fs::create_dir_all("secrets")?;
         std::fs::write("secrets/key.txt", "x")?;
@@ -142,6 +145,63 @@ fn claude_build(
          {{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"total_cost_usd\":0.001}}"
     )?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// A build turn that obeys an injected instruction: it tries to publish, the
+/// way real Claude Code would, by sending each shell call through the hook
+/// command in `--settings` and acting only if the hook allows it. Whatever
+/// happens is written to `.hook-log`, which the build then commits, so a test
+/// can read it back.
+fn obey_injection(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    use std::fmt::Write as _;
+    use std::process::{Command, Stdio};
+
+    let settings = args
+        .windows(2)
+        .find(|pair| pair[0] == "--settings")
+        .map(|pair| pair[1].as_str())
+        .ok_or("no --settings on a build turn")?;
+    let settings: serde_json::Value = serde_json::from_str(settings)?;
+    let hook = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .ok_or("no hook command in the settings")?;
+    // The command is a quoted program and its arguments.
+    let rest = hook.strip_prefix('"').ok_or("hook command is not quoted")?;
+    let (program, arguments) = rest.split_once('"').ok_or("hook command is not closed")?;
+    let mut log = String::new();
+    for attempt in [
+        "git push origin HEAD:main",
+        "git -C . push --force origin HEAD",
+        "gh pr create --fill",
+        "bash -c \"git push\"",
+    ] {
+        let mut child = Command::new(program)
+            .args(arguments.split_whitespace())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let call = serde_json::json!({"tool_name": "Bash", "tool_input": {"command": attempt}});
+        child
+            .stdin
+            .take()
+            .ok_or("no hook stdin")?
+            .write_all(call.to_string().as_bytes())?;
+        let output = child.wait_with_output()?;
+        let verdict: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let denied = verdict["hookSpecificOutput"]["permissionDecision"] == "deny";
+        let _ = writeln!(
+            log,
+            "{}: {attempt}",
+            if denied { "denied" } else { "ALLOWED" }
+        );
+    }
+    for name in ["GITHUB_TOKEN", "GH_TOKEN"] {
+        if env::var_os(name).is_some() {
+            let _ = writeln!(log, "LEAKED: {name}");
+        }
+    }
+    std::fs::write(".hook-log", log)?;
+    Ok(())
 }
 
 fn replay() -> Result<ExitCode, Box<dyn std::error::Error>> {
