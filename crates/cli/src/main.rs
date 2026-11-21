@@ -111,6 +111,16 @@ enum Command {
         #[arg(long)]
         gh_path: Option<PathBuf>,
     },
+    /// Show CI for the commit that was published for a ticket.
+    Ci {
+        ticket: String,
+        /// The GitHub repository, as owner/name.
+        #[arg(long)]
+        github: String,
+        /// Absolute path to gh. Defaults to a PATH search.
+        #[arg(long)]
+        gh_path: Option<PathBuf>,
+    },
     /// Show which Claude, GitHub and Azure accounts this machine is signed in to.
     Accounts {
         /// Print machine-readable JSON instead of text.
@@ -319,6 +329,15 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             serde_json::to_writer(&mut out, &result)?;
             writeln!(out)?;
         }
+        Command::Ci {
+            ticket,
+            github,
+            gh_path,
+        } => {
+            let result = ci_command(&cli.data_dir, &ticket, &github, gh_path)?;
+            serde_json::to_writer(&mut out, &result)?;
+            writeln!(out)?;
+        }
         Command::Hook => run_hook(&mut out)?,
         Command::Accounts { json } => write_accounts_command(&mut out, json)?,
         Command::Clarify { ticket } => run_clarify(&mut out, &cli.data_dir, ticket)?,
@@ -411,6 +430,38 @@ fn run_hook(out: &mut impl Write) -> Result<(), Box<dyn Error>> {
     let verdict = autopilot_policy::hook::decide(&input);
     writeln!(out, "{}", autopilot_policy::hook::response(&verdict))?;
     Ok(())
+}
+
+fn ci_command(
+    data_dir: &Path,
+    ticket: &str,
+    github: &str,
+    gh_path: Option<PathBuf>,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let repo = autopilot_tracker::Repo::parse(github)?;
+    let exe = env::current_exe()?;
+    let guardian = exe.with_file_name(format!(
+        "autopilot-process-guardian{}",
+        env::consts::EXE_SUFFIX
+    ));
+    let program = match gh_path {
+        Some(path) => path,
+        None => {
+            autopilot_engine::resolve_executable("gh", &env::var_os("PATH").unwrap_or_default())
+                .ok_or("gh was not found on PATH; pass --gh-path")?
+        }
+    };
+    let gh = autopilot_tracker::Gh::new(program, guardian, repo, env::vars_os())?;
+    Ok(
+        match autopilot_engine::ci_status(data_dir, &TicketId::from(ticket), &gh)? {
+            autopilot_tracker::Ci::NoChecks => serde_json::json!({"ci": "none"}),
+            autopilot_tracker::Ci::Pending => serde_json::json!({"ci": "pending"}),
+            autopilot_tracker::Ci::Passed => serde_json::json!({"ci": "passed"}),
+            autopilot_tracker::Ci::Failed(names) => {
+                serde_json::json!({"ci": "failed", "failed": names})
+            }
+        },
+    )
 }
 
 struct PublishRequest<'a> {

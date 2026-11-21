@@ -24,7 +24,7 @@ use autopilot_pipeline::{
 use autopilot_policy::{Facts, Policy, Risk};
 use autopilot_profile::Profile;
 use autopilot_store::{SqliteStore, Store};
-use autopilot_tracker::{Approval, CheckLine, Gh, Published, Repo, description};
+use autopilot_tracker::{Approval, CheckLine, Ci, Gh, Published, Repo, description};
 use serde::{Deserialize, Serialize};
 
 use crate::{DATABASE, Error, event, lock_run, timestamp};
@@ -322,6 +322,22 @@ pub fn run_publish(
     )?;
     push_event(&mut store, &ticket.id, &mut last, Event::StepFinished)?;
     Ok(published)
+}
+
+/// Where CI stands for the commit that was published, not for whatever the
+/// branch points at now. Read-only: it records nothing.
+///
+/// # Errors
+/// Returns an error if the ticket has no published pull request or `gh` fails.
+pub fn ci_status(directory: &Path, ticket: &TicketId, gh: &Gh) -> Result<Ci, Error> {
+    let store = SqliteStore::open_read_only(directory.join(DATABASE))?;
+    let history = store.events(ticket, 0)?;
+    let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
+    if state.step(Step::PullRequest) != &StepState::Passed {
+        return Err(Error::NotReady("no pull request has been published".into()));
+    }
+    let offer = last_offer(&history).ok_or_else(|| Error::History("no publish offer".into()))?;
+    Ok(gh.ci(&offer.approval.head)?)
 }
 
 fn summary(history: &[RecordedEvent]) -> String {

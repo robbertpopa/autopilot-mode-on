@@ -343,9 +343,9 @@ fn build_waits_for_the_design_when_the_ticket_needs_one() {
 
 // ---- publishing ----
 
-use autopilot_engine::{PublishSetup, prepare_publish, run_publish};
+use autopilot_engine::{PublishSetup, ci_status, prepare_publish, run_publish};
 use autopilot_git::WorktreeManager;
-use autopilot_tracker::{Gh, Published, Repo};
+use autopilot_tracker::{Ci, Gh, Published, Repo};
 
 const GITHUB: &str = "https://github.com/owner/name";
 
@@ -590,4 +590,38 @@ fn a_poisoned_ticket_cannot_make_the_agent_publish() {
     );
     assert_eq!(rev_parse(world.repository.path(), "main"), before);
     assert!(matches!(kinds(&world).last(), Some(Event::StepFinished)));
+}
+
+// Invariant: CI is read for the published commit, and only once something
+// was published. A branch that moved on does not change the answer.
+#[test]
+fn ci_is_watched_for_the_published_commit() {
+    let world = built("p-ci");
+    let _bare = remote(&world, GITHUB);
+    let p = publishing(&world);
+    let gh = gh_for(&p);
+    assert!(matches!(
+        ci_status(world.data.path(), &world.ticket.id, &gh),
+        Err(Error::NotReady(_))
+    ));
+    prepare_publish(world.data.path(), &world.ticket, &setup(&world, &p)).unwrap();
+    answer(world.data.path(), &world.ticket.id, Decision::Approve);
+    run_publish(world.data.path(), &world.ticket, &setup(&world, &p), &gh).unwrap();
+
+    let branch = WorktreeManager::ticket_branch(&world.ticket.id).unwrap();
+    let head = rev_parse(world.repository.path(), &branch);
+    assert_eq!(
+        ci_status(world.data.path(), &world.ticket.id, &gh).unwrap(),
+        Ci::NoChecks
+    );
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&p.state).unwrap()).unwrap();
+    state["runs"][&head] = serde_json::json!(
+        [{"name": "build", "status": "completed", "conclusion": "failure"}]
+    );
+    std::fs::write(&p.state, state.to_string()).unwrap();
+    assert_eq!(
+        ci_status(world.data.path(), &world.ticket.id, &gh).unwrap(),
+        Ci::Failed(vec!["build".into()])
+    );
 }
