@@ -3,6 +3,7 @@
 mod conflicts;
 mod diff;
 mod managed;
+mod publish;
 
 pub use conflicts::{PathOverlap, overlapping_paths};
 pub use diff::{DiffStats, FileAdditions, FileStats, LineStats};
@@ -45,6 +46,8 @@ pub enum Error {
     ObjectId,
     #[error("Git returned invalid or incomplete diff statistics")]
     InvalidDiff,
+    #[error("{0} is not a usable remote or branch name")]
+    InvalidRemote(String),
     #[error("planned path is not a valid repository-relative path: {0}")]
     InvalidPlannedPath(PathBuf),
     #[error("the worktree changed during fingerprinting at {0}")]

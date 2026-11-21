@@ -73,6 +73,14 @@ impl WorktreeManager {
         })
     }
 
+    /// The branch name the manager uses for a ticket.
+    ///
+    /// # Errors
+    /// Returns an error if the ticket id cannot name a branch.
+    pub fn ticket_branch(ticket: &TicketId) -> Result<String, Error> {
+        ticket_worktree(ticket).map(|(branch, _)| branch)
+    }
+
     /// Create a ticket checkout, or reopen an exact checkout from a reservation.
     ///
     /// # Errors

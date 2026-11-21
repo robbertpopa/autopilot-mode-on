@@ -114,6 +114,8 @@ dependencies = [
  "autopilot-policy",
  "autopilot-profile",
  "autopilot-store",
+ "autopilot-tracker",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",
