@@ -17,6 +17,7 @@ autopilot-engine = { path = "../engine" }
 autopilot-pipeline = { path = "../pipeline" }
 autopilot-profile = { path = "../profile" }
 autopilot-store = { path = "../store" }
+autopilot-update = { path = "../update" }
 eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 
 [dev-dependencies]

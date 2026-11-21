@@ -16,6 +16,7 @@ members = [
     "crates/store",
     "crates/ui",
     "crates/tracker",
+    "crates/update",
     "tools/fake-agent",
     "tools/fake-gh",
     "tools/xtask",

@@ -1,0 +1,28 @@
+name: Release Please
+
+# Opens and updates the release pull request from the commit messages on
+# master. Merging it creates the tag and the GitHub release, and publishing
+# that release starts release.yml.
+#
+# RELEASE_PLEASE_TOKEN must be a personal access token (or GitHub App token)
+# with contents and pull-requests write. The default token cannot be used:
+# a release it creates does not start other workflows.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

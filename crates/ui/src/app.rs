@@ -67,6 +67,10 @@ pub struct App {
     pub(crate) busy: bool,
     new_started: bool,
     pub(crate) light: bool,
+    update: Option<autopilot_update::Update>,
+    installing: bool,
+    watching: bool,
+    next_update_check: Option<std::time::Instant>,
     pub(crate) accounts: Option<autopilot_accounts::Accounts>,
     open_newest: bool,
     icon: Option<egui::TextureHandle>,
@@ -108,6 +112,10 @@ impl App {
             busy: false,
             new_started: false,
             light,
+            update: None,
+            installing: false,
+            watching: watch,
+            next_update_check: None,
             accounts: None,
             open_newest: false,
             icon: theme::icon_texture(context),
@@ -199,6 +207,16 @@ impl App {
             match message {
                 Message::Snapshot(snapshot) => self.set_snapshot(snapshot),
                 Message::Accounts(accounts) => self.accounts = Some(*accounts),
+                Message::Update(Ok(found)) => self.update = found,
+                // A failed check is not worth a banner: the next check retries.
+                Message::Update(Err(_)) => {}
+                Message::Installing(Ok(())) => {
+                    self.context.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                Message::Installing(Err(why)) => {
+                    self.installing = false;
+                    self.notice = Some((false, format!("The update was not installed: {why}")));
+                }
                 Message::Done(outcome) => {
                     self.busy = false;
                     self.open_newest = outcome.is_ok() && self.new_started;
@@ -215,6 +233,7 @@ impl App {
     /// Lay out one frame.
     pub fn ui(&mut self, ctx: &egui::Context) {
         self.drain();
+        self.update_clock(ctx);
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
             self.new_ticket = Some(NewTicket::default());
         }
@@ -273,6 +292,7 @@ impl App {
                             save_theme(&self.options, self.light);
                         }
                         self.spend_chip(ui);
+                        self.update_button(ui);
                     });
                 });
             });
@@ -689,5 +709,60 @@ impl App {
                 });
             ui.add_space(6.0);
         }
+    }
+}
+
+/// How often a running window looks for a new release.
+const UPDATE_EVERY: std::time::Duration = std::time::Duration::from_hours(6);
+
+impl App {
+    /// The version the update button offers, if any.
+    #[must_use]
+    pub fn update_offered(&self) -> Option<&str> {
+        self.update.as_ref().map(|update| update.version.as_str())
+    }
+
+    /// Whether an installer is being downloaded right now.
+    #[must_use]
+    pub const fn update_installing(&self) -> bool {
+        self.installing
+    }
+
+    /// "Update 0.2.0": one click downloads, checks and opens the installer.
+    fn update_button(&mut self, ui: &mut egui::Ui) {
+        let Some(update) = self.update.clone() else {
+            return;
+        };
+        let label = if self.installing {
+            format!("Downloading {}...", update.version)
+        } else {
+            format!("Update to {}", update.version)
+        };
+        let tip = if update.notes.is_empty() {
+            "Download the new version, check it, and install it".to_owned()
+        } else {
+            update.notes.clone()
+        };
+        if ui
+            .add_enabled(!self.installing, theme::primary(&label))
+            .on_hover_text(tip)
+            .clicked()
+        {
+            self.installing = true;
+            backend::install_update(self.context.clone(), self.sender.clone(), update);
+        }
+    }
+
+    /// Check at start and then every few hours while the window stays open.
+    pub(crate) fn update_clock(&mut self, ctx: &egui::Context) {
+        if !self.watching {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self.next_update_check.is_none_or(|at| now >= at) {
+            self.next_update_check = Some(now + UPDATE_EVERY);
+            backend::check_for_update(ctx.clone(), self.sender.clone());
+        }
+        ctx.request_repaint_after(UPDATE_EVERY);
     }
 }
