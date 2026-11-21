@@ -11,7 +11,13 @@ use std::{
 use autopilot_accounts::{Accounts, Status};
 use autopilot_agent_claude::{ClaudeAgent, ClaudeConfig};
 use autopilot_agent_fixture::FixtureAgent;
-use autopilot_core::{Ticket, TicketId};
+use autopilot_core::{RequestId, Step as CoreStep, Ticket, TicketId};
+use autopilot_pipeline::{
+    StepState, TicketState,
+    clarify::Choice,
+    fold,
+    inbox::{Decision, Inbox, Reply, RequestBody, check_reply},
+};
 use autopilot_profile::Auth;
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -61,11 +67,53 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Skip Clarify when nothing is open, or ask the open questions through the inbox.
+    Clarify { ticket: String },
+    /// Look at and answer the requests waiting for you.
+    Inbox {
+        #[command(subcommand)]
+        action: InboxAction,
+    },
+    /// Show where each step of a ticket stands, folded from its history.
+    Status {
+        ticket: String,
+        /// Print machine-readable JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Replay committed events from the ticket's local history.
     Watch {
         ticket: String,
         #[arg(long, default_value_t = 0)]
         after: u64,
+    },
+}
+
+#[derive(Subcommand)]
+enum InboxAction {
+    /// List waiting requests.
+    List,
+    /// Answer a question request.
+    Answer {
+        request: String,
+        /// Take the recommended option for every question.
+        #[arg(long, conflicts_with = "choice")]
+        recommended: bool,
+        /// One per question, in order: `recommended`, an option number from 0, or `text:<answer>`.
+        #[arg(long)]
+        choice: Vec<String>,
+    },
+    /// Answer an approval request.
+    Approve {
+        request: String,
+        #[arg(long, conflicts_with = "edit")]
+        reject: bool,
+        /// Approve with this replacement text.
+        #[arg(long)]
+        edit: Option<String>,
+        /// Do not ask about this optional confirmation again in the project.
+        #[arg(long)]
+        allow_for_project: bool,
     },
 }
 
@@ -164,6 +212,25 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 write_accounts(&mut out, &accounts)?;
             }
         }
+        Command::Clarify { ticket } => {
+            let started = autopilot_engine::start_clarify(&cli.data_dir, &TicketId::from(ticket))?;
+            let value = match started {
+                autopilot_engine::ClarifyStart::Skipped(reason) => {
+                    serde_json::json!({"clarify": "skipped", "reason": reason})
+                }
+                autopilot_engine::ClarifyStart::Asking { request, questions } => {
+                    serde_json::json!({"clarify": "asking", "request": request, "questions": questions})
+                }
+            };
+            serde_json::to_writer(&mut out, &value)?;
+            writeln!(out)?;
+        }
+        Command::Inbox { action } => run_inbox(&mut out, &cli.data_dir, action)?,
+        Command::Status { ticket, json } => {
+            let events = autopilot_engine::watch(&cli.data_dir, &TicketId::from(ticket), 0)?;
+            let state = fold(&events)?;
+            write_status(&mut out, &state, json)?;
+        }
         Command::Watch { ticket, after } => {
             for record in autopilot_engine::watch(&cli.data_dir, &TicketId::from(ticket), after)? {
                 serde_json::to_writer(&mut out, &record)?;
@@ -171,6 +238,130 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    Ok(())
+}
+
+fn run_inbox(
+    out: &mut impl Write,
+    data_dir: &Path,
+    action: InboxAction,
+) -> Result<(), Box<dyn Error>> {
+    let inbox = Inbox::in_data_dir(data_dir);
+    match action {
+        InboxAction::List => {
+            for request in inbox.requests()? {
+                serde_json::to_writer(&mut *out, &request)?;
+                writeln!(out)?;
+            }
+        }
+        InboxAction::Answer {
+            request,
+            recommended,
+            choice,
+        } => {
+            let id = RequestId::from(request);
+            let waiting = inbox.read_request(&id)?.ok_or("no such waiting request")?;
+            let RequestBody::Question { questions } = &waiting.body else {
+                return Err("that request is an approval; use `inbox approve`".into());
+            };
+            let choices = if recommended {
+                vec![Choice::Recommended; questions.len()]
+            } else {
+                choice
+                    .iter()
+                    .map(|spec| parse_choice(spec))
+                    .collect::<Result<_, _>>()?
+            };
+            let reply = Reply::Question { choices };
+            check_reply(&waiting, &reply)?;
+            inbox.write_answer(&id, &reply)?;
+            let applied = autopilot_engine::sync_inbox(data_dir, &waiting.ticket)?;
+            serde_json::to_writer(&mut *out, &serde_json::json!({"applied": applied}))?;
+            writeln!(out)?;
+        }
+        InboxAction::Approve {
+            request,
+            reject,
+            edit,
+            allow_for_project,
+        } => {
+            let id = RequestId::from(request);
+            let waiting = inbox.read_request(&id)?.ok_or("no such waiting request")?;
+            let decision = match (reject, edit) {
+                (true, _) => Decision::Reject,
+                (false, Some(text)) => Decision::Edit(text),
+                (false, None) => Decision::Approve,
+            };
+            let reply = Reply::Approval {
+                decision,
+                allow_for_project,
+            };
+            check_reply(&waiting, &reply)?;
+            inbox.write_answer(&id, &reply)?;
+            writeln!(out, "{}", serde_json::json!({"recorded": true}))?;
+        }
+    }
+    Ok(())
+}
+
+fn parse_choice(spec: &str) -> Result<Choice, Box<dyn Error>> {
+    if spec == "recommended" {
+        return Ok(Choice::Recommended);
+    }
+    if let Some(text) = spec.strip_prefix("text:") {
+        return Ok(Choice::Text(text.to_owned()));
+    }
+    let index: usize = spec.parse().map_err(|_| {
+        format!("choice {spec:?} must be `recommended`, a number or `text:<answer>`")
+    })?;
+    Ok(Choice::Option(index))
+}
+
+fn state_name(state: &StepState) -> (&'static str, Option<String>) {
+    match state {
+        StepState::Idle => ("idle", None),
+        StepState::Running => ("running", None),
+        StepState::Asking(request) => ("asking", Some(request.as_str().to_owned())),
+        StepState::Paused => ("paused", None),
+        StepState::Skipped(reason) => ("skipped", Some(reason.clone())),
+        StepState::Passed => ("passed", None),
+        StepState::Failed(reason) => ("failed", Some(reason.clone())),
+        StepState::Interrupted(reason) => ("interrupted", Some(reason.clone())),
+    }
+}
+
+fn write_status(
+    out: &mut impl Write,
+    state: &TicketState,
+    json: bool,
+) -> Result<(), Box<dyn Error>> {
+    let (cost, estimated) = state.cost();
+    if json {
+        let steps: Vec<_> = CoreStep::ALL
+            .iter()
+            .map(|step| {
+                let (name, detail) = state_name(state.step(*step));
+                serde_json::json!({"step": step.as_str(), "state": name, "detail": detail})
+            })
+            .collect();
+        let value = serde_json::json!({
+            "steps": steps,
+            "done": state.is_done(),
+            "cost_microusd": cost.as_microusd(),
+            "cost_estimated": estimated,
+        });
+        serde_json::to_writer_pretty(&mut *out, &value)?;
+        writeln!(out)?;
+        return Ok(());
+    }
+    for step in CoreStep::ALL {
+        match state_name(state.step(step)) {
+            (name, Some(detail)) => writeln!(out, "{}: {name} ({detail})", step.as_str())?,
+            (name, None) => writeln!(out, "{}: {name}", step.as_str())?,
+        }
+    }
+    let label = if estimated { "estimated" } else { "billed" };
+    writeln!(out, "cost: {} microUSD ({label})", cost.as_microusd())?;
     Ok(())
 }
 

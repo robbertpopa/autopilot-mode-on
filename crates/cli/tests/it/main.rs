@@ -123,3 +123,71 @@ fn accounts_prints_three_statuses_and_no_credentials() {
     let lower = text.to_lowercase();
     assert!(!lower.contains("token") && !lower.contains("sk-ant") && !lower.contains("gho_"));
 }
+
+fn run_fake(data: &Path, directory: &Path) -> Output {
+    let ticket = directory.join("ticket.json");
+    std::fs::write(
+        &ticket,
+        serde_json::json!({"id": "e2e-1", "title": "Sample", "description": "d"}).to_string(),
+    )
+    .unwrap();
+    autopilot(
+        &[
+            "run-step",
+            "--step",
+            "understand",
+            "--agent",
+            "fake",
+            "--ticket",
+            ticket.to_str().unwrap(),
+        ],
+        data,
+    )
+}
+
+fn json_line(output: &Output) -> Value {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+// Invariant: a ticket can be driven from Understand through Clarify to a
+// recorded answer using only the CLI, and `status` reports each step.
+#[test]
+fn clarify_is_driven_from_the_cli_through_the_inbox() {
+    let scratch = tempfile::tempdir().unwrap();
+    let data = scratch.path().join("data");
+    assert!(run_fake(&data, scratch.path()).status.success());
+
+    let asked = json_line(&autopilot(&["clarify", "e2e-1"], &data));
+    assert_eq!(asked["clarify"], "asking");
+    let request = asked["request"].as_str().unwrap().to_owned();
+
+    let waiting = json_line(&autopilot(&["inbox", "list"], &data));
+    assert_eq!(waiting["id"], request.as_str());
+    let status = json_line(&autopilot(&["status", "e2e-1", "--json"], &data));
+    let clarify = &status["steps"][1];
+    assert_eq!(clarify["step"], "clarify");
+    assert_eq!(clarify["state"], "asking");
+
+    // One question, so two choices are refused and nothing is applied.
+    let refused = autopilot(
+        &[
+            "inbox", "answer", &request, "--choice", "0", "--choice", "0",
+        ],
+        &data,
+    );
+    assert!(!refused.status.success());
+
+    let applied = json_line(&autopilot(
+        &["inbox", "answer", &request, "--recommended"],
+        &data,
+    ));
+    assert_eq!(applied["applied"][0], request.as_str());
+    let status = json_line(&autopilot(&["status", "e2e-1", "--json"], &data));
+    assert_eq!(status["steps"][1]["state"], "passed");
+    assert_eq!(autopilot(&["inbox", "list"], &data).stdout, b"");
+}

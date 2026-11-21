@@ -68,6 +68,7 @@ dependencies = [
  "autopilot-agent-fixture",
  "autopilot-core",
  "autopilot-engine",
+ "autopilot-pipeline",
  "autopilot-profile",
  "clap",
  "serde_json",
