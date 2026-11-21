@@ -63,6 +63,7 @@ impl ClaudeAgent {
             program: self.executable.clone(),
             args: command::status_args(),
             env: child_env(self.config.auth, process_env::vars_os())?,
+            cwd: None,
         };
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let output = Runner::new(self.guardian.clone()).run(&spec, &[], STATUS_LIMITS, &cancel)?;
@@ -85,6 +86,7 @@ impl Agent for ClaudeAgent {
             program: self.executable.clone(),
             args: command::understand_args(&self.config, &schema),
             env: child_env(self.config.auth, process_env::vars_os())?,
+            cwd: None,
         };
         let prompt = prompt(request.ticket)?;
         let runner = Runner::new(self.guardian.clone());
@@ -104,6 +106,7 @@ impl Agent for ClaudeAgent {
             program: self.executable.clone(),
             args: command::plan_args(&self.config, &schema),
             env: child_env(self.config.auth, process_env::vars_os())?,
+            cwd: None,
         };
         let prompt = plan_prompt(request.ticket, request.context)?;
         let runner = Runner::new(self.guardian.clone());

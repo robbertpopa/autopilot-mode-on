@@ -118,6 +118,10 @@ pub(crate) fn start(_: &Path, spec: &CommandSpec, input: &[u8]) -> io::Result<(A
         .collect();
     let mut command = command_line(spec)?;
     let environment = environment_block(spec)?;
+    let directory: Option<Vec<u16>> = match &spec.cwd {
+        Some(dir) => Some(wide(dir.as_os_str())?.into_iter().chain([0]).collect()),
+        None => None,
+    };
     let mut info = PROCESS_INFORMATION::default();
     // SAFETY: All string buffers, attributes, handles and output storage stay valid through the call.
     // Assigning the job during creation avoids leaving a suspended orphan if the supervisor exits.
@@ -130,7 +134,7 @@ pub(crate) fn start(_: &Path, spec: &CommandSpec, input: &[u8]) -> io::Result<(A
             1,
             CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
             environment.as_ptr().cast(),
-            null(),
+            directory.as_ref().map_or(null(), Vec::as_ptr),
             &raw const startup.StartupInfo,
             &raw mut info,
         )

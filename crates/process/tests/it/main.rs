@@ -38,6 +38,7 @@ fn fixture(mode: &str, data: &Path) -> io::Result<CommandSpec> {
             .map(Into::into)
             .to_vec(),
         env,
+        cwd: None,
     })
 }
 
