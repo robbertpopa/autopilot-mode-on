@@ -246,7 +246,7 @@ fn verify_stamp(path: &Path, before: &Metadata, after: &Metadata) -> Result<(), 
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn open_regular(path: &Path) -> io::Result<File> {
     use rustix::fs::{Mode, OFlags, open};
 
@@ -271,7 +271,7 @@ fn open_regular(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn permission_bits(metadata: &Metadata) -> u32 {
     use std::os::unix::fs::PermissionsExt;
     metadata.permissions().mode()
@@ -282,7 +282,7 @@ fn permission_bits(metadata: &Metadata) -> u32 {
     u32::from(metadata.permissions().readonly())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn same_file(before: &Metadata, after: &Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
     before.dev() == after.dev()
@@ -298,7 +298,7 @@ fn same_file(before: &Metadata, after: &Metadata) -> bool {
         && before.file_attributes() == after.file_attributes()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn unsupported_attributes(_: &Metadata) -> bool {
     false
 }
@@ -342,7 +342,7 @@ mod tests {
         assert_ne!(snapshot(&first), snapshot(&second));
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     #[test]
     fn symlinks_record_in_tree_destinations_and_reject_external_targets() {
         use crate::Error;
