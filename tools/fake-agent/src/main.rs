@@ -1,7 +1,7 @@
 use std::{
     env,
     ffi::OsStr,
-    io::{self, Write},
+    io::{self, Read, Write},
     process::ExitCode,
     thread,
     time::Duration,
@@ -10,15 +10,59 @@ use std::{
 use autopilot_core::Ticket;
 
 const TRANSCRIPT: &[u8] = include_bytes!("../../../fixtures/agent/understand.jsonl");
+const CLAUDE_SUCCESS: &[u8] = include_bytes!("../../../fixtures/claude/synthetic-understand.jsonl");
 
 fn main() -> ExitCode {
-    match replay() {
+    // Real Claude Code starts with `-p` or `auth`; the replay mode keeps its own word.
+    let first = env::args_os().nth(1);
+    let result = match first.as_deref().and_then(OsStr::to_str) {
+        Some("-p") => claude_print(),
+        Some("auth") => claude_status(),
+        _ => replay(),
+    };
+    match result {
         Ok(code) => code,
         Err(error) => {
             eprintln!("fake agent: {error}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// Pretend to be `claude auth status --json` for a subscription sign-in.
+fn claude_status() -> Result<ExitCode, Box<dyn std::error::Error>> {
+    writeln!(
+        io::stdout(),
+        "{{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}}"
+    )?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Pretend to be `claude -p`. The ticket description picks the outcome so a
+/// test can drive each result shape without a real model.
+fn claude_print() -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let mut prompt = String::new();
+    io::stdin().lock().read_to_string(&mut prompt)?;
+    let mut output = io::stdout().lock();
+    let init = "{\"type\":\"system\",\"subtype\":\"init\"}\n";
+    if prompt.contains("scenario:max-turns") {
+        writeln!(
+            output,
+            "{init}{{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true,\"total_cost_usd\":0.002}}"
+        )?;
+        return Ok(ExitCode::FAILURE);
+    }
+    if prompt.contains("scenario:rate-limited") {
+        write!(
+            output,
+            "{init}{{\"type\":\"system\",\"subtype\":\"api_retry\",\"attempt\":1,\"error_status\":429}}\n\
+             {{\"type\":\"assistant\",\"error\":\"rate_limit\"}}\n\
+             {{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true}}\n"
+        )?;
+        return Ok(ExitCode::FAILURE);
+    }
+    output.write_all(CLAUDE_SUCCESS)?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn replay() -> Result<ExitCode, Box<dyn std::error::Error>> {

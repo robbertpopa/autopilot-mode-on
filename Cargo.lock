@@ -77,7 +77,10 @@ dependencies = [
 name = "autopilot-fake-agent"
 version = "0.1.0"
 dependencies = [
+ "autopilot-agent",
+ "autopilot-agent-claude",
  "autopilot-core",
+ "autopilot-profile",
  "serde_json",
 ]
 
