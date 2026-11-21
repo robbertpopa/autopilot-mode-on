@@ -1,3 +1,5 @@
+mod claude;
+
 use std::{
     io::{self, Write},
     process::{Command, Output, Stdio},
