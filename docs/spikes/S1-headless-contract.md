@@ -31,6 +31,23 @@ On 2026-11-20, native Windows Claude Code reported version `2.1.329`. Its help l
 
 Capture from a disposable working directory with synthetic content and the dedicated API workspace. Keep raw output out of the repository. Record the CLI version and launch flags without secrets. Retain the event types and field shapes needed to test the parser. Replace session identifiers consistently and replace local paths and arbitrary text with synthetic values. Scan the sanitized fixture before staging it.
 
+## Local test runbook
+
+Run from a disposable directory with a spend-limited key. The adapter in `crates/agent-claude` is untested against real output, so a failure here is useful evidence.
+
+~~~powershell
+cargo build
+mkdir D:\scratch\s1; cd D:\scratch\s1
+$exe = "D:/autopilot-mode-on/target/debug/autopilot.exe"
+$ticket = "D:/autopilot-mode-on/fixtures/tickets/understand.json"
+& $exe run-step --step understand --agent claude --ticket $ticket --data-dir .ap-sub
+$env:AUTOPILOT_ANTHROPIC_API_KEY = "<dedicated key>"
+& $exe run-step --step understand --agent claude --auth api --ticket $ticket --data-dir .ap-api
+& $exe watch sample-export --data-dir .ap-api
+~~~
+
+For raw wire output, save the stdout of `claude -p --output-format stream-json --verbose --model haiku --max-turns 1 --max-budget-usd 0.05 "reply with OK"` to a file, then run `cargo xtask sanitize-claude RAW fixtures/claude/<name>.jsonl`. The command refuses to write if a key, address or local name survives. Read the result before staging it.
+
 ## Result
 
 Live fixtures pending.
