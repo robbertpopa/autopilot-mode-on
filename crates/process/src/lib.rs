@@ -33,6 +33,8 @@ pub struct CommandSpec {
     pub program: PathBuf,
     pub args: Vec<OsString>,
     pub env: Vec<(OsString, OsString)>,
+    /// Absolute directory to start in. `None` inherits the supervisor's.
+    pub cwd: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -102,6 +104,12 @@ impl Runner {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "expected an absolute executable and at most 1 MiB of input",
+            ));
+        }
+        if spec.cwd.as_ref().is_some_and(|dir| !dir.is_absolute()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "expected an absolute working directory",
             ));
         }
 

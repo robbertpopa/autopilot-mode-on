@@ -4,6 +4,7 @@ members = [
     "crates/agent",
     "crates/agent-claude",
     "crates/agent-fixture",
+    "crates/checks",
     "crates/cli",
     "crates/core",
     "crates/engine",

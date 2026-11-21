@@ -224,6 +224,7 @@ impl Repository {
                 program: self.program.clone(),
                 args,
                 env: environment,
+                cwd: None,
             },
             b"",
             limits,

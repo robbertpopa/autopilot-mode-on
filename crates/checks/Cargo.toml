@@ -1,0 +1,21 @@
+[package]
+name = "autopilot-checks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+autopilot-core.workspace = true
+autopilot-policy = { path = "../policy" }
+autopilot-process = { path = "../process" }
+autopilot-profile = { path = "../profile" }
+sha2 = { version = "0.11", default-features = false }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

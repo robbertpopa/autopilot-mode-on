@@ -180,6 +180,7 @@ fn lookup(runner: &Runner, parent: &[(OsString, OsString)], launch: Option<Launc
         program: launch.program,
         args: launch.args,
         env,
+        cwd: None,
     };
     let cancel = AtomicBool::new(false);
     let output = match runner.run(&spec, &[], LIMITS, &cancel) {

@@ -82,6 +82,7 @@ pub(crate) fn start(
         .args(&spec.args)
         .env_clear()
         .envs(spec.env.iter().map(|(key, value)| (key, value)))
+        .current_dir(spec.cwd.as_deref().unwrap_or(Path::new(".")))
         // A terminal interrupt for the owner must leave the guardian around to clean up.
         .process_group(0)
         .stdin(Stdio::piped())

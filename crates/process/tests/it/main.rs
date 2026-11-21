@@ -38,6 +38,7 @@ fn fixture(mode: &str, data: &Path) -> io::Result<CommandSpec> {
             .map(Into::into)
             .to_vec(),
         env,
+        cwd: None,
     })
 }
 
@@ -240,6 +241,43 @@ fn a_missing_worker_is_reported_as_a_launch_error() {
     assert!(!data.path().join("ready").exists());
 }
 
+// Invariant: a child starts in the directory it was given, in both the plain
+// and the canonical spelling (managed worktrees are canonical, `\?\` on
+// Windows), and a relative directory is refused instead of resolved against
+// whatever the supervisor happens to be in.
+#[test]
+fn the_child_starts_in_the_requested_directory() {
+    let data = tempfile::tempdir().unwrap();
+    let wanted = tempfile::tempdir().unwrap();
+    for directory in [
+        wanted.path().to_path_buf(),
+        wanted.path().canonicalize().unwrap(),
+    ] {
+        let mut spec = fixture("cwd", data.path()).unwrap();
+        spec.cwd = Some(directory.clone());
+        let output = runner()
+            .run(&spec, b"", BASE_LIMITS, &AtomicBool::new(false))
+            .unwrap();
+        assert!(matches!(output.outcome, Outcome::Exited(status) if status.success()));
+        let text = String::from_utf8_lossy(&output.stdout);
+        let reported = text
+            .lines()
+            .find_map(|line| line.strip_prefix("cwd="))
+            .unwrap();
+        assert_eq!(
+            Path::new(reported).canonicalize().unwrap(),
+            directory.canonicalize().unwrap()
+        );
+    }
+
+    let mut spec = fixture("cwd", data.path()).unwrap();
+    spec.cwd = Some(PathBuf::from("relative"));
+    let error = runner()
+        .run(&spec, b"", BASE_LIMITS, &AtomicBool::new(false))
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+}
+
 #[test]
 #[ignore = "invoked by lifecycle tests"]
 fn fake_child() {
@@ -287,6 +325,12 @@ fn fake_child() {
             }
         }
         "grandchild" => thread::sleep(Duration::from_secs(20)),
+        "cwd" => writeln!(
+            io::stdout(),
+            "cwd={}",
+            env::current_dir().unwrap().display()
+        )
+        .unwrap(),
         "flood" => {
             let chunk = [b'x'; 4096];
             loop {

@@ -64,6 +64,7 @@ impl Agent for FixtureAgent {
             program: self.program.clone(),
             args: vec!["replay".into()],
             env: child_env,
+            cwd: None,
         };
         let input = serde_json::to_vec(request.ticket)?;
         let runner = Runner::new(self.guardian.clone());
