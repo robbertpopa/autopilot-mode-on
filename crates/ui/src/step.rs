@@ -81,7 +81,7 @@ impl App {
             }
         });
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
+            ui.set_width(ui.available_width() - 38.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("IN SHORT").size(13.0).strong().color(theme::TEXT_MUTED()));
                 theme::pill(ui, "made from the run · free", theme::GREEN_FILL(), theme::GREEN());
@@ -96,7 +96,7 @@ impl App {
         self.tab = tab;
         ui.add_space(6.0);
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
+            ui.set_width(ui.available_width() - 38.0);
             ui.set_min_height(240.0);
             self.tab_body(ui, &view, step);
         });
@@ -266,7 +266,7 @@ impl App {
         let width = ui.available_width() - 36.0;
         let button = |text: &str| egui::Button::new(text).min_size(egui::vec2(width, 40.0));
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
+            ui.set_width(ui.available_width() - 38.0);
             ui.label(theme::muted("Run"));
             // Only Understand runs for real today: the other steps need a
             // real agent, which stays refused until S6.
@@ -307,7 +307,7 @@ impl App {
         });
         ui.add_space(8.0);
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
+            ui.set_width(ui.available_width() - 38.0);
             ui.label(theme::muted("Control"));
             let paused = view.badge == autopilot_engine::Badge::Paused;
             if ui
@@ -349,7 +349,7 @@ impl App {
         });
         ui.add_space(8.0);
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
+            ui.set_width(ui.available_width() - 38.0);
             ui.label(theme::muted("Open"));
             for text in [
                 "Open the worktree",

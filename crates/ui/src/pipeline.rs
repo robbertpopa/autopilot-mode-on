@@ -6,7 +6,8 @@ use autopilot_engine::{StepField, edit_step, step_name};
 use autopilot_profile::{Auth, StepSettings};
 use eframe::egui::{self, Frame, Margin, RichText, Stroke};
 
-use crate::app::{App, NewTicket};
+use crate::app::App;
+use crate::composer::NewTicket;
 use crate::theme;
 
 const MODELS: [&str; 3] = ["haiku-5-5", "sonnet-5-5", "opus-5-5"];
@@ -62,7 +63,7 @@ impl App {
             super::app::banner(ui, &format!("profile.toml: {problem}"), false);
         }
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
+            ui.set_width(ui.available_width() - 38.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("1   The steps, in order").size(19.0).strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

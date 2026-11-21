@@ -4,6 +4,7 @@
 mod accounts;
 mod app;
 mod backend;
+mod composer;
 pub mod demo;
 mod pipeline;
 mod run;

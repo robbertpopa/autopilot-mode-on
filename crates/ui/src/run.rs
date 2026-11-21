@@ -10,6 +10,20 @@ use crate::app::{App, Screen, badge_colors};
 use crate::backend::{Action, waiting_text};
 use crate::theme;
 
+/// A size in plain units: `12 KB`, `3.4 MB`.
+#[must_use]
+pub fn size_text(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    if bytes >= MB {
+        format!("{}.{} MB", bytes / MB, bytes % MB * 10 / MB)
+    } else if bytes >= KB {
+        format!("{} KB", bytes / KB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 /// `14:02:11` in UTC. The window has no timezone data, so it says so.
 #[must_use]
 pub fn clock(ms: u64) -> String {
@@ -58,6 +72,7 @@ impl App {
         ui.add_space(14.0);
         self.build_panel(ui, &view);
         ui.add_space(6.0);
+        self.files_panel(ui, &view);
         egui::CollapsingHeader::new("History")
             .id_salt("history")
             .show(ui, |ui| {
@@ -76,6 +91,65 @@ impl App {
         egui::CollapsingHeader::new("Change the settings in plain words")
             .id_salt("change")
             .show(ui, |ui| self.change_box(ui));
+    }
+
+    /// What is attached to the ticket, and how to add more.
+    fn files_panel(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+        let title = if view.attachments.is_empty() {
+            "Files".to_owned()
+        } else {
+            format!("Files ({})", view.attachments.len())
+        };
+        egui::CollapsingHeader::new(title)
+            .id_salt("files")
+            .default_open(!view.attachments.is_empty())
+            .show(ui, |ui| {
+                for item in &view.attachments {
+                    let glyph = match item.kind {
+                        autopilot_core::AttachmentKind::Folder => "▤",
+                        autopilot_core::AttachmentKind::Image => "▣",
+                        autopilot_core::AttachmentKind::File => "▪",
+                    };
+                    let size = if item.kind == autopilot_core::AttachmentKind::Folder {
+                        format!("{} files, {}", item.items, size_text(item.bytes))
+                    } else {
+                        size_text(item.bytes)
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(theme::muted(glyph));
+                        ui.label(&item.name).on_hover_text(&item.stored);
+                        ui.label(theme::muted(size));
+                    });
+                }
+                ui.label(theme::muted(
+                    "Kept as data. Nothing opens or runs them, and no agent reads them yet.",
+                ));
+                if crate::composer::has_picker() {
+                    ui.horizontal(|ui| {
+                        if ui.button("Add files").clicked() {
+                            let paths = crate::composer::pick_files();
+                            if !paths.is_empty() {
+                                self.act(Action::Attach {
+                                    ticket: view.id.clone(),
+                                    paths,
+                                });
+                            }
+                        }
+                        if ui.button("Add folder").clicked()
+                            && let Some(path) = crate::composer::pick_folder()
+                        {
+                            self.act(Action::Attach {
+                                ticket: view.id.clone(),
+                                paths: vec![path],
+                            });
+                        }
+                    });
+                } else {
+                    ui.label(theme::muted(
+                        "Drop files or a folder on the window to add them.",
+                    ));
+                }
+            });
     }
 
     /// Title, status, spend, and the controls that matter.
@@ -188,7 +262,7 @@ impl App {
             .corner_radius(egui::CornerRadius::same(10))
             .inner_margin(Margin::symmetric(16, 12))
             .show(ui, |ui| {
-                ui.set_width(ui.available_width() - 34.0);
+                ui.set_width(ui.available_width() - 38.0);
                 ui.label(RichText::new(text).size(16.0).strong().color(color));
                 if let Some(card) = problem {
                     if card.step == Step::Understand {
@@ -258,7 +332,7 @@ impl App {
             .corner_radius(egui::CornerRadius::same(10))
             .inner_margin(Margin::same(16))
             .show(ui, |ui| {
-                ui.set_width(ui.available_width() - 34.0);
+                ui.set_width(ui.available_width() - 38.0);
                 ui.label(
                     RichText::new(format!("{} needs you", step_name(*step)))
                         .size(16.0)
@@ -310,7 +384,7 @@ impl App {
             theme::BORDER()
         };
         theme::card(theme::CARD(), border).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
+            ui.set_width(ui.available_width() - 38.0);
             let latest = view.rounds.last();
             let limit = self
                 .profile
@@ -404,7 +478,7 @@ impl App {
     /// diff, and applied only when the owner says so.
     pub(crate) fn change_box(&mut self, ui: &mut egui::Ui) {
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 34.0);
+            ui.set_width(ui.available_width() - 38.0);
             let edit = ui.add(
                 egui::TextEdit::multiline(&mut self.change_text)
                     .desired_rows(2)

@@ -75,9 +75,26 @@ pub fn icon_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> {
     Some(ctx.load_texture("icon", image, egui::TextureOptions::LINEAR))
 }
 
+/// Inter (SIL Open Font License, text in `assets/fonts`) in front of egui's
+/// own fonts, which stay behind it for the symbols Inter lacks.
+fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "Inter".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../../assets/fonts/Inter.ttf"
+        ))),
+    );
+    if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
+        family.insert(0, "Inter".to_owned());
+    }
+    ctx.set_fonts(fonts);
+}
+
 /// The chosen palette, rounded corners and the design's text sizes.
 pub fn apply(ctx: &egui::Context, light: bool) {
     set_light(light);
+    install_fonts(ctx);
     let mut visuals = if light {
         egui::Visuals::light()
     } else {
@@ -96,7 +113,7 @@ pub fn apply(ctx: &egui::Context, light: bool) {
     visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, TEXT());
     visuals.selection.bg_fill = BLUE();
     visuals.hyperlink_color = BLUE();
-    let radius = CornerRadius::same(7);
+    let radius = CornerRadius::same(9);
     for widget in [
         &mut visuals.widgets.inactive,
         &mut visuals.widgets.hovered,
@@ -118,8 +135,8 @@ pub fn apply(ctx: &egui::Context, light: bool) {
     ctx.set_visuals_of(egui::Theme::Dark, visuals.clone());
     ctx.set_visuals_of(egui::Theme::Light, visuals);
     ctx.style_mut(|style| {
-        style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-        style.spacing.button_padding = egui::vec2(12.0, 7.0);
+        style.spacing.item_spacing = egui::vec2(10.0, 10.0);
+        style.spacing.button_padding = egui::vec2(14.0, 8.0);
         style.text_styles = [
             (
                 egui::TextStyle::Small,
@@ -151,8 +168,8 @@ pub fn card(fill: Color32, border: Color32) -> Frame {
     Frame::new()
         .fill(fill)
         .stroke(Stroke::new(1.0_f32, border))
-        .corner_radius(CornerRadius::same(10))
-        .inner_margin(Margin::same(16))
+        .corner_radius(CornerRadius::same(14))
+        .inner_margin(Margin::same(18))
 }
 
 /// A small coloured label such as "Needs you" or "always runs".
