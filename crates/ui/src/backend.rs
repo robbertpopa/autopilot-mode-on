@@ -72,6 +72,9 @@ pub enum Action {
     Decide {
         ticket: TicketId,
         approve: bool,
+        /// Stop asking after this kind of step in the project. Ignored for
+        /// a forced confirmation and for the plan.
+        always: bool,
     },
     /// Answer a waiting question with the recommended options.
     AcceptDefaults {
@@ -82,6 +85,20 @@ pub enum Action {
     /// Make the plan once Understand and Clarify are settled. The plan then
     /// waits for the owner's approval.
     MakePlan(TicketId),
+    /// Make the plan again, replacing the one that was made or approved.
+    RerunPlan(TicketId),
+    /// Make the design (static mockups) for a ticket that changes a screen,
+    /// or skip the step when it needs none.
+    MakeDesign(TicketId),
+    /// Make the design again, replacing the one that was made.
+    RerunDesign(TicketId),
+    /// Show the saved mockups in the system file manager.
+    OpenDesign(TicketId),
+    /// Explain a step's result in plain words, once; the answer is kept.
+    Explain {
+        ticket: TicketId,
+        step: Step,
+    },
     Pause(TicketId),
     Resume(TicketId),
     Stop(TicketId),
@@ -215,6 +232,29 @@ pub enum AgentChoice {
 }
 
 const AGENT_FILE: &str = "ui-agent.txt";
+const NOTIFY_FILE: &str = "ui-notify.txt";
+
+/// Whether the window may show desktop notifications. On unless turned off.
+#[must_use]
+pub fn notifications_on(data_dir: &Path) -> bool {
+    std::fs::read_to_string(data_dir.join(NOTIFY_FILE)).map_or(true, |text| text.trim() != "off")
+}
+
+pub fn save_notifications(data_dir: &Path, on: bool) {
+    let _ = std::fs::create_dir_all(data_dir);
+    let _ = std::fs::write(data_dir.join(NOTIFY_FILE), if on { "on" } else { "off" });
+}
+
+/// Show a desktop notification without blocking the window. A failure is
+/// ignored: a missing system tool must never disturb a run.
+pub fn notify(title: String, text: String) {
+    let Ok(guardian) = beside("autopilot-process-guardian") else {
+        return;
+    };
+    let _ = thread::Builder::new().name("notify".into()).spawn(move || {
+        let _ = autopilot_notify::send(&guardian, &title, &text);
+    });
+}
 
 impl AgentChoice {
     #[must_use]
@@ -264,6 +304,16 @@ impl autopilot_agent::Agent for Chosen {
             Self::Claude(agent) => agent.start_plan(request),
         }
     }
+
+    fn start_design(
+        &self,
+        request: autopilot_agent::StepRequest<'_>,
+    ) -> Result<autopilot_agent::AgentRun, autopilot_agent::AgentError> {
+        match self {
+            Self::Practice(agent) => agent.start_design(request),
+            Self::Claude(agent) => agent.start_design(request),
+        }
+    }
 }
 
 /// A helper binary that sits next to the window, or one folder up when the
@@ -283,19 +333,48 @@ fn beside(name: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("{file} is missing next to the window"))
 }
 
-fn chosen_agent(options: &Options) -> Result<Chosen, String> {
+/// The Claude settings for a step: the profile's model, effort, turn cap,
+/// time limit and auth for it, and the shipped defaults for what it leaves out.
+fn claude_config(options: &Options, step: Step) -> autopilot_agent_claude::ClaudeConfig {
+    let settings = autopilot_engine::load_profile(&options.profile)
+        .ok()
+        .and_then(|profile| profile.step(step).cloned());
+    let Some(settings) = settings else {
+        return autopilot_agent_claude::ClaudeConfig {
+            auth: autopilot_profile::Auth::Subscription,
+            model: "haiku".to_owned(),
+            effort: None,
+            max_turns: 4,
+            max_budget_usd: None,
+            executable: None,
+            timeout: Duration::from_secs(300),
+        };
+    };
+    let api = settings.auth == autopilot_profile::Auth::Api;
+    autopilot_agent_claude::ClaudeConfig {
+        auth: settings.auth,
+        model: settings.model.unwrap_or_else(|| "haiku".to_owned()),
+        effort: settings.effort,
+        // Structured output needs a turn after the answer.
+        max_turns: settings.limits.turns.max(2),
+        // Only an API run has a per-call dollar cap; a subscription has none.
+        max_budget_usd: api.then(|| {
+            let micro = settings
+                .limits
+                .budget_microusd
+                .map_or(50_000, autopilot_core::Money::as_microusd);
+            format!("{}.{:06}", micro / 1_000_000, micro % 1_000_000)
+        }),
+        executable: None,
+        timeout: Duration::from_secs(u64::from(settings.limits.wall_seconds.max(30))),
+    }
+}
+
+fn chosen_agent(options: &Options, step: Step) -> Result<Chosen, String> {
     match AgentChoice::read(&options.data_dir) {
         AgentChoice::Practice => fixture_agent().map(Chosen::Practice),
         AgentChoice::Claude => {
-            let config = autopilot_agent_claude::ClaudeConfig {
-                auth: autopilot_profile::Auth::Subscription,
-                model: "haiku".to_owned(),
-                effort: None,
-                max_turns: 4,
-                max_budget_usd: None,
-                executable: None,
-                timeout: Duration::from_secs(300),
-            };
+            let config = claude_config(options, step);
             let agent = autopilot_agent_claude::ClaudeAgent::new(
                 config,
                 beside("autopilot-process-guardian")?,
@@ -339,6 +418,10 @@ pub fn run(options: Options, action: Action, context: egui::Context, sender: Sen
 ///
 /// # Errors
 /// Returns the reason in plain words.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one flat match over every window action"
+)]
 pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
     let directory = options.data_dir.as_path();
     match action {
@@ -350,15 +433,19 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
         Action::Attach { ticket, paths } => autopilot_engine::attach(directory, ticket, paths)
             .map(|count| format!("Attached {count}"))
             .map_err(|error| error.to_string()),
-        Action::Decide { ticket, approve } => {
+        Action::Decide {
+            ticket,
+            approve,
+            always,
+        } => {
             answer(directory, ticket, |body| match body {
-                RequestBody::Approval { .. } => Ok(Reply::Approval {
+                RequestBody::Approval { forced, .. } => Ok(Reply::Approval {
                     decision: if *approve {
                         Decision::Approve
                     } else {
                         Decision::Reject
                     },
-                    allow_for_project: false,
+                    allow_for_project: *always && *approve && !*forced,
                 }),
                 RequestBody::Question { .. } => {
                     Err("that is a question: answer it instead of approving".to_owned())
@@ -378,7 +465,7 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             Ok("Used the recommended answers".to_owned())
         }
         Action::RerunUnderstand(ticket) => {
-            let agent = chosen_agent(options)?;
+            let agent = chosen_agent(options, Step::Understand)?;
             let ask = autopilot_engine::load_profile(&options.profile)
                 .ok()
                 .and_then(|profile| {
@@ -391,9 +478,56 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                 .map_err(|error| error.to_string())
         }
         Action::MakePlan(ticket) => {
-            let agent = chosen_agent(options)?;
+            let agent = chosen_agent(options, Step::Plan)?;
             autopilot_engine::plan_ticket(directory, ticket, &agent)
                 .map(|plan| format!("Plan ready: {} criteria", plan.criteria.len()))
+                .map_err(|error| error.to_string())
+        }
+        Action::Explain { ticket, step } => {
+            let chosen = chosen_agent(options, Step::Understand)?;
+            autopilot_engine::explain_step(directory, ticket, *step, |prompt| match &chosen {
+                Chosen::Claude(agent) => agent.explain(prompt).map_err(|error| error.to_string()),
+                Chosen::Practice(_) => Ok(
+                    "Practice agent: this is where a plain-words explanation from Claude appears. \
+                     Switch the agent to Claude to get a real one."
+                        .to_owned(),
+                ),
+            })
+            .map(|_| "Explanation kept".to_owned())
+            .map_err(|error| error.to_string())
+        }
+        Action::MakeDesign(ticket) => {
+            let agent = chosen_agent(options, Step::Design)?;
+            let history =
+                autopilot_engine::watch(directory, ticket, 0).map_err(|error| error.to_string())?;
+            let words = autopilot_engine::ticket_words(ticket, &history)
+                .map_err(|error| error.to_string())?;
+            autopilot_engine::run_design(directory, &words, &agent)
+                .map(|design| match design {
+                    Some(design) => format!("Design ready: {} mockups", design.mockups.len()),
+                    None => "No design needed: the step was skipped".to_owned(),
+                })
+                .map_err(|error| error.to_string())
+        }
+        Action::RerunDesign(ticket) => {
+            let agent = chosen_agent(options, Step::Design)?;
+            autopilot_engine::rerun_design(directory, ticket, &agent)
+                .map(|_| "New design ready".to_owned())
+                .map_err(|error| error.to_string())
+        }
+        Action::OpenDesign(ticket) => {
+            let folder = autopilot_engine::design_folder(directory, ticket);
+            if !folder.is_dir() {
+                return Err("there is no saved design for this ticket yet".to_owned());
+            }
+            let guardian = beside("autopilot-process-guardian")?;
+            autopilot_update::open_installer(&guardian, &folder)?;
+            Ok("Opened the mockups".to_owned())
+        }
+        Action::RerunPlan(ticket) => {
+            let agent = chosen_agent(options, Step::Plan)?;
+            autopilot_engine::rerun_plan(directory, ticket, &agent)
+                .map(|plan| format!("New plan ready: {} criteria", plan.criteria.len()))
                 .map_err(|error| error.to_string())
         }
         Action::Pause(ticket) => autopilot_engine::request_pause(directory, ticket)
@@ -415,7 +549,7 @@ fn start(
     attachments: &[PathBuf],
 ) -> Result<String, String> {
     let directory = options.data_dir.as_path();
-    let agent = chosen_agent(options)?;
+    let agent = chosen_agent(options, Step::Understand)?;
     let id = TicketId::from(format!("t-{}", now_ms()));
     let ticket = Ticket {
         id: id.clone(),

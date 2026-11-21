@@ -21,16 +21,20 @@ use autopilot_pipeline::{
 };
 use autopilot_store::{SqliteStore, Store, StoreError};
 
+mod allowances;
 mod attachments;
 mod build;
 mod change;
 mod control;
+mod design;
+mod explain;
 mod plan;
 mod profile_edit;
 mod publish;
 mod rerun;
 mod settings;
 mod view;
+pub use allowances::{allow, allowed, list as allowances, revoke};
 pub use attachments::{
     Attachment, MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_FOLDER_ITEMS, MAX_TICKET_BYTES, attach, note,
     stage,
@@ -39,10 +43,16 @@ pub use autopilot_checks::resolve_executable;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
 pub use change::{Proposal, Reading, apply_to_project, apply_to_ticket, propose};
 pub use control::{request_pause, request_resume, request_stop};
+pub use design::{
+    context as design_context, folder as design_folder, latest as latest_design, rerun_design,
+    run_design,
+};
+pub use explain::{explain_step, kept as explanation_kept, prompt as explain_prompt};
 pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
-pub use rerun::{rerun_understand, reset_step};
+pub use rerun::ticket_words;
+pub use rerun::{rerun_plan, rerun_understand, reset_step};
 pub use settings::{effective_overrides, override_settings, project_overrides};
 pub use view::{
     AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,
@@ -66,6 +76,8 @@ pub enum Error {
     Answer(#[from] clarify::ClarifyError),
     #[error(transparent)]
     Inbox(#[from] InboxError),
+    #[error("cannot explain: {0}")]
+    Explain(String),
     #[error("cannot attach: {0}")]
     Attachment(String),
     #[error("the recorded history is invalid: {0}")]
@@ -133,9 +145,12 @@ pub fn run_understand_attached(
     // An explicit choice wins; otherwise the project setting decides.
     let ask_after = match ask_after {
         Some(choice) => choice,
-        None => project_overrides(directory, Step::Understand)?
-            .ask_after
-            .unwrap_or(false),
+        None => {
+            project_overrides(directory, Step::Understand)?
+                .ask_after
+                .unwrap_or(false)
+                && !allowances::allowed(directory, Step::Understand)
+        }
     };
     if ticket.id.as_str().trim().is_empty() || ticket.title.trim().is_empty() {
         return Err(Error::InvalidTicket);
@@ -202,7 +217,7 @@ pub(crate) fn run_attempt(
     });
     let (response, last) = match pump(store, &ticket.id, UNDERSTAND, last, started)? {
         (Pumped::Understanding(result), last) => (Ok(result), last),
-        (Pumped::Plan(_), last) => (
+        (Pumped::Plan(_) | Pumped::Design(_), last) => (
             Err(Outcome::Failed(
                 io::Error::other("the agent answered Understand with a plan").into(),
             )),
@@ -228,6 +243,7 @@ pub(crate) fn run_attempt(
 enum Pumped {
     Understanding(Understanding),
     Plan(Plan),
+    Design(autopilot_core::Design),
     Stopped(String),
     Failed(AgentError),
 }
@@ -257,6 +273,7 @@ fn pump(
             Some(AgentEvent::Cost { amount, estimated }) => Event::CostTick { amount, estimated },
             Some(AgentEvent::Result(result)) => break Pumped::Understanding(result),
             Some(AgentEvent::PlanResult(plan)) => break Pumped::Plan(plan),
+            Some(AgentEvent::DesignResult(design)) => break Pumped::Design(design),
             Some(AgentEvent::Stopped(reason)) => break Pumped::Stopped(reason),
             Some(AgentEvent::Failed(error)) => break Pumped::Failed(error),
             None => {
@@ -561,7 +578,15 @@ pub fn sync_inbox(directory: &Path, ticket: &TicketId) -> Result<Vec<RequestId>,
             Reply::Question { choices } => {
                 commit_clarify_answer(&mut store, ticket, &history, request, &choices)?;
             }
-            Reply::Approval { decision, .. } => {
+            Reply::Approval {
+                decision,
+                allow_for_project,
+            } => {
+                // A forced confirmation was already refused by `check_reply`.
+                if allow_for_project && !matches!(decision, Decision::Reject) && step != Step::Plan
+                {
+                    allowances::allow(directory, step)?;
+                }
                 commit_approval(
                     &mut store, directory, ticket, &history, step, request, &decision,
                 )?;
@@ -620,6 +645,11 @@ fn waiting_request(
     }
     if step == Step::PullRequest && request.as_str() == publish::PUBLISH_REQUEST {
         return publish::request(ticket, history);
+    }
+    if step == Step::Design
+        && let Some(design) = design::latest(history)
+    {
+        return Ok(design::request(ticket, design));
     }
     if step == Step::Plan {
         let plan =

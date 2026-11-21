@@ -32,6 +32,10 @@ fn why_it_ran(step: Step) -> &'static str {
 }
 
 impl App {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one screen drawn top to bottom; the sections share the same card"
+    )]
     pub(crate) fn step_screen(&mut self, ui: &mut egui::Ui, id: &TicketId, step: Step) {
         let Some(view) = self.ticket(id).cloned() else {
             return;
@@ -83,12 +87,54 @@ impl App {
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
             ui.set_width(ui.available_width() - 38.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("IN SHORT").size(13.0).strong().color(theme::TEXT_MUTED()));
-                theme::pill(ui, "made from the run · free", theme::GREEN_FILL(), theme::GREEN());
+                ui.label(
+                    RichText::new("IN SHORT")
+                        .size(13.0)
+                        .strong()
+                        .color(theme::TEXT_MUTED()),
+                );
+                theme::pill(
+                    ui,
+                    "made from the run · free",
+                    theme::GREEN_FILL(),
+                    theme::GREEN(),
+                );
             });
-            ui.label(RichText::new(card.in_short.clone().unwrap_or_else(|| state_text(&card.state))).size(17.0));
-            ui.add_enabled(false, egui::Button::new("Explain in plain words"))
-                .on_disabled_hover_text("Not built yet: it asks a small model once, which arrives with the agent step (S6)");
+            ui.label(
+                RichText::new(
+                    card.in_short
+                        .clone()
+                        .unwrap_or_else(|| state_text(&card.state)),
+                )
+                .size(17.0),
+            );
+            let explained = view
+                .explained
+                .iter()
+                .find(|(kept, _)| *kept == step)
+                .map(|(_, text)| text.clone());
+            if let Some(text) = explained {
+                ui.label(theme::muted("In plain words"));
+                ui.label(text);
+            } else {
+                let has_result = view.outputs.iter().any(|(kept, _)| *kept == step);
+                if ui
+                    .add_enabled(
+                        has_result && !self.busy,
+                        egui::Button::new("Explain in plain words"),
+                    )
+                    .on_hover_text(
+                        "Asks a small model once, with the step's result, and keeps the answer",
+                    )
+                    .on_disabled_hover_text("This step has no result to explain yet")
+                    .clicked()
+                {
+                    self.act(Action::Explain {
+                        ticket: view.id.clone(),
+                        step,
+                    });
+                }
+            }
         });
         ui.add_space(6.0);
         let mut tab = self.tab;
@@ -280,29 +326,40 @@ impl App {
                 )
             );
             let busy = view.steps.iter().any(|other| other.state.is_active());
-            if step == Step::Understand && settled && !busy {
+            let rerunnable = matches!(step, Step::Understand | Step::Design | Step::Plan);
+            if rerunnable && settled && !busy {
                 let rerun = ui.add(button("Re-run this step")).on_hover_text(
-                    "Runs Understand again with the same words. Later steps that ran are reset with it.",
+                    "Runs the step again with the same words, answers and files. Later steps that ran are reset with it.",
                 );
                 if rerun.clicked() {
-                    self.act(Action::RerunUnderstand(view.id.clone()));
+                    self.act(match step {
+                        Step::Understand => Action::RerunUnderstand(view.id.clone()),
+                        Step::Design => Action::RerunDesign(view.id.clone()),
+                        _ => Action::RerunPlan(view.id.clone()),
+                    });
                 }
             } else {
-                let why = if step == Step::Understand {
-                    "Understand has not finished, or another step is running or waiting for you"
+                let why = if rerunnable {
+                    "The step has not finished, or another step is running or waiting for you"
                 } else {
-                    "Coming soon: only Understand can run again until real agents are allowed (S6)"
+                    "Coming soon: this step cannot run until code can be written safely (containment, S6)"
                 };
                 ui.add_enabled(false, button("Re-run this step"))
                     .on_disabled_hover_text(why);
             }
-            if step != Step::Understand {
-                ui.add_enabled(false, button("Re-run from here"))
-                    .on_disabled_hover_text("Coming soon: it needs the later steps to run for real (S6)");
+            if step == Step::Design
+                && ui
+                    .add(button("Open the mockups"))
+                    .on_hover_text("Shows the saved pages in the file manager. They hold no script and load nothing.")
+                    .clicked()
+            {
+                self.act(Action::OpenDesign(view.id.clone()));
             }
             if matches!(card, Some(StepState::Skipped(_))) {
                 ui.add_enabled(false, button("Run it anyway"))
-                    .on_disabled_hover_text("Coming soon: it needs that step to run for real (S6)");
+                    .on_disabled_hover_text(
+                        "Not available: a skipped step had nothing to do. Re-run an earlier step instead.",
+                    );
             }
         });
         ui.add_space(8.0);
@@ -383,17 +440,25 @@ impl App {
                             .color(theme::AMBER()),
                     );
                     ui.label(text);
+                    if step != Step::Plan {
+                        ui.checkbox(
+                            &mut self.always,
+                            "Do not ask again after this step in this project",
+                        );
+                    }
                     ui.horizontal(|ui| {
                         if ui.add(theme::primary("Approve")).clicked() {
                             self.act(Action::Decide {
                                 ticket: view.id.clone(),
                                 approve: true,
+                                always: self.always,
                             });
                         }
                         if ui.button("Reject").clicked() {
                             self.act(Action::Decide {
                                 ticket: view.id.clone(),
                                 approve: false,
+                                always: false,
                             });
                         }
                     });

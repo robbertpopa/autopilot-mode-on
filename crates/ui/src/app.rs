@@ -65,6 +65,11 @@ pub struct App {
     new_started: bool,
     pub(crate) light: bool,
     pub(crate) agent: backend::AgentChoice,
+    /// "Do not ask again after this kind of step" on an approval.
+    pub(crate) always: bool,
+    pub(crate) notify: bool,
+    announced: bool,
+    last_badges: std::collections::HashMap<TicketId, Badge>,
     update: Option<autopilot_update::Update>,
     installing: bool,
     home: NewTicket,
@@ -85,6 +90,7 @@ impl App {
     pub fn new(context: &egui::Context, options: Options, watch: bool) -> Self {
         let light = read_theme(&options);
         let agent = backend::AgentChoice::read(&options.data_dir);
+        let notify = backend::notifications_on(&options.data_dir);
         theme::apply(context, light);
         let (sender, receiver) = mpsc::channel();
         if watch {
@@ -113,6 +119,10 @@ impl App {
             new_started: false,
             light,
             agent,
+            always: false,
+            notify,
+            announced: false,
+            last_badges: std::collections::HashMap::new(),
             update: None,
             installing: false,
             home: NewTicket::default(),
@@ -128,8 +138,35 @@ impl App {
     }
 
     /// Show a snapshot as if the watcher had just sent it.
+    /// Tell the owner, with a desktop notification, about a ticket that just
+    /// started waiting for them, failed or finished, when the window is not
+    /// in front. The first snapshot only records what is already there.
+    fn announce(&mut self, snapshot: &Snapshot) {
+        let started = self.announced;
+        let focused = self.context.input(|input| input.focused);
+        for view in &snapshot.tickets {
+            let before = self.last_badges.insert(view.id.clone(), view.badge);
+            if !self.notify || focused || !started || before == Some(view.badge) {
+                continue;
+            }
+            let message = match view.badge {
+                Badge::NeedsYou => "is waiting for you",
+                Badge::Failed => "failed",
+                Badge::Done => "is done",
+                _ => continue,
+            };
+            backend::notify(
+                "Autopilot Mode On".to_owned(),
+                format!("{} {message}", view.title),
+            );
+        }
+        // After the first snapshot every change counts.
+        self.announced = true;
+    }
+
     pub fn set_snapshot(&mut self, snapshot: Snapshot) {
         let first = self.snapshot.tickets.is_empty() && !snapshot.tickets.is_empty();
+        self.announce(&snapshot);
         self.snapshot = snapshot;
         if first {
             self.apply_start_view();
@@ -320,7 +357,7 @@ impl App {
                     ui.separator();
                     self.crumbs(ui);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("?").on_hover_text("Help").clicked() {
+                        if theme::named(ui.button("?").on_hover_text("Help"), "Help").clicked() {
                             self.help_open = !self.help_open;
                         }
                         let label = if self.light { "Dark" } else { "Light" };
@@ -447,6 +484,9 @@ impl App {
     }
 
     fn notice_bar(&mut self, ui: &mut egui::Ui) {
+        if self.options.data_dir.join(crate::demo::MARKER).exists() {
+            banner(ui, "Sample data: these tickets are not real work.", false);
+        }
         let problem = self.snapshot.problem.clone();
         if let Some(text) = problem {
             banner(ui, &format!("Could not read every ticket: {text}"), false);
@@ -498,6 +538,7 @@ impl App {
                 ui.label("A ticket: the box on top says what to do next. Click a step for its details.");
                 ui.label("Settings (bottom left): pipeline steps, cost, and who is signed in. Ctrl+N starts a ticket.");
                 ui.label("A grey control marked coming soon is not built yet.");
+                ui.label("Keyboard: Tab and Shift+Tab move between controls, Enter or Space press one, Escape closes a dialog.");
             });
             self.help_open = open;
         }

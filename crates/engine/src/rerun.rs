@@ -14,6 +14,44 @@ use autopilot_store::{SqliteStore, Store};
 
 use crate::{DATABASE, Error, UNDERSTAND, event, lock_run, run_attempt, timestamp};
 
+/// The ticket as it was started, rebuilt from its history: the title and the
+/// latest words (an older history has none, and the title stands alone).
+///
+/// # Errors
+/// Returns an error if the history has no ticket.
+pub fn ticket_words(
+    id: &TicketId,
+    history: &[autopilot_core::RecordedEvent],
+) -> Result<Ticket, Error> {
+    ticket_of(id, history)
+}
+
+pub(crate) fn ticket_of(
+    id: &TicketId,
+    history: &[autopilot_core::RecordedEvent],
+) -> Result<Ticket, Error> {
+    let title = history
+        .iter()
+        .find_map(|record| match &record.event.kind {
+            Event::TicketCreated { title } => Some(title.clone()),
+            _ => None,
+        })
+        .ok_or(Error::UnknownTicket)?;
+    let description = history
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event.kind {
+            Event::Described { text } => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    Ok(Ticket {
+        id: id.clone(),
+        title,
+        description,
+    })
+}
+
 /// Put a step back to idle. With `and_after`, every later step that already ran goes back too.
 ///
 /// # Errors
@@ -39,6 +77,30 @@ pub fn reset_step(
     Ok(())
 }
 
+/// Run Plan again for a ticket that already ran it, with the ticket's own
+/// words, its answers and its attachments. A plan that was approved is
+/// replaced and must be approved again.
+///
+/// # Errors
+/// Returns an error if the ticket is unknown, done or busy, a step is still
+/// active, or the agent or store cannot be used.
+pub fn rerun_plan(
+    directory: &Path,
+    ticket: &TicketId,
+    agent: &impl Agent,
+) -> Result<autopilot_core::Plan, Error> {
+    let settled = {
+        let store = SqliteStore::open(directory.join(DATABASE))?;
+        let history = store.events(ticket, 0)?;
+        let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
+        state.step(Step::Plan) != &StepState::Idle
+    };
+    if settled {
+        reset_step(directory, ticket, Step::Plan, true)?;
+    }
+    crate::plan::plan_ticket(directory, ticket, agent)
+}
+
 /// Run Understand again for a ticket that already ran it. The later steps that
 /// ran are reset with it, since they were built on the old answer.
 ///
@@ -53,9 +115,12 @@ pub fn rerun_understand(
 ) -> Result<Understanding, Error> {
     let ask_after = match ask_after {
         Some(choice) => choice,
-        None => crate::project_overrides(directory, Step::Understand)?
-            .ask_after
-            .unwrap_or(false),
+        None => {
+            crate::project_overrides(directory, Step::Understand)?
+                .ask_after
+                .unwrap_or(false)
+                && !crate::allowances::allowed(directory, Step::Understand)
+        }
     };
     let _owner = lock_run(directory)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;

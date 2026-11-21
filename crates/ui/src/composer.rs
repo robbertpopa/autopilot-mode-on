@@ -102,10 +102,12 @@ fn chip(ui: &mut egui::Ui, path: &Path) -> bool {
                 ui.label(RichText::new(glyph).color(theme::TEXT_MUTED()));
                 ui.label(RichText::new(chip_name(path)).size(13.0))
                     .on_hover_text(path.display().to_string());
-                if ui
-                    .add(egui::Button::new(theme::muted("×")).frame(false))
-                    .on_hover_text("Remove")
-                    .clicked()
+                if theme::named(
+                    ui.add(egui::Button::new(theme::muted("×")).frame(false))
+                        .on_hover_text("Remove"),
+                    format!("Remove {}", chip_name(path)),
+                )
+                .clicked()
                 {
                     remove = true;
                 }

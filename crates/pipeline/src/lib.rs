@@ -88,6 +88,10 @@ impl TicketState {
         Ok(())
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one flat match over the event kinds; splitting it would hide the state machine"
+    )]
     fn transition(&mut self, event: &NewEvent) -> Result<(), TransitionError> {
         use TransitionError as E;
         if self.done {
@@ -186,8 +190,11 @@ impl TicketState {
             // Recorded for the log. A settings change applies when the next step
             // starts, and the ticket text is only kept for a later re-run, so
             // neither alters any state here.
-            Event::SettingsOverridden { .. } | Event::Described { .. } | Event::Attached { .. } => {
-            }
+            Event::SettingsOverridden { .. }
+            | Event::Described { .. }
+            | Event::Attached { .. }
+            | Event::Explained { .. }
+            | Event::DesignResult { .. } => {}
             Event::Done => {
                 if let Some(active) = self.active() {
                     return Err(E::StepBusy { active });

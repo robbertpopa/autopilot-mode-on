@@ -73,6 +73,29 @@ impl Agent for FixtureAgent {
         })?)
     }
 
+    /// A canned design for the practice agent: one plain page with the
+    /// ticket's title. It reads no files and runs no process.
+    fn start_design(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        let title = request
+            .ticket
+            .title
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == ' ')
+            .collect::<String>();
+        Ok(AgentRun::spawn_design(move |context| {
+            context.message("practice design".to_owned());
+            Ok(autopilot_core::Design {
+                mockups: vec![autopilot_core::Mockup {
+                    name: "screen.html".into(),
+                    html: format!(
+                        "<!doctype html><html><body style=\"font-family:sans-serif;max-width:480px;margin:2em auto\"><h1>{title}</h1><p>Practice mockup.</p></body></html>"
+                    ),
+                }],
+                notes: "Practice design: switch the agent to Claude for a real one.".into(),
+            })
+        })?)
+    }
+
     /// A canned plan for the practice agent: one criterion built from the
     /// ticket's title, checked by hand. It reads no files and runs no process.
     fn start_plan(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {

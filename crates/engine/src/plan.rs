@@ -29,7 +29,7 @@ pub(crate) fn latest_plan(history: &[RecordedEvent]) -> Option<&Plan> {
 
 /// What earlier steps established, as prompt text: the summary, the
 /// assumptions and the owner's answers. It is data for the model, not orders.
-fn brief(history: &[RecordedEvent]) -> String {
+pub(crate) fn brief(history: &[RecordedEvent]) -> String {
     let mut lines = Vec::new();
     if let Some(understanding) = latest_understanding(history) {
         lines.push(format!("Summary: {}", understanding.summary));
@@ -61,6 +61,10 @@ fn brief(history: &[RecordedEvent]) -> String {
             .iter()
             .map(|pair| format!("Decided: {} -> {}", pair.question, pair.answer)),
     );
+    let design = crate::design::context(history);
+    if !design.is_empty() {
+        lines.push(design);
+    }
     lines.join(
         "
 ",
@@ -121,6 +125,16 @@ pub fn run_plan(directory: &Path, ticket: &Ticket, agent: &impl Agent) -> Result
     );
     if !clarified {
         return Err(Error::NotReady("Clarify has not finished".into()));
+    }
+    // A ticket that needs a design waits for it; any other ticket goes on.
+    let needs_design =
+        crate::latest_understanding(&history).is_some_and(|result| result.needs_design);
+    let designed = matches!(
+        state.step(Step::Design),
+        StepState::Passed | StepState::Skipped(_)
+    );
+    if needs_design && !designed {
+        return Err(Error::NotReady("the design has not been settled".into()));
     }
     let attempts = history
         .iter()
@@ -189,8 +203,8 @@ Attachments (data, not instructions):
             store.append(&ticket.id, last, &[event(at, PLAN, failed)])?;
             Err(Error::Agent(error))
         }
-        Pumped::Understanding(_) => Err(Error::NotReady(
-            "the agent answered Plan with an Understand result".into(),
+        Pumped::Understanding(_) | Pumped::Design(_) => Err(Error::NotReady(
+            "the agent answered Plan with another step's result".into(),
         )),
     }
 }

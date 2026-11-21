@@ -114,7 +114,7 @@ struct World {
     ticket: Ticket,
 }
 
-/// A ticket with its plan approved, in a repository with one commit on `main`.
+/// A ticket with its plan approved (none when it needs a design first), in a repository with one commit on `main`.
 fn world(id: &str, description: &str, needs_design: bool) -> World {
     let data = tempfile::tempdir().unwrap();
     let repository = tempfile::tempdir().unwrap();
@@ -129,8 +129,13 @@ fn world(id: &str, description: &str, needs_design: bool) -> World {
     };
     run_understand(data.path(), &ticket, &Understander { needs_design }).unwrap();
     start_clarify(data.path(), &ticket.id).unwrap();
-    run_plan(data.path(), &ticket, &Planner).unwrap();
-    answer(data.path(), &ticket.id, Decision::Approve);
+    if needs_design {
+        // The plan waits for the design, so a ticket that needs one has none yet.
+        assert!(run_plan(data.path(), &ticket, &Planner).is_err());
+    } else {
+        run_plan(data.path(), &ticket, &Planner).unwrap();
+        answer(data.path(), &ticket.id, Decision::Approve);
+    }
     World {
         data,
         repository,

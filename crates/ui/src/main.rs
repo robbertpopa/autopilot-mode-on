@@ -7,19 +7,24 @@ use autopilot_ui::{Options, demo};
 const USAGE: &str = "usage: autopilot-ui [--data-dir <dir>] [--profile <file>] [--demo]\n\
   --data-dir  where tickets are kept (default: ./autopilot-data)\n\
   --profile   the project profile (default: ./profile.toml)\n\
-  --demo      add three sample tickets to the data directory so every screen has content\n\
+  --demo      add three sample tickets so every screen has content. Without --data-dir it
+              uses ./autopilot-demo-data, never the default folder\n\
   --view      open on design, cost, run or step (run and step use --ticket, default the newest)";
 
 fn main() -> ExitCode {
     let mut data_dir = PathBuf::from("autopilot-data");
     let mut profile = PathBuf::from("profile.toml");
     let mut sample = false;
+    let mut chosen_dir = false;
     let mut view = None;
     let mut ticket = None;
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--data-dir" => data_dir = args.next().map(PathBuf::from).unwrap_or(data_dir),
+            "--data-dir" => {
+                chosen_dir = true;
+                data_dir = args.next().map(PathBuf::from).unwrap_or(data_dir);
+            }
             "--profile" => profile = args.next().map(PathBuf::from).unwrap_or(profile),
             "--demo" => sample = true,
             "--view" => view = args.next(),
@@ -29,6 +34,10 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+    }
+    // Sample tickets never go into the real data folder by accident.
+    if sample && !chosen_dir {
+        data_dir = PathBuf::from("autopilot-demo-data");
     }
     if sample && let Err(error) = demo::seed(&data_dir, autopilot_ui::now_ms()) {
         eprintln!("autopilot-ui: could not write the sample tickets: {error}");

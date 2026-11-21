@@ -10,6 +10,24 @@ use crate::app::{App, Screen, badge_colors};
 use crate::backend::{Action, waiting_text};
 use crate::theme;
 
+/// Understand and Clarify are settled, the ticket changes a screen and the
+/// Design step has not started.
+fn ready_to_design(view: &TicketView) -> bool {
+    let state = |step| {
+        view.steps
+            .iter()
+            .find(|card| card.step == step)
+            .map(|card| &card.state)
+    };
+    view.needs_design
+        && state(Step::Understand) == Some(&StepState::Passed)
+        && matches!(
+            state(Step::Clarify),
+            Some(StepState::Passed | StepState::Skipped(_))
+        )
+        && state(Step::Design) == Some(&StepState::Idle)
+}
+
 /// Understand and Clarify are settled and Plan has not started.
 fn ready_to_plan(view: &TicketView) -> bool {
     let state = |step| {
@@ -24,6 +42,11 @@ fn ready_to_plan(view: &TicketView) -> bool {
             Some(StepState::Passed | StepState::Skipped(_))
         )
         && state(Step::Plan) == Some(&StepState::Idle)
+        && (!view.needs_design
+            || matches!(
+                state(Step::Design),
+                Some(StepState::Passed | StepState::Skipped(_))
+            ))
 }
 
 /// A size in plain units: `12 KB`, `3.4 MB`.
@@ -270,6 +293,12 @@ impl App {
                 theme::BLUE_TEXT(),
                 format!("Working on {}.", step_name(card.step)),
             )
+        } else if ready_to_design(view) {
+            (
+                theme::BLUE_FILL(),
+                theme::BLUE_TEXT(),
+                "This ticket changes a screen. Ready to make the design.".to_owned(),
+            )
         } else if ready_to_plan(view) {
             (
                 theme::BLUE_FILL(),
@@ -286,6 +315,16 @@ impl App {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width() - 38.0);
                 ui.label(RichText::new(text).size(16.0).strong().color(color));
+                if problem.is_none() && ready_to_design(view) {
+                    let busy = self.busy;
+                    if ui
+                        .add_enabled(!busy, theme::primary("Make the design"))
+                        .on_hover_text("The agent draws static mockups. You approve them before the plan.")
+                        .clicked()
+                    {
+                        self.act(Action::MakeDesign(view.id.clone()));
+                    }
+                }
                 if problem.is_none() && ready_to_plan(view) {
                     let busy = self.busy;
                     if ui
@@ -297,14 +336,18 @@ impl App {
                     }
                 }
                 if let Some(card) = problem {
-                    if card.step == Step::Understand {
+                    if matches!(card.step, Step::Understand | Step::Design | Step::Plan) {
                         if ui.add(theme::primary("Try again")).clicked() {
-                            self.act(Action::RerunUnderstand(view.id.clone()));
+                            self.act(match card.step {
+                                Step::Understand => Action::RerunUnderstand(view.id.clone()),
+                                Step::Design => Action::RerunDesign(view.id.clone()),
+                                _ => Action::RerunPlan(view.id.clone()),
+                            });
                         }
                     } else {
                         ui.add_enabled(false, egui::Button::new("Try again"))
                             .on_disabled_hover_text(
-                                "coming soon: only Understand can run again until real agents are allowed (S6)",
+                                "coming soon: this step cannot run until code can be written safely (S6)",
                             );
                         ui.label(theme::muted("Try again is coming soon for this step."));
                     }
@@ -372,6 +415,12 @@ impl App {
                         .color(theme::AMBER()),
                 );
                 ui.label(text);
+                if !question && *step != Step::Plan {
+                    ui.checkbox(
+                        &mut self.always,
+                        "Do not ask again after this step in this project",
+                    );
+                }
                 ui.horizontal(|ui| {
                     if question {
                         if ui
@@ -387,12 +436,14 @@ impl App {
                             self.act(Action::Decide {
                                 ticket: view.id.clone(),
                                 approve: true,
+                                always: self.always,
                             });
                         }
                         if ui.button("Reject").clicked() {
                             self.act(Action::Decide {
                                 ticket: view.id.clone(),
                                 approve: false,
+                                always: false,
                             });
                         }
                     }

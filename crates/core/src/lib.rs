@@ -58,6 +58,113 @@ pub struct Understanding {
     pub files_touched: Vec<String>,
 }
 
+/// One static HTML mockup: a name and the page.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct Mockup {
+    /// A file name like `home.html`: lower-case letters, digits and `-`.
+    pub name: String,
+    pub html: String,
+}
+
+/// What the Design step produces: a few mockups and a note on the choices.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct Design {
+    #[schemars(length(min = 1, max = 6))]
+    pub mockups: Vec<Mockup>,
+    pub notes: String,
+}
+
+/// The longest mockup page kept.
+pub const MAX_MOCKUP_BYTES: usize = 200 * 1024;
+
+impl Design {
+    /// Reject a design the host must not save or open. A mockup is plain
+    /// static HTML: no script, no frame or embed, no event handler attribute
+    /// and no address that would load something from the network, so opening
+    /// it in a browser can neither run code nor reach out.
+    ///
+    /// # Errors
+    /// Returns a description of the first violation.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.mockups.is_empty() || self.mockups.len() > 6 {
+            return Err(format!("{} mockups, need 1 to 6", self.mockups.len()));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for mockup in &self.mockups {
+            let stem = mockup.name.strip_suffix(".html").unwrap_or("");
+            let plain = !stem.is_empty()
+                && stem.len() <= 40
+                && stem
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+            if !plain {
+                return Err(format!("mockup name {:?} is not allowed", mockup.name));
+            }
+            if !seen.insert(mockup.name.as_str()) {
+                return Err(format!("mockup {:?} appears twice", mockup.name));
+            }
+            if mockup.html.len() > MAX_MOCKUP_BYTES {
+                return Err(format!("mockup {:?} is too large", mockup.name));
+            }
+            let lower = mockup.html.to_ascii_lowercase();
+            for banned in [
+                "<script",
+                "<iframe",
+                "<object",
+                "<embed",
+                "<link",
+                "<base",
+                "http-equiv",
+                "@import",
+                "javascript:",
+                "http://",
+                "https://",
+                "//cdn",
+                "url(//",
+                "srcset",
+                "data:text/html",
+            ] {
+                if lower.contains(banned) {
+                    return Err(format!("mockup {:?} contains {banned}", mockup.name));
+                }
+            }
+            // An event handler attribute such as onclick= or onload=.
+            if has_handler(&lower) {
+                return Err(format!("mockup {:?} has an event handler", mockup.name));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// True when the page has an attribute that starts with `on` and is followed
+/// by letters and `=`, such as `onclick=`.
+fn has_handler(lower: &str) -> bool {
+    let bytes = lower.as_bytes();
+    let mut index = 0;
+    while index + 2 < bytes.len() {
+        let boundary = index == 0
+            || bytes[index - 1].is_ascii_whitespace()
+            || bytes[index - 1] == b'"'
+            || bytes[index - 1] == b'\'';
+        if boundary && bytes[index] == b'o' && bytes[index + 1] == b'n' {
+            let mut end = index + 2;
+            while end < bytes.len() && bytes[end].is_ascii_lowercase() {
+                end += 1;
+            }
+            let mut after = end;
+            while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+                after += 1;
+            }
+            if end > index + 2 && after < bytes.len() && bytes[after] == b'=' {
+                return true;
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
 /// How a criterion is shown to hold. `Unknown` can never pass a check.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -400,6 +507,16 @@ pub enum Event {
         sha256: String,
         stored: String,
     },
+    /// The design the Design step produced, kept in the history so a review
+    /// of the step shows exactly what was approved.
+    DesignResult {
+        design: Design,
+    },
+    /// A short plain-words explanation of a step's result, asked of a small
+    /// model once and kept so it is never asked again.
+    Explained {
+        text: String,
+    },
     /// The owner asked to run a step again. The named step goes back to idle,
     /// and with `and_after` so does every later step that already ran, because
     /// their results came from the old one. What was spent stays spent.
@@ -542,5 +659,41 @@ mod plan_tests {
         });
         let parsed: Plan = serde_json::from_value(reply).unwrap();
         assert!(!serde_json::to_string(&parsed).unwrap().contains("passes"));
+    }
+}
+
+#[cfg(test)]
+mod design_tests {
+    use super::*;
+
+    fn design(html: &str) -> Design {
+        Design {
+            mockups: vec![Mockup {
+                name: "home.html".into(),
+                html: html.into(),
+            }],
+            notes: "n".into(),
+        }
+    }
+
+    // Invariant: a plain page, with the usual charset and viewport tags, is
+    // allowed; anything that runs code, loads from elsewhere or redirects is
+    // refused. This is what lets the saved mockups be opened without risk.
+    #[test]
+    fn a_mockup_may_not_run_code_or_reach_out() {
+        let fine = "<!doctype html><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><style>p{color:red}</style><p>Hi</p>";
+        assert_eq!(design(fine).validate(), Ok(()));
+        for bad in [
+            "<script>1</script>",
+            "<iframe src=a></iframe>",
+            "<meta http-equiv=\"refresh\" content=\"0;url=x\">",
+            "<link rel=stylesheet href=a.css>",
+            "<img src=\"https://example.com/a.png\">",
+            "<style>@import 'a.css';</style>",
+            "<a href=\"javascript:alert(1)\">x</a>",
+            "<p onclick=\"x()\">x</p>",
+        ] {
+            assert!(design(bad).validate().is_err(), "{bad}");
+        }
     }
 }
