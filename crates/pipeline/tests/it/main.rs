@@ -48,7 +48,8 @@ fn history(how: &'static str) -> autopilot_pipeline::TicketState {
 fn engine_histories_fold_to_passed_interrupted_and_failed() {
     let passed = history("ok");
     assert_eq!(passed.step(Step::Understand), &StepState::Passed);
-    assert!(passed.is_done());
+    // Later steps still follow Understand, so the ticket is not done.
+    assert!(!passed.is_done());
     assert_eq!(passed.cost(), (Money::from_microusd(900), true));
 
     let stopped = history("stop");

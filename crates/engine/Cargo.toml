@@ -12,6 +12,8 @@ workspace = true
 [dependencies]
 autopilot-agent = { path = "../agent" }
 autopilot-core.workspace = true
+autopilot-pipeline = { path = "../pipeline" }
+serde_json.workspace = true
 autopilot-store = { path = "../store" }
 thiserror.workspace = true
 

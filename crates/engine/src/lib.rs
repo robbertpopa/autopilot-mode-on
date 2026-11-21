@@ -9,7 +9,13 @@ use std::{
 
 use autopilot_agent::{Agent, AgentError, AgentEvent, StepRequest};
 use autopilot_core::{
-    AttemptId, Event, NewEvent, RecordedEvent, Step, Ticket, TicketId, Understanding,
+    AttemptId, Event, NewEvent, OpenQuestion, RecordedEvent, RequestId, Step, Ticket, TicketId,
+    Understanding,
+};
+use autopilot_pipeline::{
+    StepState,
+    clarify::{self, Choice, ClarifyPlan, QaPair},
+    fold,
 };
 use autopilot_store::{SqliteStore, Store, StoreError};
 
@@ -24,6 +30,12 @@ pub enum Error {
     Busy,
     #[error("this ticket already has a run in this data directory")]
     AlreadyStarted,
+    #[error("clarify cannot run now: {0}")]
+    NotReady(String),
+    #[error(transparent)]
+    Answer(#[from] clarify::ClarifyError),
+    #[error("the recorded history is invalid: {0}")]
+    History(String),
     #[error("ticket has no recorded run")]
     UnknownTicket,
     #[error("the current time is outside the supported range")]
@@ -133,7 +145,6 @@ fn conclude(
                     },
                 ),
                 event(finished_at, UNDERSTAND, Event::StepFinished),
-                event(finished_at, None, Event::Done),
             ];
             store.append(ticket, last, &terminal)?;
             Ok(result)
@@ -184,6 +195,122 @@ fn record(
 enum Outcome {
     Stopped(String),
     Failed(AgentError),
+}
+
+/// What Clarify decided after Understand.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ClarifyStart {
+    Skipped(&'static str),
+    Asking {
+        request: RequestId,
+        questions: Vec<OpenQuestion>,
+    },
+}
+
+const CLARIFY: Option<Step> = Some(Step::Clarify);
+const CLARIFY_REQUEST: &str = "clarify-1";
+
+/// Skip Clarify, or start it and ask. The questions come from the recorded
+/// Understand result, so a restarted process asks the same ones.
+///
+/// # Errors
+/// Returns an error if Understand has not passed or Clarify already ran.
+pub fn start_clarify(directory: &Path, ticket: &TicketId) -> Result<ClarifyStart, Error> {
+    let _owner = lock_run(directory)?;
+    let mut store = SqliteStore::open(directory.join(DATABASE))?;
+    let history = store.events(ticket, 0)?;
+    let last = history.last().ok_or(Error::UnknownTicket)?.seq;
+    let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
+    if state.step(Step::Understand) != &StepState::Passed {
+        return Err(Error::NotReady("Understand has not passed".into()));
+    }
+    if state.step(Step::Clarify) != &StepState::Idle {
+        return Err(Error::NotReady("Clarify already started".into()));
+    }
+    let understanding = latest_understanding(&history)
+        .ok_or_else(|| Error::History("no Understand result".into()))?;
+    let at = timestamp()?;
+    match clarify::plan(understanding) {
+        ClarifyPlan::Skip(reason) => {
+            let skip = Event::StepSkipped {
+                reason: reason.into(),
+            };
+            store.append(ticket, last, &[event(at, CLARIFY, skip)])?;
+            Ok(ClarifyStart::Skipped(reason))
+        }
+        ClarifyPlan::Ask(questions) => {
+            let request = RequestId::from(CLARIFY_REQUEST);
+            let started = Event::StepStarted {
+                attempt: AttemptId::from("clarify-1"),
+                session: None,
+            };
+            let asked = Event::Asked {
+                request: request.clone(),
+            };
+            store.append(
+                ticket,
+                last,
+                &[event(at, CLARIFY, started), event(at, CLARIFY, asked)],
+            )?;
+            Ok(ClarifyStart::Asking { request, questions })
+        }
+    }
+}
+
+/// Record the owner's answers and finish Clarify. The `Q → A` pairs are stored
+/// in the answer event, so they are part of the replayable history.
+///
+/// # Errors
+/// Returns an error if Clarify is not waiting on this request or the answers
+/// do not match the questions.
+pub fn answer_clarify(
+    directory: &Path,
+    ticket: &TicketId,
+    request: &RequestId,
+    choices: &[Choice],
+) -> Result<Vec<QaPair>, Error> {
+    let _owner = lock_run(directory)?;
+    let mut store = SqliteStore::open(directory.join(DATABASE))?;
+    let history = store.events(ticket, 0)?;
+    let last = history.last().ok_or(Error::UnknownTicket)?.seq;
+    let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
+    if state.step(Step::Clarify) != &StepState::Asking(request.clone()) {
+        return Err(Error::NotReady(
+            "Clarify is not waiting on that request".into(),
+        ));
+    }
+    let understanding = latest_understanding(&history)
+        .ok_or_else(|| Error::History("no Understand result".into()))?;
+    let pairs = clarify::resolve(&understanding.open_questions, choices)?;
+    let answer =
+        serde_json::to_string(&pairs).map_err(|error| Error::History(error.to_string()))?;
+    let at = timestamp()?;
+    store.append(
+        ticket,
+        last,
+        &[
+            event(
+                at,
+                CLARIFY,
+                Event::Answered {
+                    request: request.clone(),
+                    answer,
+                },
+            ),
+            event(at, CLARIFY, Event::StepFinished),
+        ],
+    )?;
+    Ok(pairs)
+}
+
+fn latest_understanding(history: &[RecordedEvent]) -> Option<&Understanding> {
+    history
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event.kind {
+            Event::UnderstandResult { result } => Some(result),
+            _ => None,
+        })
 }
 
 /// Replay committed events after a cursor through a read-only connection.

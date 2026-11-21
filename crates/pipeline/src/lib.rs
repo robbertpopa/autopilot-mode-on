@@ -7,6 +7,8 @@
 
 use std::collections::BTreeMap;
 
+pub mod clarify;
+
 use autopilot_core::{Event, Money, NewEvent, RecordedEvent, RequestId, Step};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -89,7 +89,9 @@ version = "0.1.0"
 dependencies = [
  "autopilot-agent",
  "autopilot-core",
+ "autopilot-pipeline",
  "autopilot-store",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]
@@ -127,6 +129,7 @@ dependencies = [
  "autopilot-agent",
  "autopilot-core",
  "autopilot-engine",
+ "serde",
  "tempfile",
  "thiserror",
 ]
