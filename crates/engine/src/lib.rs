@@ -28,6 +28,7 @@ mod change;
 mod control;
 mod design;
 mod explain;
+mod overlap;
 mod plan;
 mod profile_edit;
 mod publish;
@@ -50,6 +51,7 @@ pub use design::{
     run_design,
 };
 pub use explain::{explain_step, kept as explanation_kept, prompt as explain_prompt};
+pub use overlap::{TicketOverlap, find_overlaps};
 pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
