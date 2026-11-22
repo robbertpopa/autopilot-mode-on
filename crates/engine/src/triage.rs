@@ -142,6 +142,7 @@ pub fn triage_ticket(
                 ask_after: None,
                 model: Some(advice.model.clone()),
                 effort: Some(advice.effort.clone()),
+                turns: None,
             },
         })
         .collect();

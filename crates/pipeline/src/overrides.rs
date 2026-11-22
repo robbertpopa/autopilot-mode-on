@@ -68,6 +68,7 @@ mod tests {
                     ask_after,
                     model: model.map(Into::into),
                     effort: None,
+                    turns: None,
                 },
             }],
         }
@@ -119,5 +120,28 @@ mod tests {
             used_by_latest_attempt(&history, Step::Understand),
             StepOverride::default()
         );
+    }
+
+    // Invariant: an override saved before `turns` existed still reads, the
+    // turn cap merges like the other fields, and a later override that leaves
+    // it unset keeps the earlier cap. Otherwise a model change would silently
+    // drop the raised cap a retry depends on.
+    #[test]
+    fn turns_merge_and_old_overrides_still_read() {
+        let old = r#"{"step":"understand","ask_after":null,"model":"opus"}"#;
+        let parsed: StepChange = serde_json::from_str(old).unwrap();
+        assert_eq!(parsed.change.turns, None);
+        let mut merged = StepOverride {
+            turns: Some(40),
+            ..StepOverride::default()
+        };
+        merged.merge(&parsed.change);
+        assert_eq!(merged.turns, Some(40));
+        assert_eq!(merged.model.as_deref(), Some("opus"));
+        merged.merge(&StepOverride {
+            turns: Some(80),
+            ..StepOverride::default()
+        });
+        assert_eq!(merged.turns, Some(80));
     }
 }
