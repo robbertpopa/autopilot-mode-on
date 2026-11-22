@@ -55,7 +55,6 @@ pub struct App {
     pub(crate) advanced: bool,
     pub(crate) tab: Tab,
     pub(crate) notice: Option<(bool, String)>,
-    pub(crate) new_ticket: Option<NewTicket>,
     pub(crate) change_text: String,
     pub(crate) reading: Option<Result<autopilot_engine::Reading, String>>,
     pub(crate) for_project: bool,
@@ -109,7 +108,6 @@ impl App {
             advanced: true,
             tab: Tab::Overview,
             notice: None,
-            new_ticket: None,
             change_text: String::new(),
             reading: None,
             for_project: false,
@@ -235,6 +233,13 @@ impl App {
     }
 
     /// Open a ticket from the sidebar or from a "needs you" card.
+    /// "New ticket": go to the home screen with an empty message box.
+    pub(crate) fn start_new(&mut self) {
+        self.selected = None;
+        self.mode = Mode::Watch;
+        self.home = NewTicket::default();
+    }
+
     pub(crate) fn open(&mut self, id: &TicketId) {
         self.selected = Some(id.clone());
         self.mode = Mode::Watch;
@@ -274,7 +279,7 @@ impl App {
         self.drain();
         self.update_clock(ctx);
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
-            self.new_ticket = Some(NewTicket::default());
+            self.start_new();
         }
         self.take_drops(ctx);
         self.title_bar(ctx);
@@ -329,9 +334,7 @@ impl App {
         if paths.is_empty() {
             return;
         }
-        if let Some(form) = &mut self.new_ticket {
-            form.add(paths);
-        } else if self.mode == Mode::Watch {
+        if self.mode == Mode::Watch {
             match self.current().map(|view| view.id.clone()) {
                 Some(ticket) => self.act(Action::Attach { ticket, paths }),
                 None => self.home.add(paths),
@@ -443,7 +446,7 @@ impl App {
                     .fill(theme::SELECTED())
                     .min_size(egui::vec2(ui.available_width(), 46.0));
                 if ui.add(new).clicked() {
-                    self.new_ticket = Some(NewTicket::default());
+                    self.start_new();
                 }
                 ui.add_space(24.0);
                 ui.label(RichText::new("   Tickets").color(theme::TEXT_MUTED()));
@@ -505,32 +508,6 @@ impl App {
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
-        let mut start = None;
-        let mut close = false;
-        if let Some(form) = &mut self.new_ticket {
-            egui::Window::new("New ticket")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.set_width(520.0);
-                    start = composer::show(ui, form, "Ctrl+Enter", &mut self.agent);
-                    if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-                        close = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        close = true;
-                    }
-                });
-        }
-        if let Some(action) = start {
-            self.new_ticket = None;
-            self.mode = Mode::Watch;
-            self.new_started = true;
-            self.act(action);
-        } else if close {
-            self.new_ticket = None;
-        }
         if self.help_open {
             let mut open = true;
             egui::Window::new("Help").open(&mut open).show(ctx, |ui| {
@@ -775,12 +752,15 @@ impl App {
     fn home_screen(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("What should it work on?").size(32.0).strong());
         ui.label(theme::muted(
-            "Describe a change. It reads the code, asks only what it must, and shows every step. Claude uses your subscription; Practice is offline. Writing code is not switched on yet.",
+            "Describe a change. It reads the code, asks only what it must, and shows every step. Writing code is not switched on yet.",
         ));
         ui.add_space(14.0);
-        let start = composer::show(ui, &mut self.home, "Ctrl+Enter", &mut self.agent);
-        if self.agent != backend::AgentChoice::read(&self.options.data_dir) {
-            self.agent.save(&self.options.data_dir);
+        let start = composer::show(ui, &mut self.home);
+        if self.agent == backend::AgentChoice::Practice {
+            ui.add_space(6.0);
+            ui.label(theme::muted(
+                "Offline demo agent: the answers are fixed samples. Switch to Claude in Settings > Accounts.",
+            ));
         }
         if let Some(action) = start {
             self.home = NewTicket::default();
