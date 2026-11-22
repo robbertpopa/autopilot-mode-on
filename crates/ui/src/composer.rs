@@ -176,7 +176,7 @@ pub fn show(ui: &mut egui::Ui, form: &mut NewTicket) -> Option<Action> {
     egui::Frame::new()
         .fill(theme::CARD())
         .stroke(egui::Stroke::new(1.0_f32, border))
-        .corner_radius(egui::CornerRadius::same(22))
+        .corner_radius(egui::CornerRadius::same(12))
         .inner_margin(egui::Margin::symmetric(18, 14))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());

@@ -38,37 +38,57 @@ impl App {
         }
         ui.label(RichText::new("New ticket").size(18.0).strong());
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.label(theme::muted("kind"));
-            theme::segmented(
-                ui,
-                &mut self.kind,
-                &[
-                    (Kind::Bug, "Something is broken"),
-                    (Kind::Change, "Change or add"),
-                    (Kind::Ask, "Just ask"),
-                ],
-            );
-        })
-        .response
-        .on_hover_text("It will suggest a pipeline once named pipelines exist (R7)");
-        ui.add_space(8.0);
         // The folder last chosen stays chosen until it is changed.
         if self.home.workspace.is_none() {
             self.home.workspace.clone_from(&self.saved_workspace);
         }
         let before = self.home.workspace.clone();
-        self.pipeline_row(ui);
-        let start = composer::show(ui, &mut self.home);
+        let aside = 340.0_f32.min(ui.available_width() * 0.4);
+        let main = ui.available_width() - aside - 24.0;
+        let mut start = None;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 16.0;
+            ui.allocate_ui_with_layout(
+                egui::vec2(main, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(main);
+                    ui.spacing_mut().item_spacing.y = 10.0;
+                    ui.horizontal_wrapped(|ui| {
+                        self.pipeline_row(ui);
+                        theme::segmented(
+                            ui,
+                            &mut self.kind,
+                            &[
+                                (Kind::Bug, "Something is broken"),
+                                (Kind::Change, "Change or add"),
+                                (Kind::Ask, "Just ask"),
+                            ],
+                        );
+                    });
+                    start = composer::show(ui, &mut self.home);
+                    if self.agent == backend::AgentChoice::Practice {
+                        ui.label(theme::muted(
+                            "Offline demo agent: the answers are fixed samples. Switch to Claude in Settings > Accounts.",
+                        ));
+                    }
+                },
+            );
+            ui.allocate_ui_with_layout(
+                egui::vec2(aside, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(aside);
+                    theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        self.what_will_happen(ui);
+                    });
+                },
+            );
+        });
         if self.home.workspace != before {
             backend::save_workspace(&self.options.data_dir, self.home.workspace.as_deref());
             self.saved_workspace.clone_from(&self.home.workspace);
-        }
-        if self.agent == backend::AgentChoice::Practice {
-            ui.add_space(6.0);
-            ui.label(theme::muted(
-                "Offline demo agent: the answers are fixed samples. Switch to Claude in Settings > Accounts.",
-            ));
         }
         if let Some(action) = start {
             self.home = composer::NewTicket::default();
@@ -77,8 +97,6 @@ impl App {
             self.mode = Mode::Watch;
             self.act(action);
         }
-        ui.add_space(14.0);
-        self.what_will_happen(ui);
     }
 
     /// The pipeline a ticket of this kind starts with: the project's default
@@ -168,7 +186,13 @@ impl App {
 
     /// The steps and which of them will ask, read from the profile.
     fn what_will_happen(&self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("What will happen").size(14.0).strong());
+        ui.label(
+            RichText::new("WHAT WILL HAPPEN")
+                .monospace()
+                .size(11.0)
+                .strong()
+                .color(theme::TEXT_MUTED()),
+        );
         let Ok(profile) = &self.profile else {
             ui.label(theme::muted("The profile could not be read."));
             return;
@@ -189,7 +213,10 @@ impl App {
                 tags.push("runs");
             }
             ui.horizontal(|ui| {
-                ui.add_sized([150.0, 18.0], egui::Label::new(step_name(step)));
+                ui.add_sized(
+                    [110.0, 18.0],
+                    egui::Label::new(RichText::new(step_name(step)).monospace().size(12.0)),
+                );
                 ui.label(theme::muted(tags.join(" · ")));
                 if step == Step::BuildCheck {
                     ui.label(theme::mono(format!(

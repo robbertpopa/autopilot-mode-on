@@ -41,7 +41,7 @@ impl App {
             if ui.link("× Close (Esc)").clicked() {
                 self.screen = Screen::Run;
             }
-            ui.label(RichText::new(step_name(step)).size(28.0).strong());
+            ui.label(RichText::new(step_name(step)).size(18.0).strong());
             let (fill, color) = match card.state {
                 StepState::Passed => (theme::GREEN_FILL(), theme::GREEN()),
                 StepState::Failed(_) | StepState::Interrupted(_) => {
