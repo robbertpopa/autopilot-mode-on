@@ -65,7 +65,10 @@ pub use rules::{
     MAX_RULES_BYTES, RulesInfo, check_rules, project_key, read_rules, rules_info, rules_path,
     save_rules,
 };
-pub use settings::{effective_overrides, override_settings, project_overrides};
+pub use settings::{
+    effective_overrides, effective_when_unsure, override_settings, project_overrides,
+    set_when_unsure,
+};
 pub use triage::{EFFORTS, MODELS, kept as triage_kept, prompt as triage_prompt, triage_ticket};
 pub use view::{
     AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,
