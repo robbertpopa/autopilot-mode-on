@@ -92,7 +92,7 @@ enum Action {
     Closed,
 }
 
-fn pipeline_of(view: &TicketView) -> &str {
+pub(crate) fn pipeline_of(view: &TicketView) -> &str {
     view.pipeline
         .as_ref()
         .map_or(autopilot_profile::DEFAULT_PIPELINE, |(name, _)| {

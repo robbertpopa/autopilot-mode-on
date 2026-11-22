@@ -1,8 +1,8 @@
 //! Pipeline health, the read-only part: how many runs a pipeline had, what each
 //! step used and how much of the context window it reached. Every figure comes
 //! from what an adapter reported; where it reported nothing the page says so
-//! and never shows a zero. Grades, findings and tuning need the reviewer
-//! (R11) and the tuning overlay (R12), which are not built.
+//! and never shows a zero. Findings come from the token review and tunings from
+//! the overlay; grades need the model-graded reviewer, which is not built.
 
 use autopilot_engine::{PipelineMetrics, StepMetrics, dollars, step_name};
 use eframe::egui::{self, RichText};
@@ -74,6 +74,7 @@ impl App {
                 .map_or(800, |profile| profile.review.peak_context_permille);
             health_table(ui, &metrics, watch);
             self.health_findings(ui, &name);
+            self.health_tunings(ui, &name);
         }
         ui.add_space(14.0);
         ui.label(theme::muted(
@@ -105,6 +106,58 @@ impl App {
     }
 
     /// Open findings of this pipeline, with the numbers behind each.
+    /// What the review changed in this pipeline, each with its Undo.
+    fn health_tunings(&mut self, ui: &mut egui::Ui, name: &str) {
+        let mine: Vec<autopilot_engine::ActiveTuning> = self
+            .tunings
+            .iter()
+            .filter(|each| each.tuning.pipeline == name)
+            .cloned()
+            .collect();
+        if mine.is_empty() {
+            return;
+        }
+        ui.add_space(10.0);
+        ui.label(RichText::new("Tuned").size(18.0).strong());
+        for each in mine {
+            let tuning = &each.tuning;
+            theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "{} · effort {} to {}",
+                        autopilot_engine::step_name(tuning.step),
+                        tuning.effort_before.as_deref().unwrap_or("unset"),
+                        tuning.effort_after
+                    ))
+                    .strong(),
+                );
+                ui.label(&tuning.why);
+                ui.label(theme::muted(if each.guarded {
+                    "Watching the next 3 runs; it reverts itself if they do worse."
+                } else {
+                    "The next 3 runs did no worse; it stays."
+                }));
+                if ui.button("Undo").clicked() {
+                    self.notice = Some(
+                        match autopilot_engine::undo_tuning(
+                            &self.options.data_dir,
+                            &tuning.pipeline,
+                            tuning.step,
+                        ) {
+                            Ok(_) => {
+                                self.tunings =
+                                    autopilot_engine::active_tunings(&self.options.data_dir)
+                                        .unwrap_or_default();
+                                (true, "The tuning is undone.".to_owned())
+                            }
+                            Err(error) => (false, format!("Could not undo: {error}")),
+                        },
+                    );
+                }
+            });
+        }
+    }
+
     fn health_findings(&self, ui: &mut egui::Ui, name: &str) {
         let mine: Vec<&autopilot_engine::Finding> = self
             .findings
