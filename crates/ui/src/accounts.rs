@@ -145,14 +145,11 @@ impl App {
         ui.horizontal(|ui| {
             ui.label("Agent");
             let before = self.agent;
-            theme::segmented(
-                ui,
-                &mut self.agent,
-                &[
-                    (crate::backend::AgentChoice::Claude, "Claude"),
-                    (crate::backend::AgentChoice::Practice, "Offline demo"),
-                ],
-            );
+            let mut options = vec![(crate::backend::AgentChoice::Claude, "Claude")];
+            if self.sample_data || self.agent == crate::backend::AgentChoice::Practice {
+                options.push((crate::backend::AgentChoice::Practice, "Offline demo"));
+            }
+            theme::segmented(ui, &mut self.agent, &options);
             if self.agent != before {
                 self.agent.save(&self.options.data_dir);
             }
