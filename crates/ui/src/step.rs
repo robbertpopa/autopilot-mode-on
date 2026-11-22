@@ -425,7 +425,7 @@ impl App {
             .as_ref()
             .filter(|(asked, _)| *asked == step)
             .and_then(|(_, request)| {
-                crate::backend::waiting_text(&self.options, request)
+                self.waiting_for(&view.id, request)
                     .map(|text| (request.clone(), text))
             })
         {

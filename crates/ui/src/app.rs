@@ -4,8 +4,9 @@
 
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use autopilot_core::{Step, TicketId};
+use autopilot_core::{RequestId, Step, TicketId};
 use autopilot_engine::{Badge, TicketView, dollars, load_profile};
+use autopilot_pipeline::StepState;
 use autopilot_profile::Profile;
 use eframe::egui::{self, Align, Color32, Frame, Layout, Margin, RichText, Stroke};
 
@@ -103,6 +104,16 @@ pub struct App {
     pub(crate) light: bool,
     pub(crate) theme: theme::ThemeChoice,
     pub(crate) agent: backend::AgentChoice,
+    /// What the running action is doing, in words.
+    busy_what: &'static str,
+    /// Texts of what each waiting request asks, read once per snapshot.
+    waiting_cache: std::collections::HashMap<(TicketId, RequestId), String>,
+    /// Whether the data folder holds the sample-data marker, read once per snapshot.
+    sample_data: bool,
+    /// The project folder last chosen, read once.
+    saved_workspace: Option<std::path::PathBuf>,
+    /// Tickets started in this window that the orchestrator has not looked at.
+    fresh: Vec<TicketId>,
     pub(crate) orchestrator: backend::Orchestrator,
     /// "Do not ask again after this kind of step" on an approval.
     pub(crate) always: bool,
@@ -134,6 +145,8 @@ impl App {
         let light = choice.is_light(context.system_theme());
         let agent = backend::AgentChoice::read(&options.data_dir);
         let orchestrator = backend::Orchestrator::read(&options.data_dir);
+        let sample_data = options.data_dir.join(crate::demo::MARKER).exists();
+        let saved_workspace = backend::saved_workspace(&options.data_dir);
         let notify = backend::notifications_on(&options.data_dir);
         theme::apply(context, light);
         let (sender, receiver) = mpsc::channel();
@@ -187,6 +200,11 @@ impl App {
             light,
             theme: choice,
             agent,
+            busy_what: "Working",
+            waiting_cache: std::collections::HashMap::new(),
+            sample_data,
+            saved_workspace,
+            fresh: Vec::new(),
             orchestrator,
             always: false,
             notify,
@@ -302,6 +320,7 @@ impl App {
         if self.open_newest {
             self.open_newest = false;
             if let Some(newest) = self.snapshot.tickets.first().map(|view| view.id.clone()) {
+                self.fresh.push(newest.clone());
                 self.open(&newest);
             }
         }
@@ -364,9 +383,45 @@ impl App {
         self.selected.as_ref().and_then(|id| self.ticket(id))
     }
 
+    /// What a waiting request asks, read from the inbox once per snapshot.
+    pub(crate) fn waiting_for(&mut self, ticket: &TicketId, request: &RequestId) -> Option<String> {
+        let key = (ticket.clone(), request.clone());
+        if let Some(text) = self.waiting_cache.get(&key) {
+            return Some(text.clone());
+        }
+        let text = backend::waiting_text(&self.options, request)?;
+        self.waiting_cache.insert(key, text.clone());
+        Some(text)
+    }
+
+    /// Start the orchestrator for a ticket started in this window, once its
+    /// Understand step has passed. A ticket from an earlier session is never
+    /// picked up here, so opening the window never spends anything.
+    fn auto_orchestrate(&mut self) {
+        if self.busy
+            || self.agent != backend::AgentChoice::Claude
+            || self.orchestrator == backend::Orchestrator::Off
+        {
+            return;
+        }
+        let ready = self.fresh.iter().position(|id| {
+            self.ticket(id).is_some_and(|view| {
+                view.triage.is_none()
+                    && view
+                        .step(Step::Understand)
+                        .is_some_and(|card| card.state == StepState::Passed)
+            })
+        });
+        if let Some(at) = ready {
+            let id = self.fresh.remove(at);
+            self.act(Action::Orchestrate(id));
+        }
+    }
+
     /// Run an engine action without blocking the window.
     pub(crate) fn act(&mut self, action: Action) {
         self.busy = true;
+        self.busy_what = action.describe();
         self.notice = None;
         backend::run(
             self.options.clone(),
@@ -569,7 +624,7 @@ impl App {
     }
 
     fn notice_bar(&mut self, ui: &mut egui::Ui) {
-        if self.options.data_dir.join(crate::demo::MARKER).exists() {
+        if self.sample_data {
             banner(ui, "Sample data: these tickets are not real work.", false);
         }
         let problem = self.snapshot.problem.clone();
@@ -585,7 +640,7 @@ impl App {
             });
         }
         if self.busy {
-            ui.label(theme::muted("Working..."));
+            ui.label(theme::muted(format!("{}...", self.busy_what)));
         }
     }
 
