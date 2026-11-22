@@ -172,6 +172,11 @@ impl App {
             }
             ui.add_space(6.0);
         }
+        if view.badge == autopilot_engine::Badge::Done
+            && let Ok(profile) = &self.profile
+        {
+            crate::health::review_card(ui, view, profile.review.peak_context_permille);
+        }
         if let Some(step) = open {
             self.screen = Screen::Step(step);
         }

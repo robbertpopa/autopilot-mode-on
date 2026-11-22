@@ -199,12 +199,46 @@ impl App {
     /// Open review findings, each linking to Health. Nothing shows when the
     /// review is off or has found nothing.
     fn health_items(&mut self, ui: &mut egui::Ui) {
-        if self.findings.is_empty() {
+        if self.findings.is_empty() && self.tunings.is_empty() {
             return;
         }
         ui.add_space(18.0);
         ui.label(RichText::new("Pipeline health").size(18.0).strong());
         let mut open = None;
+        let mut undo = None;
+        for each in &self.tunings {
+            let tuning = &each.tuning;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Tuned").color(theme::GREEN()));
+                if ui
+                    .link(format!(
+                        "{} · {}: effort {} to {}",
+                        tuning.pipeline,
+                        autopilot_engine::step_name(tuning.step),
+                        tuning.effort_before.as_deref().unwrap_or("unset"),
+                        tuning.effort_after
+                    ))
+                    .clicked()
+                {
+                    open = Some(tuning.pipeline.clone());
+                }
+                if ui.button("Undo").clicked() {
+                    undo = Some((tuning.pipeline.clone(), tuning.step));
+                }
+            });
+        }
+        if let Some((pipeline, step)) = undo {
+            self.notice = Some(
+                match autopilot_engine::undo_tuning(&self.options.data_dir, &pipeline, step) {
+                    Ok(_) => {
+                        self.tunings = autopilot_engine::active_tunings(&self.options.data_dir)
+                            .unwrap_or_default();
+                        (true, "The tuning is undone.".to_owned())
+                    }
+                    Err(error) => (false, format!("Could not undo: {error}")),
+                },
+            );
+        }
         for finding in &self.findings {
             ui.horizontal(|ui| {
                 if ui

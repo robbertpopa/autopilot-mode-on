@@ -238,6 +238,36 @@ fn tile(ui: &mut egui::Ui, label: &str, value: &str) {
 
 fn health_table(ui: &mut egui::Ui, metrics: &PipelineMetrics, watch_permille: u32) {
     ui.label(RichText::new("Tokens by step").size(18.0).strong());
+    step_rows(ui, metrics, watch_permille);
+}
+
+/// What one finished ticket used, step by step, from its own recorded usage.
+/// There is no grade: that needs the model-graded reviewer, which is not built.
+pub(crate) fn review_card(
+    ui: &mut egui::Ui,
+    view: &autopilot_engine::TicketView,
+    watch_permille: u32,
+) {
+    let name = view
+        .pipeline
+        .as_ref()
+        .map_or(autopilot_profile::DEFAULT_PIPELINE, |(name, _)| {
+            name.as_str()
+        });
+    let metrics = autopilot_engine::metrics_of(name, &[view]);
+    if metrics.steps.iter().all(|row| row.runs == 0) {
+        return;
+    }
+    theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+        ui.label(RichText::new("Review").strong());
+        ui.label(theme::muted(format!(
+            "pipeline {name}. Reported by the agent; amber is at or above the context line."
+        )));
+        step_rows(ui, &metrics, watch_permille);
+    });
+}
+
+fn step_rows(ui: &mut egui::Ui, metrics: &PipelineMetrics, watch_permille: u32) {
     for row in metrics.steps.iter().filter(|row| row.runs > 0) {
         ui.horizontal(|ui| {
             ui.add_sized([130.0, 20.0], egui::Label::new(step_name(row.step)));

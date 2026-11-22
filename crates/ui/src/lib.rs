@@ -756,6 +756,49 @@ mod tests {
         }
     }
 
+    // Invariant: Today and a finished ticket's page still build with a tuning
+    // in force and a Done ticket. A panic here would blank the home page or a
+    // finished ticket. The Undo click and the card's figures are not exercised:
+    // demo tickets carry no usage, so the card draws nothing, and Undo itself
+    // is covered in the engine.
+    #[test]
+    fn today_and_a_done_ticket_build_with_a_tuning_present() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+
+        app.tunings = vec![autopilot_engine::ActiveTuning {
+            tuning: autopilot_engine::Tuning {
+                pipeline: "mine".into(),
+                step: Step::Understand,
+                effort_before: Some("high".into()),
+                effort_after: "medium".into(),
+                why: "peak context".into(),
+                at_ms: 1,
+            },
+            guarded: true,
+        }];
+        app.mode = Mode::Today;
+        frame(&mut app, &context);
+
+        if let Some(view) = app.snapshot.tickets.first_mut() {
+            view.badge = autopilot_engine::Badge::Done;
+        }
+        let id = app.snapshot.tickets[0].id.clone();
+        app.open(&id);
+        frame(&mut app, &context);
+        assert_eq!(app.snapshot.tickets[0].badge, autopilot_engine::Badge::Done);
+    }
+
     // Invariant: search finds a ticket by a word in its recorded text, runs a
     // command through the same action a button uses, narrows by prefix, and
     // never returns text that lives only in a project's rules.md. The last is
