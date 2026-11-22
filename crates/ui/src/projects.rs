@@ -75,7 +75,7 @@ pub fn rows(
 
 impl App {
     pub(crate) fn projects_screen(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Projects").size(30.0).strong());
+        ui.label(RichText::new("Projects").size(18.0).strong());
         ui.add_space(8.0);
         let (list, without) = rows(self.profile.as_ref().ok(), &self.snapshot.tickets);
         ui.horizontal(|ui| {
@@ -93,45 +93,61 @@ impl App {
         });
         ui.add_space(8.0);
         let mut pick = None;
-        for row in &list {
-            let chosen = self.project_selected.as_deref() == Some(row.path.as_str());
-            let mut text = format!("{}   {} tickets", row.name, row.tickets);
-            if row.needs_you > 0 {
-                text = format!("{text}   {} need you", row.needs_you);
-            }
-            if let Some(name) = &row.default_pipeline {
-                text = format!("{text}   {name}");
-            }
-            if !row.registered {
-                text = format!("{text}   not in profile");
-            }
-            let button = egui::Button::new(text)
-                .fill(if chosen {
-                    theme::SELECTED()
-                } else {
-                    egui::Color32::TRANSPARENT
-                })
-                .min_size(egui::vec2(ui.available_width(), 34.0));
-            if theme::named(ui.add(button), &row.name)
-                .on_hover_text(&row.path)
-                .clicked()
-            {
-                pick = Some(row.path.clone());
-            }
-        }
-        ui.label(theme::muted(format!(
-            "no project   {without} tickets   ask-only: words and attachments only"
-        )));
-        if let Some(path) = pick {
-            self.select_project(&path);
-        }
-        if let Some(row) = self
+        let width = (ui.available_width() * 0.28).clamp(240.0, 320.0);
+        let selected_row = self
             .project_selected
             .as_deref()
             .and_then(|path| list.iter().find(|row| row.path == path))
-        {
-            ui.add_space(14.0);
-            self.project_detail(ui, &row.clone());
+            .cloned();
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 16.0;
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(width);
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    for row in &list {
+                        let chosen = self.project_selected.as_deref() == Some(row.path.as_str());
+                        if project_card(ui, row, chosen) {
+                            pick = Some(row.path.clone());
+                        }
+                    }
+                    egui::Frame::new()
+                        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER()))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(egui::Margin::symmetric(12, 9))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(
+                                RichText::new("no project")
+                                    .monospace()
+                                    .size(13.0)
+                                    .strong()
+                                    .color(theme::TEXT_SOFT()),
+                            );
+                            ui.label(
+                                RichText::new(format!(
+                                    "{without} tickets · ask-only: words and attachments only"
+                                ))
+                                .monospace()
+                                .size(11.0)
+                                .color(theme::TEXT_MUTED()),
+                            );
+                        });
+                },
+            );
+            ui.vertical(|ui| {
+                if let Some(row) = &selected_row {
+                    theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        self.project_detail(ui, row);
+                    });
+                }
+            });
+        });
+        if let Some(path) = pick {
+            self.select_project(&path);
         }
     }
 
@@ -182,8 +198,8 @@ impl App {
     }
 
     fn project_detail(&mut self, ui: &mut egui::Ui, row: &Row) {
-        ui.label(RichText::new(&row.name).size(20.0).strong());
-        ui.label(theme::mono(&row.path));
+        ui.label(RichText::new(&row.name).monospace().size(14.0).strong());
+        ui.label(theme::mono(&row.path).size(11.0).color(theme::TEXT_MUTED()));
         if !row.registered && ui.button("Add to profile").clicked() {
             let folder = std::path::PathBuf::from(&row.path);
             self.add_project(&folder);
@@ -303,4 +319,64 @@ impl App {
             "Kept in the app data folder, not in the project. It guides the agent and cannot loosen what asks, what is protected or any budget.",
         ));
     }
+}
+
+/// One project in the list: name, ticket count, and chips for its default
+/// pipeline, tickets that need the owner, or a project not yet in the profile.
+fn project_card(ui: &mut egui::Ui, row: &Row, chosen: bool) -> bool {
+    let shown = egui::Frame::new()
+        .fill(if chosen {
+            theme::CARD()
+        } else {
+            egui::Color32::TRANSPARENT
+        })
+        .stroke(egui::Stroke::new(
+            1.0_f32,
+            if chosen {
+                theme::BORDER_STRONG()
+            } else {
+                theme::BORDER()
+            },
+        ))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(12, 9))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&row.name).monospace().size(13.0).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!("{} tickets", row.tickets))
+                            .monospace()
+                            .size(11.0)
+                            .color(theme::TEXT_MUTED()),
+                    );
+                });
+            });
+            ui.horizontal_wrapped(|ui| {
+                if let Some(name) = &row.default_pipeline {
+                    theme::pill(ui, name, theme::BLUE_FILL(), theme::BLUE_TEXT());
+                }
+                if row.needs_you > 0 {
+                    theme::pill(
+                        ui,
+                        &format!("{} need you", row.needs_you),
+                        theme::AMBER_FILL(),
+                        theme::AMBER(),
+                    );
+                }
+                if !row.registered {
+                    theme::pill(ui, "not in profile", theme::GREY_FILL(), theme::GREY_TEXT());
+                }
+            });
+        });
+    let click = ui.interact(
+        shown.response.rect,
+        ui.id().with(("project-card", row.path.as_str())),
+        egui::Sense::click(),
+    );
+    theme::named(click, &row.name)
+        .on_hover_text(&row.path)
+        .clicked()
 }

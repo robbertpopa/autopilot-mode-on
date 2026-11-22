@@ -151,7 +151,7 @@ impl App {
     /// Title, status, spend, and the controls that matter.
     pub(crate) fn run_header(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(&view.title).size(28.0).strong());
+            ui.label(RichText::new(&view.title).size(18.0).strong());
             let (text, fill, color) = badge_colors(view.badge, view);
             theme::pill(ui, &text, fill, color);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -314,7 +314,7 @@ impl App {
             .inner_margin(Margin::symmetric(16, 12))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width() - 38.0);
-                ui.label(RichText::new(text).size(16.0).strong().color(color));
+                ui.label(RichText::new(text).size(14.0).strong().color(color));
                 if problem.is_none() && ready_to_design(view) {
                     let busy = self.busy;
                     if ui
@@ -373,7 +373,7 @@ impl App {
                 ui.set_width(ui.available_width() - 38.0);
                 ui.label(
                     RichText::new(format!("{} needs you", step_name(*step)))
-                        .size(16.0)
+                        .size(14.0)
                         .strong()
                         .color(theme::AMBER()),
                 );
@@ -448,7 +448,7 @@ impl App {
                 _ => "Build ⟲ Check".to_owned(),
             };
             ui.horizontal(|ui| {
-                ui.label(RichText::new(title).size(19.0).strong());
+                ui.label(RichText::new(title).size(14.0).strong());
                 theme::pill(
                     ui,
                     &state_text(&build.state),

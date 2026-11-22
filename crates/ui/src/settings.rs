@@ -62,7 +62,7 @@ impl App {
     pub(crate) fn asking_screen(&mut self, ui: &mut egui::Ui) {
         self.mode_tabs(ui);
         ui.add_space(14.0);
-        ui.label(RichText::new("When it asks you").size(30.0).strong());
+        ui.label(RichText::new("When it asks you").size(18.0).strong());
         ui.label(theme::muted("pipeline · ask_after"));
         ui.add_space(10.0);
         for step in Step::ALL {
@@ -124,7 +124,7 @@ impl App {
     /// The project's `when_unsure`, shown as two cards. Editing it per ticket
     /// needs request R3; the project value is a line in `profile.toml`.
     fn when_unsure_cards(&self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("when_unsure").size(18.0).strong());
+        ui.label(RichText::new("when_unsure").size(14.0).strong());
         let current = self
             .profile
             .as_ref()
@@ -166,7 +166,7 @@ impl App {
 
     /// What forces an ask whatever the switches say, read from the profile.
     fn forced_rules(&self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Always asks").size(18.0).strong());
+        ui.label(RichText::new("Always asks").size(14.0).strong());
         ui.label("Design and the pull request, every time.");
         let Ok(profile) = &self.profile else {
             return;
@@ -187,7 +187,7 @@ impl App {
     pub(crate) fn checks_screen(&mut self, ui: &mut egui::Ui) {
         self.mode_tabs(ui);
         ui.add_space(14.0);
-        ui.label(RichText::new("Checks").size(30.0).strong());
+        ui.label(RichText::new("Checks").size(18.0).strong());
         ui.label(theme::muted(
             "Commands run after each Build round, from profile.toml.",
         ));
@@ -217,7 +217,7 @@ impl App {
     pub(crate) fn look_screen(&mut self, ui: &mut egui::Ui) {
         self.mode_tabs(ui);
         ui.add_space(14.0);
-        ui.label(RichText::new("Look").size(30.0).strong());
+        ui.label(RichText::new("Look").size(18.0).strong());
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.label("Theme");

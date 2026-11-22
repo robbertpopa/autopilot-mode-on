@@ -12,7 +12,11 @@ use crate::theme;
 
 /// Below this window width the nav shrinks to icons.
 const COLLAPSE_BELOW: f32 = 900.0;
-const WIDE: f32 = 270.0;
+const WIDE: f32 = 224.0;
+/// Height the spend card and the account row take at the foot of the nav.
+const FOOT_HEIGHT: f32 = 140.0;
+/// The spend card: two lines, the bar and padding.
+const SPEND_HEIGHT: f32 = 76.0;
 const NARROW: f32 = 64.0;
 
 /// Group heading for tickets that have no project folder.
@@ -149,6 +153,81 @@ fn gear_button(ui: &mut egui::Ui) -> egui::Response {
     theme::named(response.on_hover_text("Settings"), "Settings")
 }
 
+/// One row of the nav: left-aligned label, an optional amber count chip or a
+/// key hint at the right, a raised fill when it is the open page.
+fn nav_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    short: &str,
+    selected: bool,
+    narrow: bool,
+    right: Option<(String, bool)>,
+) -> bool {
+    let size = egui::vec2(ui.available_width(), 30.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if selected || response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(7),
+            if selected {
+                theme::NODE()
+            } else {
+                theme::SELECTED()
+            },
+        );
+    }
+    let text_color = if selected {
+        theme::TEXT()
+    } else {
+        theme::TEXT_SOFT()
+    };
+    let font = egui::FontId::proportional(13.0);
+    if narrow {
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            short,
+            font,
+            text_color,
+        );
+    } else {
+        ui.painter().text(
+            rect.left_center() + egui::vec2(10.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            name,
+            font,
+            text_color,
+        );
+        if let Some((text, chip)) = right {
+            let end = rect.right_center() - egui::vec2(8.0, 0.0);
+            if chip {
+                let ink = Color32::from_rgb(0x1A, 0x13, 0x05);
+                let galley = ui
+                    .painter()
+                    .layout_no_wrap(text, egui::FontId::monospace(11.0), ink);
+                let width = galley.size().x + 14.0;
+                let pill = egui::Rect::from_min_size(
+                    end - egui::vec2(width, 9.0),
+                    egui::vec2(width, 18.0),
+                );
+                ui.painter()
+                    .rect_filled(pill, egui::CornerRadius::same(5), theme::AMBER_SOLID());
+                ui.painter()
+                    .galley(pill.center() - galley.size() / 2.0, galley, ink);
+            } else {
+                ui.painter().text(
+                    end,
+                    egui::Align2::RIGHT_CENTER,
+                    text,
+                    egui::FontId::monospace(11.0),
+                    theme::TEXT_MUTED(),
+                );
+            }
+        }
+    }
+    theme::named(response, name).clicked()
+}
+
 impl App {
     pub(crate) fn nav(&mut self, ctx: &egui::Context) {
         let narrow = ctx.content_rect().width() < COLLAPSE_BELOW;
@@ -159,23 +238,25 @@ impl App {
                 Frame::new()
                     .fill(theme::SIDEBAR())
                     .stroke(Stroke::new(1.0_f32, theme::BORDER()))
-                    .inner_margin(Margin::same(12)),
+                    .inner_margin(Margin::symmetric(12, 16)),
             )
             .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
                 self.nav_head(ui, narrow);
-                ui.add_space(14.0);
-                self.search_button(ui, narrow);
+                ui.add_space(15.0);
                 self.new_ticket_button(ui, narrow);
-                self.today_link(ui, narrow);
-                self.board_link(ui, narrow);
-                self.projects_link(ui, narrow);
-                self.pipelines_link(ui, narrow);
-                self.health_link(ui, narrow);
+                ui.add_space(15.0);
+                self.nav_links(ui, narrow);
                 if !narrow {
-                    ui.add_space(14.0);
-                    self.nav_tickets(ui);
+                    ui.add_space(15.0);
+                    // Leave room for the spend card and the account row, which
+                    // are laid out from the bottom: without a cap the list
+                    // would run under them.
+                    let room = (ui.available_height() - FOOT_HEIGHT).max(60.0);
+                    self.nav_tickets(ui, room);
                 }
                 ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing.y = 10.0;
                     self.nav_foot(ui, narrow);
                     if !narrow {
                         self.spend_meter(ui);
@@ -185,131 +266,107 @@ impl App {
     }
 
     fn nav_head(&self, ui: &mut egui::Ui, narrow: bool) {
-        ui.add_space(30.0);
         ui.horizontal(|ui| {
+            ui.add_space(6.0);
             if let Some(icon) = &self.icon {
-                ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(26.0, 26.0)));
+                ui.add(
+                    egui::Image::new(icon)
+                        .fit_to_exact_size(egui::vec2(28.0, 28.0))
+                        .corner_radius(7),
+                );
             }
             if !narrow {
-                ui.label(RichText::new("Autopilot").size(16.0).strong());
+                ui.label(
+                    RichText::new("autopilot-mode-on")
+                        .monospace()
+                        .size(13.0)
+                        .strong(),
+                );
             }
         });
     }
 
-    fn search_button(&mut self, ui: &mut egui::Ui, narrow: bool) {
-        let button = egui::Button::new(if narrow { "?" } else { "Search     Ctrl+K" })
-            .fill(Color32::TRANSPARENT)
-            .min_size(egui::vec2(ui.available_width(), 30.0));
-        if theme::named(ui.add(button), "Search").clicked() {
+    fn new_ticket_button(&mut self, ui: &mut egui::Ui, narrow: bool) {
+        let size = egui::vec2(ui.available_width(), 36.0);
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(7), theme::BLUE());
+        let on = theme::ON_ACCENT();
+        if narrow {
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "+",
+                egui::FontId::proportional(18.0),
+                on,
+            );
+        } else {
+            ui.painter().text(
+                rect.left_center() + egui::vec2(12.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                "New ticket",
+                egui::FontId::proportional(13.0),
+                on,
+            );
+            let kbd = egui::Rect::from_center_size(
+                rect.right_center() - egui::vec2(28.0, 0.0),
+                egui::vec2(26.0, 18.0),
+            );
+            ui.painter().rect_stroke(
+                kbd,
+                egui::CornerRadius::same(4),
+                Stroke::new(1.0_f32, on),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter().text(
+                kbd.center(),
+                egui::Align2::CENTER_CENTER,
+                "^N",
+                egui::FontId::monospace(11.0),
+                on,
+            );
+        }
+        if theme::named(response, "New ticket").clicked() {
+            self.start_new();
+        }
+    }
+
+    fn nav_links(&mut self, ui: &mut egui::Ui, narrow: bool) {
+        let count = self.today_count();
+        let inbox = (count > 0).then(|| (count.to_string(), true));
+        if nav_row(ui, "Inbox", "I", self.mode == Mode::Today, narrow, inbox) {
+            self.mode = Mode::Today;
+        }
+        for (mode, name, short) in [
+            (Mode::Board, "Board", "B"),
+            (Mode::Projects, "Projects", "P"),
+            (Mode::Pipelines, "Pipelines", "L"),
+            (Mode::Health, "Health", "H"),
+        ] {
+            if nav_row(ui, name, short, self.mode == mode, narrow, None) {
+                self.mode = mode;
+            }
+        }
+        if nav_row(ui, "Help", "?", false, narrow, None) {
+            self.help_open = !self.help_open;
+        }
+        if nav_row(ui, "Search", "S", false, narrow, Some(("^K".into(), false))) {
             self.search_open = true;
             self.search_query.clear();
             self.search_selected = 0;
         }
     }
 
-    fn new_ticket_button(&mut self, ui: &mut egui::Ui, narrow: bool) {
-        let text = if narrow {
-            "+"
-        } else {
-            "+  New ticket     Ctrl+N"
-        };
-        let button = egui::Button::new(RichText::new(text).size(if narrow { 18.0 } else { 14.0 }))
-            .fill(theme::SELECTED())
-            .min_size(egui::vec2(ui.available_width(), 40.0));
-        if theme::named(ui.add(button), "New ticket").clicked() {
-            self.start_new();
-        }
-    }
-
-    fn health_link(&mut self, ui: &mut egui::Ui, narrow: bool) {
-        let fill = if self.mode == Mode::Health {
-            theme::SELECTED()
-        } else {
-            Color32::TRANSPARENT
-        };
-        let button = egui::Button::new(if narrow { "H" } else { "Health" })
-            .fill(fill)
-            .stroke(Stroke::NONE)
-            .min_size(egui::vec2(ui.available_width(), 34.0));
-        if theme::named(ui.add(button), "Health").clicked() {
-            self.mode = Mode::Health;
-        }
-    }
-
-    fn pipelines_link(&mut self, ui: &mut egui::Ui, narrow: bool) {
-        let fill = if self.mode == Mode::Pipelines {
-            theme::SELECTED()
-        } else {
-            Color32::TRANSPARENT
-        };
-        let button = egui::Button::new(if narrow { "L" } else { "Pipelines" })
-            .fill(fill)
-            .stroke(Stroke::NONE)
-            .min_size(egui::vec2(ui.available_width(), 34.0));
-        if theme::named(ui.add(button), "Pipelines").clicked() {
-            self.mode = Mode::Pipelines;
-        }
-    }
-
-    fn projects_link(&mut self, ui: &mut egui::Ui, narrow: bool) {
-        let fill = if self.mode == Mode::Projects {
-            theme::SELECTED()
-        } else {
-            Color32::TRANSPARENT
-        };
-        let button = egui::Button::new(if narrow { "P" } else { "Projects" })
-            .fill(fill)
-            .stroke(Stroke::NONE)
-            .min_size(egui::vec2(ui.available_width(), 34.0));
-        if theme::named(ui.add(button), "Projects").clicked() {
-            self.mode = Mode::Projects;
-        }
-    }
-
-    fn board_link(&mut self, ui: &mut egui::Ui, narrow: bool) {
-        let fill = if self.mode == Mode::Board {
-            theme::SELECTED()
-        } else {
-            Color32::TRANSPARENT
-        };
-        let button = egui::Button::new(if narrow { "B" } else { "Board" })
-            .fill(fill)
-            .stroke(Stroke::NONE)
-            .min_size(egui::vec2(ui.available_width(), 34.0));
-        if theme::named(ui.add(button), "Board").clicked() {
-            self.mode = Mode::Board;
-        }
-    }
-
-    fn today_link(&mut self, ui: &mut egui::Ui, narrow: bool) {
-        let count = self.today_count();
-        let text = match (narrow, count) {
-            (true, _) => "T".to_owned(),
-            (false, 0) => "Today".to_owned(),
-            (false, count) => format!("Today   {count}"),
-        };
-        let color = if count > 0 {
-            theme::AMBER()
-        } else {
-            theme::TEXT()
-        };
-        let fill = if self.mode == Mode::Today {
-            theme::SELECTED()
-        } else {
-            Color32::TRANSPARENT
-        };
-        let button = egui::Button::new(RichText::new(text).color(color))
-            .fill(fill)
-            .stroke(Stroke::NONE)
-            .min_size(egui::vec2(ui.available_width(), 34.0));
-        if theme::named(ui.add(button), "Today").clicked() {
-            self.mode = Mode::Today;
-        }
-    }
-
-    fn nav_tickets(&mut self, ui: &mut egui::Ui) {
+    fn nav_tickets(&mut self, ui: &mut egui::Ui, room: f32) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Tickets").color(theme::TEXT_MUTED()));
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new("TICKETS")
+                    .monospace()
+                    .size(11.0)
+                    .strong()
+                    .color(theme::TEXT_MUTED()),
+            );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let label = if self.group_by_status {
                     "by status"
@@ -332,36 +389,44 @@ impl App {
         let grouped = groups(&self.snapshot.tickets, self.group_by_status);
         let mut open = None;
         let mut toggled = None;
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for (name, members) in &grouped {
-                let closed = self.closed_groups.contains(name);
-                let needs = members.iter().any(|view| view.badge == Badge::NeedsYou);
-                ui.horizontal(|ui| {
-                    let arrow = if closed { "▶" } else { "▼" };
-                    if ui
-                        .add(
-                            egui::Button::new(format!("{arrow} {name}  {}", members.len()))
+        egui::ScrollArea::vertical()
+            .max_height(room)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for (name, members) in &grouped {
+                    let closed = self.closed_groups.contains(name);
+                    let needs = members.iter().any(|view| view.badge == Badge::NeedsYou);
+                    ui.horizontal(|ui| {
+                        let arrow = if closed { "▶" } else { "▼" };
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new(format!("{arrow} {name}  {}", members.len()))
+                                        .monospace()
+                                        .size(12.0)
+                                        .color(theme::TEXT_SOFT()),
+                                )
                                 .fill(Color32::TRANSPARENT)
                                 .stroke(Stroke::NONE),
-                        )
-                        .clicked()
-                    {
-                        toggled = Some(name.clone());
+                            )
+                            .clicked()
+                        {
+                            toggled = Some(name.clone());
+                        }
+                        if needs {
+                            ui.label(RichText::new("needs you").size(11.0).color(theme::AMBER()));
+                        }
+                    });
+                    if closed {
+                        continue;
                     }
-                    if needs {
-                        ui.label(RichText::new("needs you").size(11.0).color(theme::AMBER()));
+                    for view in members {
+                        if ticket_row(ui, view, self.selected.as_ref() == Some(&view.id)) {
+                            open = Some(view.id.clone());
+                        }
                     }
-                });
-                if closed {
-                    continue;
                 }
-                for view in members {
-                    if ticket_row(ui, view, self.selected.as_ref() == Some(&view.id)) {
-                        open = Some(view.id.clone());
-                    }
-                }
-            }
-        });
+            });
         if let Some(name) = toggled
             && !self.closed_groups.remove(&name)
         {
@@ -379,44 +444,104 @@ impl App {
             .as_ref()
             .ok()
             .and_then(|profile| profile.budgets.daily_microusd);
-        let mut api = format!("API {}", dollars(self.snapshot.today_api));
-        if let Some(limit) = limit {
-            api = format!(
-                "{api} of {}",
-                dollars(autopilot_core::Money::from_microusd(limit.get()))
-            );
-        }
-        ui.add_space(6.0);
-        ui.label(theme::muted(format!(
-            "sub ~{} (estimate)",
-            dollars(self.snapshot.today_subscription)
-        )));
-        ui.label(RichText::new(api).color(theme::TEXT_SOFT()));
-        ui.label(theme::muted("today"));
+        let spent = self.snapshot.today_api.as_microusd();
+        let small = |text: String, muted: bool| {
+            RichText::new(text).monospace().size(11.0).color(if muted {
+                theme::TEXT_MUTED()
+            } else {
+                theme::TEXT()
+            })
+        };
+        // A fixed-height box: this runs inside the nav's bottom-up layout,
+        // where a frame would otherwise stretch to the whole free height.
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), SPEND_HEIGHT),
+            Layout::top_down(Align::Min),
+            |ui| {
+                Frame::new()
+                    .stroke(Stroke::new(1.0_f32, theme::BORDER()))
+                    .corner_radius(egui::CornerRadius::same(8))
+                    .inner_margin(Margin::same(10))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.spacing_mut().item_spacing.y = 6.0;
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(small("spend/day".into(), true));
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let cap = limit.map_or_else(
+                                        || "no cap".to_owned(),
+                                        |limit| {
+                                            dollars(autopilot_core::Money::from_microusd(
+                                                limit.get(),
+                                            ))
+                                        },
+                                    );
+                                    ui.label(small(cap, true));
+                                });
+                            });
+                            let (bar, _) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), 4.0),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().rect_filled(
+                                bar,
+                                egui::CornerRadius::same(2),
+                                theme::BORDER(),
+                            );
+                            if let Some(limit) = limit {
+                                let permille = u16::try_from(
+                                    (spent.saturating_mul(1000) / limit.get()).min(1000),
+                                )
+                                .unwrap_or(1000);
+                                let mut filled = bar;
+                                filled.set_width(bar.width() * f32::from(permille) / 1000.0);
+                                ui.painter().rect_filled(
+                                    filled,
+                                    egui::CornerRadius::same(2),
+                                    theme::GREEN_SOLID(),
+                                );
+                            }
+                            ui.horizontal(|ui| {
+                                ui.label(small(
+                                    format!("api {}", dollars(self.snapshot.today_api)),
+                                    false,
+                                ));
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(small(
+                                        format!(
+                                            "sub ~{}",
+                                            dollars(self.snapshot.today_subscription)
+                                        ),
+                                        true,
+                                    ));
+                                });
+                            });
+                        });
+                    });
+            },
+        );
     }
 
     fn nav_foot(&mut self, ui: &mut egui::Ui, narrow: bool) {
         let accounts: Option<Accounts> = self.accounts.clone();
-        let layout = if narrow {
-            Layout::top_down(Align::Min)
-        } else {
-            Layout::left_to_right(Align::Center)
-        };
-        // Bottom-up parent: draw the row inside one group so it keeps its order.
-        ui.with_layout(layout, |ui| {
-            if narrow {
+        if narrow {
+            if gear_button(ui).clicked() {
+                self.mode = Mode::Asking;
+            }
+            self.account_icons(ui, accounts.as_ref());
+            return;
+        }
+        // A horizontal row takes only its own height, so the spend card sits
+        // directly above it instead of being pushed up the panel.
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            self.account_icons(ui, accounts.as_ref());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if gear_button(ui).clicked() {
                     self.mode = Mode::Asking;
                 }
-                self.account_icons(ui, accounts.as_ref());
-            } else {
-                self.account_icons(ui, accounts.as_ref());
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if gear_button(ui).clicked() {
-                        self.mode = Mode::Asking;
-                    }
-                });
-            }
+            });
         });
     }
 

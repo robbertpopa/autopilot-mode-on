@@ -15,7 +15,7 @@ impl App {
     }
 
     pub(crate) fn first_run_screen(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Get ready").size(30.0).strong());
+        ui.label(RichText::new("Get ready").size(18.0).strong());
         ui.label(theme::muted("Three things. GitHub is optional."));
         ui.add_space(10.0);
         let accounts = self.accounts.as_ref().map(rows);
