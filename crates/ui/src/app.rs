@@ -19,6 +19,9 @@ const COLUMN: f32 = 900.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
     Today,
+    Asking,
+    Checks,
+    Look,
     NewTicket,
     PlanReview,
     Design,
@@ -51,6 +54,7 @@ pub struct App {
     pub(crate) screen: Screen,
     pub(crate) selected: Option<TicketId>,
     pub(crate) today_selected: Option<TicketId>,
+    pub(crate) ask_edits: std::collections::BTreeMap<Step, bool>,
     pub(crate) design_step: Step,
     pub(crate) advanced: bool,
     pub(crate) tab: Tab,
@@ -113,6 +117,7 @@ impl App {
             screen: Screen::Run,
             selected: None,
             today_selected: None,
+            ask_edits: std::collections::BTreeMap::new(),
             design_step: Step::BuildCheck,
             advanced: true,
             tab: Tab::Summary,
@@ -221,6 +226,9 @@ impl App {
                 self.mode = Mode::PlanReview;
             }
             ("new", _) => self.mode = Mode::NewTicket,
+            ("settings" | "asking", _) => self.mode = Mode::Asking,
+            ("checks", _) => self.mode = Mode::Checks,
+            ("look", _) => self.mode = Mode::Look,
             ("cost", _) => self.mode = Mode::Cost,
             ("accounts", _) => self.mode = Mode::Accounts,
             ("run", Some(id)) => self.open(&id),
@@ -336,6 +344,9 @@ impl App {
                                     Mode::Today => self.today_screen(ui),
                                     Mode::NewTicket => self.new_ticket_screen(ui),
                                     Mode::PlanReview => self.plan_review(ui),
+                                    Mode::Asking => self.asking_screen(ui),
+                                    Mode::Checks => self.checks_screen(ui),
+                                    Mode::Look => self.look_screen(ui),
                                     Mode::Design => self.pipeline_screen(ui),
                                     Mode::Watch => self.watch_screen(ui),
                                     Mode::Cost => self.cost_screen(ui),
@@ -391,14 +402,6 @@ impl App {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if theme::named(ui.button("?").on_hover_text("Help"), "Help").clicked() {
                             self.help_open = !self.help_open;
-                        }
-                        let label = format!("Theme: {}", self.theme.label());
-                        if ui
-                            .button(label)
-                            .on_hover_text("System, Light or Dark")
-                            .clicked()
-                        {
-                            self.choose_theme(self.theme.next());
                         }
                         self.update_button(ui);
                     });
@@ -522,9 +525,12 @@ impl App {
             ui,
             &mut self.mode,
             &[
+                (Mode::Asking, "When it asks you"),
                 (Mode::Design, "Pipeline steps"),
                 (Mode::Cost, "Cost"),
+                (Mode::Checks, "Checks"),
                 (Mode::Accounts, "Accounts"),
+                (Mode::Look, "Look"),
             ],
         );
     }

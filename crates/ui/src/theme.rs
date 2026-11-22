@@ -93,24 +93,6 @@ impl ThemeChoice {
         }
     }
 
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::System => "System",
-            Self::Light => "Light",
-            Self::Dark => "Dark",
-        }
-    }
-
-    #[must_use]
-    pub const fn next(self) -> Self {
-        match self {
-            Self::System => Self::Light,
-            Self::Light => Self::Dark,
-            Self::Dark => Self::System,
-        }
-    }
-
     /// True for the light palette. With no answer from the system the window
     /// stays dark, the palette it had before there was a choice.
     #[must_use]

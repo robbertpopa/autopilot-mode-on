@@ -141,15 +141,6 @@ impl App {
             "Read from the tools on this computer. No password or token is shown or kept.",
         ));
         ui.add_space(10.0);
-        if ui
-            .checkbox(
-                &mut self.notify,
-                "Show a desktop notification when a ticket needs me, fails or finishes",
-            )
-            .changed()
-        {
-            crate::backend::save_notifications(&self.options.data_dir, self.notify);
-        }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label("Agent");

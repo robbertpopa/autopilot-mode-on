@@ -330,14 +330,14 @@ impl App {
         ui.with_layout(layout, |ui| {
             if narrow {
                 if gear_button(ui).clicked() {
-                    self.mode = Mode::Design;
+                    self.mode = Mode::Asking;
                 }
                 self.account_icons(ui, accounts.as_ref());
             } else {
                 self.account_icons(ui, accounts.as_ref());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if gear_button(ui).clicked() {
-                        self.mode = Mode::Design;
+                        self.mode = Mode::Asking;
                     }
                 });
             }

@@ -11,6 +11,7 @@ mod new_ticket;
 mod pipeline;
 mod plan_review;
 mod run;
+mod settings;
 mod step;
 mod theme;
 mod ticket;
@@ -91,6 +92,9 @@ mod tests {
         for mode in [
             Mode::Today,
             Mode::NewTicket,
+            Mode::Asking,
+            Mode::Checks,
+            Mode::Look,
             Mode::Design,
             Mode::Watch,
             Mode::Cost,
@@ -243,6 +247,39 @@ mod tests {
         frame(&mut app, &context);
         app.screen = Screen::Step(Step::BuildCheck);
         frame(&mut app, &context);
+    }
+
+    // Invariant: toggling Plan's switch collects an edit, shows no change on
+    // disk until Save, and Save writes `ask_after` to profile.toml so a fresh
+    // read of the file sees it. Design stays locked: its edit is ignored.
+    #[test]
+    fn toggling_plans_switch_and_saving_writes_profile_toml() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.mode = Mode::Asking;
+        frame(&mut app, &context);
+        let before = autopilot_engine::load_profile(&options.profile)
+            .unwrap()
+            .step(Step::Plan)
+            .unwrap()
+            .ask_after;
+        app.ask_edits.insert(Step::Plan, !before);
+        app.ask_edits.insert(Step::Design, false);
+        assert_eq!(app.ask_changes(), vec![(Step::Plan, !before)]);
+        assert!(!options.profile.exists(), "nothing is written before Save");
+        frame(&mut app, &context);
+        app.save_asking();
+        let after = autopilot_engine::load_profile(&options.profile).unwrap();
+        assert_eq!(after.step(Step::Plan).unwrap().ask_after, !before);
+        assert!(app.ask_edits.is_empty());
     }
 
     // Invariant: pausing from the window writes the engine's pause flag, the
