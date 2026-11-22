@@ -551,6 +551,18 @@ pub enum Event {
     Workspace {
         path: String,
     },
+    /// The pipeline the ticket runs, resolved when it was chosen so the log
+    /// stays readable if the profile changes. A ticket with none recorded ran
+    /// the `full` pipeline.
+    PipelineChosen {
+        name: String,
+        /// Steps the pipeline never runs.
+        #[serde(default)]
+        off: Vec<Step>,
+        /// A lower cap on build rounds, if the pipeline sets one.
+        #[serde(default)]
+        rounds: Option<u32>,
+    },
     /// The orchestrator's decision for the later steps. The settings it chose
     /// are recorded next to it as a ticket-scope `SettingsOverridden`.
     Triaged {

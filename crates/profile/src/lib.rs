@@ -7,6 +7,13 @@ use std::{
 };
 
 use autopilot_core::{Money, Step};
+
+mod pipeline;
+pub use pipeline::{
+    ASK_ONLY, DEFAULT_PIPELINE, Pipeline, Project, StepMode, builtin_pipelines, leaf,
+    normalize_path,
+};
+use pipeline::{PipelineFile, ProjectFile};
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
 use toml::Spanned;
@@ -101,6 +108,9 @@ pub struct Profile {
     pub branch_rules: BranchRules,
     pub budgets: ProjectBudgets,
     pub when_unsure: WhenUnsure,
+    /// Projects by normalised workspace path.
+    pub projects: BTreeMap<String, Project>,
+    custom_pipelines: BTreeMap<String, Pipeline>,
 }
 
 #[derive(Default, Deserialize, JsonSchema)]
@@ -112,6 +122,8 @@ struct ProfileFile {
     branch_rules: BranchRules,
     budgets: ProjectBudgets,
     when_unsure: WhenUnsure,
+    projects: BTreeMap<String, ProjectFile>,
+    pipelines: BTreeMap<String, PipelineFile>,
 }
 
 #[derive(Default, Deserialize, JsonSchema)]
@@ -168,6 +180,9 @@ impl Profile {
             steps.insert(step, resolve_step(step, options, path, source)?);
         }
 
+        let custom_pipelines = resolve_pipelines(&file.pipelines, path, source)?;
+        let projects = resolve_projects(&file.projects, &custom_pipelines, path, source)?;
+
         Ok(Self {
             steps,
             checks: file.checks,
@@ -175,7 +190,52 @@ impl Profile {
             branch_rules: file.branch_rules,
             budgets: file.budgets,
             when_unsure: file.when_unsure,
+            projects,
+            custom_pipelines,
         })
+    }
+
+    /// Built-in pipelines first, then the custom ones by name.
+    #[must_use]
+    pub fn pipelines(&self) -> Vec<Pipeline> {
+        let mut all = builtin_pipelines();
+        all.extend(self.custom_pipelines.values().cloned());
+        all
+    }
+
+    #[must_use]
+    pub fn pipeline(&self, name: &str) -> Option<Pipeline> {
+        self.pipelines().into_iter().find(|each| each.name == name)
+    }
+
+    /// The project for a workspace folder, however its path is spelled.
+    #[must_use]
+    pub fn project(&self, workspace: &str) -> Option<&Project> {
+        self.projects.get(&normalize_path(workspace))
+    }
+
+    /// The profile a ticket in `workspace` runs under. A project only adds to
+    /// the profile's protected paths and only lowers its budgets, so a project
+    /// entry can never make a rule weaker, whatever it says.
+    #[must_use]
+    pub fn for_project(&self, workspace: Option<&str>) -> Self {
+        let mut merged = self.clone();
+        let Some(project) = workspace.and_then(|path| self.project(path)) else {
+            return merged;
+        };
+        for pattern in &project.protected_paths {
+            if !merged.protected_paths.contains(pattern) {
+                merged.protected_paths.push(pattern.clone());
+            }
+        }
+        merged.budgets = ProjectBudgets {
+            per_ticket_microusd: lower(
+                self.budgets.per_ticket_microusd,
+                project.budgets.per_ticket_microusd,
+            ),
+            daily_microusd: lower(self.budgets.daily_microusd, project.budgets.daily_microusd),
+        };
+        merged
     }
 
     #[must_use]
@@ -261,4 +321,109 @@ fn diagnostic(
         key,
         message,
     }
+}
+
+/// The smaller of two optional caps; `None` means no cap, so a cap beats none.
+fn lower(global: Option<NonZeroU64>, project: Option<NonZeroU64>) -> Option<NonZeroU64> {
+    match (global, project) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// Custom pipelines, each resolved against the built-ins and the ones before
+/// it. A pass per level lets one custom pipeline build on another.
+fn resolve_pipelines(
+    files: &BTreeMap<String, PipelineFile>,
+    path: &Path,
+    source: &str,
+) -> Result<BTreeMap<String, Pipeline>, ProfileDiagnostic> {
+    let mut known: BTreeMap<String, Pipeline> = builtin_pipelines()
+        .into_iter()
+        .map(|each| (each.name.clone(), each))
+        .collect();
+    let mut custom = BTreeMap::new();
+    let mut waiting: Vec<(&String, &PipelineFile)> = files.iter().collect();
+    while !waiting.is_empty() {
+        let before = waiting.len();
+        let mut later = Vec::new();
+        for (name, file) in waiting {
+            let at = |why: String| {
+                let offset = source.find(&format!("pipelines.{name}")).unwrap_or(0);
+                diagnostic(path, source, offset, format!("pipelines.{name}"), why)
+            };
+            pipeline::check_name(name).map_err(at)?;
+            if known.get(name).is_some_and(|each| each.builtin) {
+                return Err(at(format!(
+                    "{name:?} is a built-in pipeline and is read-only"
+                )));
+            }
+            let base = file.based_on.as_deref().unwrap_or(DEFAULT_PIPELINE);
+            if !known.contains_key(base) && files.contains_key(base) && base != name {
+                later.push((name, file));
+                continue;
+            }
+            let made = pipeline::resolve(name, file, &known).map_err(at)?;
+            known.insert(name.clone(), made.clone());
+            custom.insert(name.clone(), made);
+        }
+        if later.len() == before {
+            let name = later[0].0;
+            let offset = source.find(&format!("pipelines.{name}")).unwrap_or(0);
+            return Err(diagnostic(
+                path,
+                source,
+                offset,
+                format!("pipelines.{name}"),
+                "based_on forms a loop".into(),
+            ));
+        }
+        waiting = later;
+    }
+    Ok(custom)
+}
+
+fn resolve_projects(
+    files: &BTreeMap<String, ProjectFile>,
+    custom: &BTreeMap<String, Pipeline>,
+    path: &Path,
+    source: &str,
+) -> Result<BTreeMap<String, Project>, ProfileDiagnostic> {
+    let mut projects = BTreeMap::new();
+    for (key, file) in files {
+        let at = |why: String| {
+            let offset = source.find(key.as_str()).unwrap_or(0);
+            diagnostic(path, source, offset, format!("projects.{key}"), why)
+        };
+        let normal = normalize_path(key);
+        if normal.is_empty() {
+            return Err(at("a project needs a workspace path as its key".into()));
+        }
+        if let Some(name) = &file.default_pipeline
+            && !custom.contains_key(name)
+            && !builtin_pipelines().iter().any(|each| &each.name == name)
+        {
+            return Err(at(format!(
+                "default_pipeline {name:?} is not a known pipeline"
+            )));
+        }
+        if let Some(repo) = &file.github_repo
+            && (repo.len() > 100 || repo.chars().any(char::is_whitespace))
+        {
+            return Err(at("github_repo must be a short name like owner/repo".into()));
+        }
+        let project = Project {
+            name: file.name.clone().unwrap_or_else(|| leaf(&normal)),
+            path: normal.clone(),
+            default_pipeline: file.default_pipeline.clone(),
+            agent: file.agent,
+            github_repo: file.github_repo.clone(),
+            protected_paths: file.protected_paths.clone(),
+            budgets: file.budgets,
+        };
+        if projects.insert(normal, project).is_some() {
+            return Err(at("two projects name the same folder".into()));
+        }
+    }
+    Ok(projects)
 }

@@ -824,3 +824,89 @@ fn a_reset_that_the_machine_refuses_writes_nothing() {
         Err(Error::UnknownTicket)
     ));
 }
+
+fn fold_of(data: &std::path::Path, ticket: &TicketId) -> autopilot_pipeline::TicketState {
+    autopilot_pipeline::fold(&watch(data, ticket, 0).unwrap()).unwrap()
+}
+
+// Invariant: choosing a pipeline skips the steps it turns off with a reason
+// the window can show, and the engine cannot start them. Choosing another
+// pipeline brings back only the steps the first one turned off.
+#[test]
+fn a_pipeline_skips_its_off_steps_and_a_later_choice_restores_them() {
+    use autopilot_core::Step;
+    use autopilot_pipeline::StepState;
+    use autopilot_profile::Profile;
+    let data = tempfile::tempdir().unwrap();
+    let ticket = understood_with(data.path(), "pipe", None);
+    let profile = Profile::parse("p.toml", "").unwrap();
+
+    autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "bug-fix").unwrap();
+    let state = fold_of(data.path(), &ticket);
+    assert!(matches!(
+        state.step(Step::Design),
+        StepState::Skipped(reason) if reason == "off in pipeline bug-fix"
+    ));
+    assert_eq!(state.step(Step::Plan), &StepState::Idle);
+    // Clarify is not off in bug-fix, so it still decides on its own.
+    assert!(matches!(
+        autopilot_engine::start_clarify(data.path(), &ticket),
+        Ok(ClarifyStart::Skipped(_))
+    ));
+
+    autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "ui-change").unwrap();
+    assert_eq!(
+        fold_of(data.path(), &ticket).step(Step::Design),
+        &StepState::Idle
+    );
+    let history = watch(data.path(), &ticket, 0).unwrap();
+    assert_eq!(
+        autopilot_engine::chosen_pipeline(&history).unwrap().0,
+        "ui-change"
+    );
+    let view = autopilot_engine::ticket_view(&history).unwrap();
+    assert_eq!(view.pipeline.unwrap().0, "ui-change");
+
+    assert!(autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "nope").is_err());
+}
+
+// Invariant: a step that already ran cannot be switched off by a later choice,
+// and ask-only closes a ticket after Understand because nothing else runs.
+// Without the first, a finished plan could be silently dropped from history.
+#[test]
+fn a_started_step_cannot_be_switched_off_and_ask_only_finishes() {
+    use autopilot_core::Step;
+    use autopilot_engine::Badge;
+    use autopilot_profile::Profile;
+    let data = tempfile::tempdir().unwrap();
+    let ticket = understood_with(data.path(), "pipe2", None);
+    let profile = Profile::parse("p.toml", "").unwrap();
+    // Understand already passed: it is not a step any pipeline can drop.
+    let _ = Step::Understand;
+    autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "ask-only").unwrap();
+    let history = watch(data.path(), &ticket, 0).unwrap();
+    let view = autopilot_engine::ticket_view(&history).unwrap();
+    assert_eq!(view.badge, Badge::Idle, "Clarify has not decided yet");
+    autopilot_engine::start_clarify(data.path(), &ticket).unwrap();
+    let view = autopilot_engine::ticket_view(&watch(data.path(), &ticket, 0).unwrap()).unwrap();
+    assert_eq!(view.badge, Badge::Done);
+
+    // A ticket that started the plan cannot move to a pipeline without one.
+    let other = understood_with(data.path(), "pipe3", None);
+    autopilot_engine::start_clarify(data.path(), &other).unwrap();
+    let planner = Planner(autopilot_core::Plan {
+        criteria: vec![criterion("c1", autopilot_core::Verify::Test, "t1")],
+        test_plan: vec!["t1".into()],
+        files: vec![],
+    });
+    let ticket_row = Ticket {
+        id: other.clone(),
+        title: "t".into(),
+        description: "plain".into(),
+    };
+    run_plan(data.path(), &ticket_row, &planner).unwrap();
+    assert!(
+        autopilot_engine::choose_pipeline(data.path(), &other, &profile, "ask-only").is_err(),
+        "the plan already started"
+    );
+}

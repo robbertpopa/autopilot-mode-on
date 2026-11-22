@@ -380,6 +380,13 @@ pub fn run_build(
         .step(Step::BuildCheck)
         .map(|settings| Limits::from(&settings.limits))
         .ok_or_else(|| Error::NotReady("the profile has no build_check step".into()))?;
+    let limits = match crate::pipelines::chosen(&history) {
+        Some((_, _, Some(cap))) => Limits {
+            rounds: limits.rounds.min(cap),
+            ..limits
+        },
+        _ => limits,
+    };
 
     let (last, hint) = begin(&mut store, &ticket.id, &state, &history, last)?;
 
@@ -398,7 +405,11 @@ pub fn run_build(
         Environment::from_vars(env::vars_os()),
         &env::var_os("PATH").unwrap_or_default(),
     );
-    let policy = Policy::new(setup.profile).map_err(|error| Error::NotReady(error.to_string()))?;
+    // A project adds protected paths and lowers budgets; it never removes any.
+    let scoped = setup
+        .profile
+        .for_project(Some(&setup.repository.to_string_lossy()));
+    let policy = Policy::new(&scoped).map_err(|error| Error::NotReady(error.to_string()))?;
     let checks = standard_checks(&toolbox, std::sync::Arc::new(policy), None);
 
     let journal = Rc::new(RefCell::new(Journal {

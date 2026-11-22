@@ -763,6 +763,14 @@ fn start(
         autopilot_engine::record_workspace(directory, &id, folder)
             .map_err(|error| format!("the ticket started, but its folder was not kept: {error}"))?;
     }
+    // A ticket with no project runs ask-only; one in a project runs the
+    // project's default pipeline, or `full` when it names none.
+    if let Ok(profile) = autopilot_engine::load_profile(&options.profile) {
+        let name = pipeline_for(&profile, workspace);
+        autopilot_engine::choose_pipeline(directory, &id, &profile, &name).map_err(|error| {
+            format!("the ticket started, but its pipeline was not set: {error}")
+        })?;
+    }
     // Clarify is decided right away. Plan and the later steps need a real
     // agent, which the window does not start yet.
     orchestrated_first(options, &id);
@@ -773,6 +781,17 @@ fn start(
             ticket.title
         )),
     }
+}
+
+/// The pipeline a new ticket starts with.
+fn pipeline_for(profile: &autopilot_profile::Profile, workspace: Option<&Path>) -> String {
+    let Some(folder) = workspace else {
+        return autopilot_profile::ASK_ONLY.to_owned();
+    };
+    profile
+        .project(&folder.to_string_lossy())
+        .and_then(|project| project.default_pipeline.clone())
+        .unwrap_or_else(|| autopilot_profile::DEFAULT_PIPELINE.to_owned())
 }
 
 fn answer(

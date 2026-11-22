@@ -119,6 +119,13 @@ pub fn run_plan(directory: &Path, ticket: &Ticket, agent: &impl Agent) -> Result
     if state.step(Step::Understand) != &StepState::Passed {
         return Err(Error::NotReady("Understand has not passed".into()));
     }
+    // Appending a start to a skipped step would corrupt the history, so a
+    // pipeline that turned the plan off ends here.
+    if matches!(state.step(Step::Plan), StepState::Skipped(_)) {
+        return Err(Error::NotReady(
+            "the plan is off in this ticket's pipeline".into(),
+        ));
+    }
     let clarified = matches!(
         state.step(Step::Clarify),
         StepState::Passed | StepState::Skipped(_)
