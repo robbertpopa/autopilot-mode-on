@@ -92,6 +92,11 @@ impl App {
             }
         });
         ui.add_space(8.0);
+        if self.project_selected.is_none()
+            && let Some(first) = list.first()
+        {
+            self.select_project(&first.path);
+        }
         let mut pick = None;
         let width = (ui.available_width() * 0.28).clamp(240.0, 320.0);
         let selected_row = self

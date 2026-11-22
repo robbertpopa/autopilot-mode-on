@@ -213,9 +213,10 @@ impl App {
                 tags.push("runs");
             }
             ui.horizontal(|ui| {
-                ui.add_sized(
-                    [110.0, 18.0],
-                    egui::Label::new(RichText::new(step_name(step)).monospace().size(12.0)),
+                theme::cell(
+                    ui,
+                    110.0,
+                    RichText::new(step_name(step)).monospace().size(12.0),
                 );
                 ui.label(theme::muted(tags.join(" · ")));
                 if step == Step::BuildCheck {

@@ -186,7 +186,7 @@ impl App {
                     dots(ui, &draft.pipeline);
                     for step in Step::ALL {
                         ui.horizontal(|ui| {
-                            ui.add_sized([150.0, 18.0], egui::Label::new(step_name(step)));
+                            theme::cell(ui, 150.0, step_name(step));
                             ui.label(theme::muted(mode_word(draft.pipeline.mode(step))));
                             if let Some((_, why)) =
                                 draft.reasons.iter().find(|(each, _)| *each == step)
@@ -256,7 +256,7 @@ impl App {
         let mut changed = false;
         for (step, mode) in &mut modes {
             ui.horizontal(|ui| {
-                ui.add_sized([150.0, 20.0], egui::Label::new(step_name(*step)));
+                theme::cell(ui, 150.0, step_name(*step));
                 if pipeline.builtin {
                     ui.label(mode_word(*mode));
                 } else {

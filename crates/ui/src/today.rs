@@ -50,16 +50,14 @@ fn next_steps(view: &TicketView) -> Vec<&'static str> {
 
 fn row(ui: &mut egui::Ui, key: &str, value: &str) {
     ui.horizontal_top(|ui| {
-        ui.add_sized(
-            [120.0, 18.0],
-            egui::Label::new(
-                RichText::new(key.to_uppercase())
-                    .monospace()
-                    .size(11.0)
-                    .strong()
-                    .color(theme::TEXT_MUTED()),
-            )
-            .halign(egui::Align::LEFT),
+        theme::cell(
+            ui,
+            120.0,
+            RichText::new(key.to_uppercase())
+                .monospace()
+                .size(11.0)
+                .strong()
+                .color(theme::TEXT_MUTED()),
         );
         ui.label(value);
     });

@@ -256,6 +256,18 @@ pub fn cost_tag(ui: &mut Ui, estimated: bool) {
     }
 }
 
+/// A label in a fixed-width cell, left aligned. `add_sized` centres its widget.
+pub fn cell(ui: &mut Ui, width: f32, text: impl Into<egui::WidgetText>) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, 20.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(width);
+            ui.add(egui::Label::new(text));
+        },
+    );
+}
+
 #[must_use]
 pub fn muted(text: impl Into<String>) -> RichText {
     RichText::new(text).color(TEXT_MUTED())
