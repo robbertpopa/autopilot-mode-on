@@ -144,6 +144,8 @@ pub struct TicketView {
     /// What the agent reported using, one line per run. Empty where an
     /// adapter reports nothing.
     pub usage: Vec<crate::metrics::UsageLine>,
+    /// Assumptions the owner corrected when approving, latest last.
+    pub corrections: Vec<autopilot_core::AssumptionCorrection>,
     /// Exact spend through an API key.
     pub api: Money,
     /// Estimated spend on a subscription. Never added to `api`.
@@ -217,6 +219,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     let mut explained: Vec<(Step, String)> = Vec::new();
     let mut pipeline = None;
     let mut usage = Vec::new();
+    let mut corrections = Vec::new();
     for record in history {
         let at_ms = record.event.at_ms;
         let step = record.event.step;
@@ -243,6 +246,9 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
             }),
             Event::PipelineChosen { name, off, .. } => {
                 pipeline = Some((name.clone(), off.clone()));
+            }
+            Event::AssumptionsCorrected { corrections: made } => {
+                corrections.extend(made.iter().cloned());
             }
             Event::Explained { text } => {
                 if let Some(step) = record.event.step {
@@ -366,6 +372,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         explained,
         pipeline,
         usage,
+        corrections,
         api,
         subscription,
         started_ms: first.event.at_ms,

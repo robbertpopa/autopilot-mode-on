@@ -176,6 +176,7 @@ pub fn rerun_understand(
     let recorded = store.append(ticket, last, &opening)?;
     last = recorded.last().map_or(last, |record| record.seq);
 
+    let description = crate::notes::with_owner_notes(&description, &history, Step::Understand);
     let ticket = Ticket {
         id: ticket.clone(),
         title,

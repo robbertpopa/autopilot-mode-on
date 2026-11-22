@@ -97,6 +97,7 @@ pub fn plan_ticket(directory: &Path, id: &TicketId, agent: &impl Agent) -> Resul
             _ => None,
         })
         .unwrap_or_default();
+    let description = crate::notes::with_owner_notes(&description, &history, Step::Plan);
     let ticket = Ticket {
         id: id.clone(),
         title,

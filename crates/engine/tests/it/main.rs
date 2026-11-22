@@ -10,6 +10,8 @@ mod attachments;
 #[cfg(windows)]
 mod build;
 
+use std::sync::{Arc, Mutex};
+
 use autopilot_agent::{Agent, AgentError, AgentRun, StepRequest, Stopped};
 use autopilot_core::{
     Ambiguity, Clarity, Event, Money, OpenQuestion, Ticket, TicketId, Understanding,
@@ -1014,4 +1016,105 @@ fn project_rules_reach_prompts_stay_out_of_the_workspace_and_cannot_loosen_polic
         request.body,
         autopilot_pipeline::inbox::RequestBody::Approval { forced: true, .. }
     ));
+}
+
+/// Remembers the words each Understand call was given.
+struct Recorder(Arc<Mutex<Vec<String>>>);
+
+impl Agent for Recorder {
+    fn start(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        self.0
+            .lock()
+            .unwrap()
+            .push(request.ticket.description.clone());
+        Ok(AgentRun::spawn(move |_context| {
+            Ok(Understanding {
+                summary: "Implement the sample change.".into(),
+                ambiguity: Ambiguity::all(Clarity::Clear),
+                open_questions: vec![],
+                assumptions: vec![],
+                needs_design: false,
+                ui_files: vec![],
+                files_touched: vec![],
+            })
+        })?)
+    }
+}
+
+fn answer_with(data: &std::path::Path, ticket: &TicketId, decision: Decision) {
+    let inbox = Inbox::in_data_dir(data);
+    let id = inbox.requests().unwrap().remove(0).id;
+    let reply = Reply::Approval {
+        decision,
+        allow_for_project: false,
+    };
+    inbox.write_answer(&id, &reply).unwrap();
+    sync_inbox(data, ticket).unwrap();
+}
+
+// Invariant: a step sent back with a note stops as Interrupted, and the next
+// run is given that note as labelled data. A change that dropped the note, or
+// passed it without the data label, would fail here. A note of only spaces is
+// a plain rejection, and a huge note is cut, so one paste cannot flood a prompt.
+#[test]
+fn a_note_sent_back_reaches_the_next_run_as_data() {
+    let (data, ticket) = understood_and_asking("plain");
+    answer_with(
+        data.path(),
+        &ticket,
+        Decision::SendBack("  mention the CSV header  ".into()),
+    );
+    assert!(matches!(
+        last_kind(data.path(), &ticket),
+        Event::Interrupted { ref reason } if reason == "sent back with notes"
+    ));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    rerun_understand(data.path(), &ticket, &Recorder(seen.clone()), Some(false)).unwrap();
+    let words = seen.lock().unwrap().pop().unwrap();
+    assert!(words.contains("mention the CSV header"), "{words}");
+    assert!(words.contains("not a command"), "{words}");
+
+    let (data, ticket) = understood_and_asking("plain");
+    answer_with(data.path(), &ticket, Decision::SendBack("   ".into()));
+    assert!(matches!(
+        last_kind(data.path(), &ticket),
+        Event::Interrupted { ref reason } if reason == "rejected by the owner"
+    ));
+
+    let (data, ticket) = understood_and_asking("plain");
+    answer_with(data.path(), &ticket, Decision::SendBack("é".repeat(10_000)));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    rerun_understand(data.path(), &ticket, &Recorder(seen.clone()), Some(false)).unwrap();
+    let words = seen.lock().unwrap().pop().unwrap();
+    assert!(
+        words.chars().filter(|c| *c == 'é').count() == 4_000,
+        "cut to the limit"
+    );
+}
+
+// Invariant: approving with a corrected assumption lets the step pass, records
+// the correction in the log, and shows it in the ticket view. Without the
+// event the correction would live only in the window and be lost on restart.
+#[test]
+fn a_corrected_assumption_is_recorded_and_viewed() {
+    let (data, ticket) = understood_and_asking("plain");
+    answer_with(
+        data.path(),
+        &ticket,
+        Decision::ApproveCorrected(vec![autopilot_core::AssumptionCorrection {
+            assumption: "UTF-8".into(),
+            correction: "Latin-1".into(),
+        }]),
+    );
+    let history = watch(data.path(), &ticket, 0).unwrap();
+    assert!(history.iter().any(|record| matches!(
+        &record.event.kind,
+        Event::AssumptionsCorrected { corrections } if corrections.len() == 1
+    )));
+    assert!(matches!(
+        history.last().unwrap().event.kind,
+        Event::StepFinished
+    ));
+    let view = autopilot_engine::ticket_view(&history).unwrap();
+    assert_eq!(view.corrections[0].correction, "Latin-1");
 }
