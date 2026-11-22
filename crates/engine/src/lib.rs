@@ -28,6 +28,7 @@ mod change;
 mod control;
 mod design;
 mod explain;
+mod notes;
 mod plan;
 mod profile_edit;
 mod publish;
@@ -677,10 +678,28 @@ fn commit_approval(
     decision: &Decision,
 ) -> Result<(), Error> {
     let last = history.last().ok_or(Error::UnknownTicket)?.seq;
+    let tidy = match decision {
+        Decision::SendBack(note) => match notes::clean_note(note) {
+            text if text.is_empty() => Decision::Reject,
+            text => Decision::SendBack(text),
+        },
+        Decision::ApproveCorrected(fixes) => Decision::ApproveCorrected(
+            fixes
+                .iter()
+                .map(|fix| autopilot_core::AssumptionCorrection {
+                    assumption: notes::clean_note(&fix.assumption),
+                    correction: notes::clean_note(&fix.correction),
+                })
+                .filter(|fix| !fix.correction.is_empty())
+                .collect(),
+        ),
+        other => other.clone(),
+    };
+    let decision = &tidy;
     let answer =
         serde_json::to_string(decision).map_err(|error| Error::History(error.to_string()))?;
     let at = timestamp()?;
-    let rejected = matches!(decision, Decision::Reject);
+    let rejected = matches!(decision, Decision::Reject | Decision::SendBack(_));
     let mut events = vec![event(
         at,
         Some(step),
@@ -690,9 +709,23 @@ fn commit_approval(
         },
     )];
     if rejected {
-        let reason = "rejected by the owner".into();
+        let reason = if matches!(decision, Decision::SendBack(_)) {
+            "sent back with notes"
+        } else {
+            "rejected by the owner"
+        };
+        let reason = reason.into();
         events.push(event(at, Some(step), Event::Interrupted { reason }));
     } else {
+        if let Decision::ApproveCorrected(corrections) = decision {
+            events.push(event(
+                at,
+                Some(step),
+                Event::AssumptionsCorrected {
+                    corrections: corrections.clone(),
+                },
+            ));
+        }
         if step == Step::Plan {
             let sha256 = plan::store_approved(directory, ticket, history)?;
             events.push(event(at, Some(step), Event::PlanApproved { sha256 }));

@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use autopilot_core::{OpenQuestion, RequestId, TicketId};
+use autopilot_core::{AssumptionCorrection, OpenQuestion, RequestId, TicketId};
 use serde::{Deserialize, Serialize};
 
 use crate::clarify::Choice;
@@ -49,6 +49,11 @@ pub enum Decision {
     Approve,
     Edit(String),
     Reject,
+    /// Stop the step and run it again with these notes from the owner. Only
+    /// Understand and Plan read them.
+    SendBack(String),
+    /// Approve, and record corrections to assumptions on the way.
+    ApproveCorrected(Vec<AssumptionCorrection>),
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

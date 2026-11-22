@@ -138,6 +138,8 @@ pub struct TicketView {
     pub needs_design: bool,
     /// Plain-words explanations kept in the history, by step.
     pub explained: Vec<(Step, String)>,
+    /// Assumptions the owner corrected when approving, latest last.
+    pub corrections: Vec<autopilot_core::AssumptionCorrection>,
     /// Exact spend through an API key.
     pub api: Money,
     /// Estimated spend on a subscription. Never added to `api`.
@@ -209,6 +211,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     let mut triage = None;
     let mut needs_design = false;
     let mut explained: Vec<(Step, String)> = Vec::new();
+    let mut corrections = Vec::new();
     for record in history {
         let at_ms = record.event.at_ms;
         let step = record.event.step;
@@ -228,6 +231,9 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
             }
             Event::Workspace { path } => workspace = Some(path.clone()),
             Event::Triaged { triage: made } => triage = Some(made.clone()),
+            Event::AssumptionsCorrected { corrections: made } => {
+                corrections.extend(made.iter().cloned());
+            }
             Event::Explained { text } => {
                 if let Some(step) = record.event.step {
                     explained.retain(|(kept, _)| *kept != step);
@@ -348,6 +354,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         triage,
         needs_design,
         explained,
+        corrections,
         api,
         subscription,
         started_ms: first.event.at_ms,
