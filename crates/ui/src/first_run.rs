@@ -286,7 +286,9 @@ fn step_card(ui: &mut egui::Ui, name: &str, state: &str, ready: bool, hint: Opti
             };
             ui.label(RichText::new(mark).color(color));
             ui.label(RichText::new(name).strong());
-            ui.label(theme::muted(state));
+            // A long path must not widen the card past the column.
+            ui.add(egui::Label::new(theme::muted(state)).truncate())
+                .on_hover_text(state);
         });
         if let (false, Some(hint)) = (ready, hint) {
             ui.horizontal(|ui| {
