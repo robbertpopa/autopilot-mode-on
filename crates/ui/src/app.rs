@@ -114,7 +114,7 @@ pub struct App {
     /// Texts of what each waiting request asks, read once per snapshot.
     waiting_cache: std::collections::HashMap<(TicketId, RequestId), String>,
     /// Whether the data folder holds the sample-data marker, read once per snapshot.
-    sample_data: bool,
+    pub(crate) sample_data: bool,
     /// The project folder last chosen, read once.
     pub(crate) saved_workspace: Option<std::path::PathBuf>,
     /// Tickets started in this window that the orchestrator has not looked at.
@@ -123,6 +123,8 @@ pub struct App {
     /// "Do not ask again after this kind of step" on an approval.
     pub(crate) always: bool,
     pub(crate) notify: bool,
+    /// Whether the first screen has been dealt with, kept in the data folder.
+    pub(crate) welcomed: bool,
     announced: bool,
     last_badges: std::collections::HashMap<TicketId, Badge>,
     update: Option<autopilot_update::Update>,
@@ -153,6 +155,7 @@ impl App {
         let sample_data = options.data_dir.join(crate::demo::MARKER).exists();
         let saved_workspace = backend::saved_workspace(&options.data_dir);
         let notify = backend::notifications_on(&options.data_dir);
+        let welcomed = backend::welcomed(&options.data_dir);
         theme::apply(context, light);
         let (sender, receiver) = mpsc::channel();
         if watch {
@@ -215,6 +218,7 @@ impl App {
             orchestrator,
             always: false,
             notify,
+            welcomed,
             announced: false,
             last_badges: std::collections::HashMap::new(),
             update: None,

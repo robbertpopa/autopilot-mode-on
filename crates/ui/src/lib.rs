@@ -319,6 +319,27 @@ mod tests {
         assert!(!app.is_first_run());
     }
 
+    // Invariant: the first screen is remembered once dealt with; a fresh
+    // start in the same data folder never shows it again.
+    #[test]
+    fn the_first_screen_shows_once_ever() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        assert!(app.is_first_run());
+        backend::mark_welcomed(&options.data_dir);
+        let mut again = App::new(&context, options.clone(), false);
+        again.set_snapshot(read(&options));
+        assert!(!again.is_first_run());
+    }
+
     // Invariant: a ticket started with no project runs the ask-only pipeline,
     // so Plan is skipped and cannot be made; one with a project runs `full`.
     // Deriving ask-only from a missing folder later would change old tickets.

@@ -285,6 +285,21 @@ pub fn notifications_on(data_dir: &Path) -> bool {
     std::fs::read_to_string(data_dir.join(NOTIFY_FILE)).map_or(true, |text| text.trim() != "off")
 }
 
+const WELCOMED_FILE: &str = "ui-welcomed.txt";
+
+/// Whether the owner has been through the first screen. It is written once
+/// and never cleared by the app, so the screen shows on the very first start
+/// only.
+#[must_use]
+pub fn welcomed(data_dir: &Path) -> bool {
+    data_dir.join(WELCOMED_FILE).exists()
+}
+
+pub fn mark_welcomed(data_dir: &Path) {
+    let _ = std::fs::create_dir_all(data_dir);
+    let _ = std::fs::write(data_dir.join(WELCOMED_FILE), "yes");
+}
+
 pub fn save_notifications(data_dir: &Path, on: bool) {
     let _ = std::fs::create_dir_all(data_dir);
     let _ = std::fs::write(data_dir.join(NOTIFY_FILE), if on { "on" } else { "off" });
