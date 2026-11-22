@@ -1141,3 +1141,54 @@ fn a_corrected_assumption_is_recorded_and_viewed() {
     let view = autopilot_engine::ticket_view(&history).unwrap();
     assert_eq!(view.corrections[0].correction, "Latin-1");
 }
+
+/// Predicts the given files for every ticket it understands.
+struct Touches(Vec<String>);
+
+impl Agent for Touches {
+    fn start(&self, _request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        let files = self.0.clone();
+        Ok(AgentRun::spawn(move |_context| {
+            Ok(Understanding {
+                summary: "Implement the sample change.".into(),
+                ambiguity: Ambiguity::all(Clarity::Clear),
+                open_questions: vec![],
+                assumptions: vec![],
+                needs_design: false,
+                ui_files: vec![],
+                files_touched: files,
+            })
+        })?)
+    }
+}
+
+fn understood_touching(data: &std::path::Path, id: &str, files: &[&str]) -> TicketId {
+    let ticket = Ticket {
+        id: TicketId::from(id),
+        title: format!("Ticket {id}"),
+        description: "plain".into(),
+    };
+    let agent = Touches(files.iter().map(|file| (*file).to_owned()).collect());
+    run_understand_with(data, &ticket, &agent, Some(false)).unwrap();
+    ticket.id
+}
+
+// Invariant: two open tickets that predict the same file (or a folder holding
+// it) are flagged for each other; a disjoint one is not, and a hostile
+// prediction is ignored instead of failing the check. A flag on the wrong
+// ticket would tell the owner to merge or wait for unrelated work.
+#[test]
+fn tickets_that_predict_the_same_file_are_flagged_for_each_other() {
+    let data = tempfile::tempdir().unwrap();
+    let first = understood_touching(data.path(), "a", &["src/export.rs", "../outside"]);
+    let second = understood_touching(data.path(), "b", &["src"]);
+    let apart = understood_touching(data.path(), "c", &["docs/readme.md"]);
+    let none = autopilot_engine::find_overlaps(data.path(), &apart).unwrap();
+    assert_eq!(none.len(), 0);
+    let flagged = autopilot_engine::find_overlaps(data.path(), &first).unwrap();
+    assert_eq!(flagged.len(), 1, "{flagged:?}");
+    assert_eq!(flagged[0].other, second);
+    assert_eq!(flagged[0].title, "Ticket b");
+    let back = autopilot_engine::find_overlaps(data.path(), &second).unwrap();
+    assert_eq!(back[0].other, first);
+}

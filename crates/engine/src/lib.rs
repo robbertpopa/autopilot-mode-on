@@ -30,6 +30,7 @@ mod design;
 mod explain;
 mod metrics;
 mod notes;
+mod overlap;
 mod pipelines;
 mod plan;
 mod profile_edit;
@@ -55,6 +56,7 @@ pub use design::{
 };
 pub use explain::{explain_step, kept as explanation_kept, prompt as explain_prompt};
 pub use metrics::{PipelineMetrics, StepMetrics, UsageLine, metrics_of, pipeline_metrics};
+pub use overlap::{TicketOverlap, find_overlaps};
 pub use pipelines::{choose_pipeline, chosen as chosen_pipeline};
 pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
