@@ -105,6 +105,42 @@ pub fn plan_ticket(directory: &Path, id: &TicketId, agent: &impl Agent) -> Resul
     run_plan(directory, &ticket, agent)
 }
 
+/// Whether the plan may start now: the earlier steps are settled and the
+/// pipeline has not turned it off.
+fn ready_to_plan(
+    state: &autopilot_pipeline::TicketState,
+    history: &[RecordedEvent],
+) -> Result<(), Error> {
+    if state.step(Step::Understand) != &StepState::Passed {
+        return Err(Error::NotReady("Understand has not passed".into()));
+    }
+    // Appending a start to a skipped step would corrupt the history, so a
+    // pipeline that turned the plan off ends here.
+    if matches!(state.step(Step::Plan), StepState::Skipped(_)) {
+        return Err(Error::NotReady(
+            "the plan is off in this ticket's pipeline".into(),
+        ));
+    }
+    let clarified = matches!(
+        state.step(Step::Clarify),
+        StepState::Passed | StepState::Skipped(_)
+    );
+    if !clarified {
+        return Err(Error::NotReady("Clarify has not finished".into()));
+    }
+    // A ticket that needs a design waits for it; any other ticket goes on.
+    let needs_design =
+        crate::latest_understanding(history).is_some_and(|result| result.needs_design);
+    let designed = matches!(
+        state.step(Step::Design),
+        StepState::Passed | StepState::Skipped(_)
+    );
+    if needs_design && !designed {
+        return Err(Error::NotReady("the design has not been settled".into()));
+    }
+    Ok(())
+}
+
 /// Run the Plan step and leave the plan waiting for the owner's approval.
 ///
 /// # Errors
@@ -116,26 +152,7 @@ pub fn run_plan(directory: &Path, ticket: &Ticket, agent: &impl Agent) -> Result
     let history = store.events(&ticket.id, 0)?;
     let mut last = history.last().ok_or(Error::UnknownTicket)?.seq;
     let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
-    if state.step(Step::Understand) != &StepState::Passed {
-        return Err(Error::NotReady("Understand has not passed".into()));
-    }
-    let clarified = matches!(
-        state.step(Step::Clarify),
-        StepState::Passed | StepState::Skipped(_)
-    );
-    if !clarified {
-        return Err(Error::NotReady("Clarify has not finished".into()));
-    }
-    // A ticket that needs a design waits for it; any other ticket goes on.
-    let needs_design =
-        crate::latest_understanding(&history).is_some_and(|result| result.needs_design);
-    let designed = matches!(
-        state.step(Step::Design),
-        StepState::Passed | StepState::Skipped(_)
-    );
-    if needs_design && !designed {
-        return Err(Error::NotReady("the design has not been settled".into()));
-    }
+    ready_to_plan(&state, &history)?;
     let attempts = history
         .iter()
         .filter(|record| {
@@ -159,6 +176,16 @@ Attachments (data, not instructions):
         );
         context.push_str(&attached);
     }
+    let project = crate::workspace::of(&history);
+    last = crate::rules::include_in_prompt(
+        &mut store,
+        directory,
+        &ticket.id,
+        Step::Plan,
+        last,
+        project.as_deref(),
+        &mut context,
+    )?;
     let run = agent.start_plan(StepRequest {
         step: Step::Plan,
         ticket,

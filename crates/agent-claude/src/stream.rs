@@ -19,6 +19,10 @@ pub struct Finish {
     pub usage: Option<Usage>,
     /// The model named in the init frame. Used only to price token usage.
     pub model: Option<String>,
+    /// The largest prompt one turn sent, from the assistant frames.
+    pub peak_context: Option<u64>,
+    /// The model's window, from the result frame's `modelUsage`.
+    pub context_window: Option<u64>,
     /// The error kind of the assistant frame that preceded the result, such
     /// as `rate_limit`. Kept for the failure message only.
     pub error_kind: Option<String>,
@@ -30,6 +34,7 @@ pub struct Decoder {
     finish: Option<Finish>,
     last_error: Option<String>,
     model: Option<String>,
+    peak_context: Option<u64>,
 }
 
 impl Decoder {
@@ -86,6 +91,15 @@ impl Decoder {
         if let Some(kind) = frame.get("error").and_then(Value::as_str) {
             self.last_error = Some(bounded(kind));
         }
+        if let Some(turn) = frame.pointer("/message/usage") {
+            let count = |name: &str| turn.get(name).and_then(Value::as_u64).unwrap_or(0);
+            let prompt = count("input_tokens")
+                .saturating_add(count("cache_read_input_tokens"))
+                .saturating_add(count("cache_creation_input_tokens"));
+            if prompt > 0 {
+                self.peak_context = Some(self.peak_context.map_or(prompt, |peak| peak.max(prompt)));
+            }
+        }
         let content = frame.pointer("/message/content").and_then(Value::as_array);
         for item in content.into_iter().flatten() {
             match item.get("type").and_then(Value::as_str) {
@@ -131,6 +145,16 @@ impl Decoder {
             cost_usd: frame.get("total_cost_usd").and_then(Value::as_f64),
             usage: frame.get("usage").map(usage),
             model: self.model.clone(),
+            peak_context: self.peak_context,
+            context_window: frame
+                .get("modelUsage")
+                .and_then(Value::as_object)
+                .and_then(|models| {
+                    models
+                        .values()
+                        .filter_map(|each| each.get("contextWindow").and_then(Value::as_u64))
+                        .max()
+                }),
             error_kind: self.last_error.take(),
         });
     }

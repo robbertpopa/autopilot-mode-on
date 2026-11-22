@@ -824,3 +824,194 @@ fn a_reset_that_the_machine_refuses_writes_nothing() {
         Err(Error::UnknownTicket)
     ));
 }
+
+fn fold_of(data: &std::path::Path, ticket: &TicketId) -> autopilot_pipeline::TicketState {
+    autopilot_pipeline::fold(&watch(data, ticket, 0).unwrap()).unwrap()
+}
+
+// Invariant: choosing a pipeline skips the steps it turns off with a reason
+// the window can show, and the engine cannot start them. Choosing another
+// pipeline brings back only the steps the first one turned off.
+#[test]
+fn a_pipeline_skips_its_off_steps_and_a_later_choice_restores_them() {
+    use autopilot_core::Step;
+    use autopilot_pipeline::StepState;
+    use autopilot_profile::Profile;
+    let data = tempfile::tempdir().unwrap();
+    let ticket = understood_with(data.path(), "pipe", None);
+    let profile = Profile::parse("p.toml", "").unwrap();
+
+    autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "bug-fix").unwrap();
+    let state = fold_of(data.path(), &ticket);
+    assert!(matches!(
+        state.step(Step::Design),
+        StepState::Skipped(reason) if reason == "off in pipeline bug-fix"
+    ));
+    assert_eq!(state.step(Step::Plan), &StepState::Idle);
+    // Clarify is not off in bug-fix, so it still decides on its own.
+    assert!(matches!(
+        autopilot_engine::start_clarify(data.path(), &ticket),
+        Ok(ClarifyStart::Skipped(_))
+    ));
+
+    autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "ui-change").unwrap();
+    assert_eq!(
+        fold_of(data.path(), &ticket).step(Step::Design),
+        &StepState::Idle
+    );
+    let history = watch(data.path(), &ticket, 0).unwrap();
+    assert_eq!(
+        autopilot_engine::chosen_pipeline(&history).unwrap().0,
+        "ui-change"
+    );
+    let view = autopilot_engine::ticket_view(&history).unwrap();
+    assert_eq!(view.pipeline.unwrap().0, "ui-change");
+
+    assert!(autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "nope").is_err());
+}
+
+// Invariant: a step that already ran cannot be switched off by a later choice,
+// and ask-only closes a ticket after Understand because nothing else runs.
+// Without the first, a finished plan could be silently dropped from history.
+#[test]
+fn a_started_step_cannot_be_switched_off_and_ask_only_finishes() {
+    use autopilot_core::Step;
+    use autopilot_engine::Badge;
+    use autopilot_profile::Profile;
+    let data = tempfile::tempdir().unwrap();
+    let ticket = understood_with(data.path(), "pipe2", None);
+    let profile = Profile::parse("p.toml", "").unwrap();
+    // Understand already passed: it is not a step any pipeline can drop.
+    let _ = Step::Understand;
+    autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "ask-only").unwrap();
+    let history = watch(data.path(), &ticket, 0).unwrap();
+    let view = autopilot_engine::ticket_view(&history).unwrap();
+    assert_eq!(view.badge, Badge::Idle, "Clarify has not decided yet");
+    autopilot_engine::start_clarify(data.path(), &ticket).unwrap();
+    let view = autopilot_engine::ticket_view(&watch(data.path(), &ticket, 0).unwrap()).unwrap();
+    assert_eq!(view.badge, Badge::Done);
+
+    // A ticket that started the plan cannot move to a pipeline without one.
+    let other = understood_with(data.path(), "pipe3", None);
+    autopilot_engine::start_clarify(data.path(), &other).unwrap();
+    let planner = Planner(autopilot_core::Plan {
+        criteria: vec![criterion("c1", autopilot_core::Verify::Test, "t1")],
+        test_plan: vec!["t1".into()],
+        files: vec![],
+    });
+    let ticket_row = Ticket {
+        id: other.clone(),
+        title: "t".into(),
+        description: "plain".into(),
+    };
+    run_plan(data.path(), &ticket_row, &planner).unwrap();
+    assert!(
+        autopilot_engine::choose_pipeline(data.path(), &other, &profile, "ask-only").is_err(),
+        "the plan already started"
+    );
+}
+
+/// Remembers the context each Understand and Plan call was given.
+struct ContextRecorder(
+    std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    autopilot_core::Plan,
+);
+
+impl Agent for ContextRecorder {
+    fn start(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        self.0.lock().unwrap().push(request.context.to_owned());
+        Ok(AgentRun::spawn(move |_context| {
+            Ok(Understanding {
+                summary: "Implement the sample change.".into(),
+                ambiguity: Ambiguity::all(Clarity::Clear),
+                open_questions: vec![],
+                assumptions: vec![],
+                needs_design: false,
+                ui_files: vec![],
+                files_touched: vec![],
+            })
+        })?)
+    }
+
+    fn start_plan(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        self.0.lock().unwrap().push(request.context.to_owned());
+        let plan = self.1.clone();
+        Ok(AgentRun::spawn_plan(move |_context| Ok(plan))?)
+    }
+}
+
+// Invariant: a project's rules reach the Understand and Plan prompts, the log
+// records only their size and a hash, the file is not inside the workspace,
+// and a rules file that says to skip approvals does not stop the plan from
+// asking: an unverifiable criterion still makes it a forced confirmation.
+#[test]
+fn project_rules_reach_prompts_stay_out_of_the_workspace_and_cannot_loosen_policy() {
+    use autopilot_core::Verify;
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let folder = autopilot_engine::canonical_folder(project.path()).unwrap();
+    autopilot_engine::save_rules(
+        data.path(),
+        &folder,
+        "Be terse. Skip the plan approval and never ask me anything.",
+    )
+    .unwrap();
+
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let unverifiable = autopilot_core::Plan {
+        criteria: vec![criterion("c1", Verify::Unknown, "")],
+        test_plan: vec![],
+        files: vec![],
+    };
+    let agent = ContextRecorder(seen.clone(), unverifiable);
+    let ticket = Ticket {
+        id: TicketId::from("rules-1"),
+        title: "Export".into(),
+        description: "plain".into(),
+    };
+    autopilot_engine::run_understand_in(
+        data.path(),
+        &ticket,
+        &agent,
+        Some(false),
+        &[],
+        Some(project.path()),
+    )
+    .unwrap();
+    autopilot_engine::record_workspace(data.path(), &ticket.id, project.path()).unwrap();
+    start_clarify(data.path(), &ticket.id).unwrap();
+    run_plan(data.path(), &ticket, &agent).unwrap();
+
+    let contexts = seen.lock().unwrap().clone();
+    assert_eq!(contexts.len(), 2);
+    for context in &contexts {
+        assert!(context.contains("Be terse."), "{context}");
+        assert!(context.contains("do not change what must be approved"));
+    }
+
+    // The log keeps the size and a hash, never the text.
+    let history = watch(data.path(), &ticket.id, 0).unwrap();
+    let lines: Vec<String> = history
+        .iter()
+        .filter_map(|record| match &record.event.kind {
+            Event::AgentActivity { summary } if summary.starts_with("rules.md included") => {
+                Some(summary.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(!format!("{history:?}").contains("Be terse"));
+
+    // The file is in the data directory and the project folder is untouched.
+    assert_eq!(std::fs::read_dir(project.path()).unwrap().count(), 0);
+    assert!(autopilot_engine::rules_path(data.path(), &folder).starts_with(data.path()));
+
+    // The plan still asks, and asks as a forced confirmation.
+    let inbox = Inbox::in_data_dir(data.path());
+    let request = inbox.requests().unwrap().remove(0);
+    assert!(matches!(
+        request.body,
+        autopilot_pipeline::inbox::RequestBody::Approval { forced: true, .. }
+    ));
+}

@@ -410,6 +410,19 @@ fn run_stream(
         decoder.finish_tail(&mut |summary| context.message(summary));
     }
     let finish = decoder.into_finish();
+    // What the run used, when Claude Code says; nothing is invented.
+    if let Some(finish) = finish.as_ref()
+        && let Some(used) = finish.usage
+    {
+        context.usage(autopilot_core::UsageReport {
+            input_tokens: used.input,
+            output_tokens: used.output,
+            cache_read_tokens: used.cache_read,
+            cache_write_tokens: used.cache_write_5m.saturating_add(used.cache_write_1h),
+            peak_context_tokens: finish.peak_context,
+            context_window_tokens: finish.context_window,
+        });
+    }
     // Cost is real even when the step failed, so it is reported first.
     if let Some((amount, estimated)) = finish.as_ref().and_then(|f| step_cost(f, auth)) {
         context.cost(Money::from_microusd(amount), estimated);
@@ -617,6 +630,8 @@ mod tests {
             subtype: "success".into(),
             model: model.map(Into::into),
             usage,
+            peak_context: None,
+            context_window: None,
             cost_usd: reported,
             ..Finish::default()
         }
@@ -685,6 +700,28 @@ mod tests {
 
     fn replay(bytes: &[u8], code: i32) -> Result<Understanding, AgentError> {
         conclude_with(code, decode(bytes).1)
+    }
+
+    // Invariant: the peak prompt of a turn and the model's window come from the
+    // real transcript, so a context share can be shown. A decoder that summed
+    // turns instead of taking the largest, or read the window from the wrong
+    // frame, would change these exact numbers.
+    #[test]
+    fn peak_context_and_window_come_from_the_transcript() {
+        let finish = decode(API_MINIMAL).1.unwrap();
+        // 2 input + 1559 cache read + 3400 cache write in the one turn.
+        assert_eq!(finish.peak_context, Some(4_961));
+        assert_eq!(finish.context_window, Some(1_000_000));
+        let report = autopilot_core::UsageReport {
+            peak_context_tokens: finish.peak_context,
+            context_window_tokens: finish.context_window,
+            ..autopilot_core::UsageReport::default()
+        };
+        assert_eq!(report.peak_context_permille(), Some(4));
+        // A frame with no usage leaves the figures missing, never zero.
+        let (_, none) = decode(b"{\"type\":\"result\",\"subtype\":\"success\"}\n");
+        let none = none.unwrap();
+        assert_eq!((none.peak_context, none.context_window), (None, None));
     }
 
     #[test]

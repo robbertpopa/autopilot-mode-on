@@ -445,6 +445,33 @@ pub struct StepChange {
     pub change: StepOverride,
 }
 
+/// What a step consumed, as the agent reported it. Every figure is optional
+/// where an adapter may report nothing: a missing figure is "not reported",
+/// never zero and never a guess.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct UsageReport {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    /// The largest prompt any single turn sent, in tokens.
+    #[serde(default)]
+    pub peak_context_tokens: Option<u64>,
+    /// The model's context window as the agent reported it.
+    #[serde(default)]
+    pub context_window_tokens: Option<u64>,
+}
+
+impl UsageReport {
+    /// The peak as a share of the window in thousandths, when both are known.
+    #[must_use]
+    pub fn peak_context_permille(&self) -> Option<u32> {
+        let peak = self.peak_context_tokens?;
+        let window = self.context_window_tokens.filter(|window| *window > 0)?;
+        u32::try_from(peak.saturating_mul(1000) / window).ok()
+    }
+}
+
 /// What an attachment is, which decides how the window shows it.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -551,6 +578,18 @@ pub enum Event {
     Workspace {
         path: String,
     },
+    /// The pipeline the ticket runs, resolved when it was chosen so the log
+    /// stays readable if the profile changes. A ticket with none recorded ran
+    /// the `full` pipeline.
+    PipelineChosen {
+        name: String,
+        /// Steps the pipeline never runs.
+        #[serde(default)]
+        off: Vec<Step>,
+        /// A lower cap on build rounds, if the pipeline sets one.
+        #[serde(default)]
+        rounds: Option<u32>,
+    },
     /// The orchestrator's decision for the later steps. The settings it chose
     /// are recorded next to it as a ticket-scope `SettingsOverridden`.
     Triaged {
@@ -562,6 +601,10 @@ pub enum Event {
     StepReset {
         #[serde(default)]
         and_after: bool,
+    },
+    /// What the agent reported using for a step's run, kept next to its cost.
+    UsageReported {
+        usage: UsageReport,
     },
     Paused,
     Resumed,

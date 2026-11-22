@@ -92,6 +92,8 @@ struct BuildRound<'a, A: Agent> {
     kept: Kept,
     session: Option<SessionId>,
     hint: Option<String>,
+    /// The project rules block and the log line that says it was included.
+    rules: Option<(String, String)>,
     cancel: AtomicBool,
 }
 
@@ -117,6 +119,9 @@ fn prompt(round: &BuildRound<'_, impl Agent>, request: &BuildRequest) -> Result<
     }
     if let Some(hint) = &round.hint {
         let _ = writeln!(text, "Note from the owner: {hint}");
+    }
+    if let Some((block, _)) = &round.rules {
+        text.push_str(block);
     }
     let _ = write!(
         text,
@@ -152,6 +157,13 @@ impl<A: Agent> Round for BuildRound<'_, A> {
             (Session::Continue, Some(reference)) => SessionUse::Resume(reference.clone()),
             _ => SessionUse::Fresh,
         };
+        if request.failed.is_none()
+            && let Some((_, logged)) = &self.rules
+        {
+            self.journal.borrow_mut().push(Event::AgentActivity {
+                summary: logged.clone(),
+            })?;
+        }
         let text = prompt(self, request)?;
         let run = self
             .agent
@@ -180,6 +192,10 @@ impl<A: Agent> Round for BuildRound<'_, A> {
                     .journal
                     .borrow_mut()
                     .push(Event::AgentActivity { summary })?,
+                AgentEvent::Usage(usage) => self
+                    .journal
+                    .borrow_mut()
+                    .push(Event::UsageReported { usage })?,
                 AgentEvent::Cost { amount, estimated } => {
                     cost = cost.checked_add(amount).unwrap_or(cost);
                     self.journal
@@ -380,6 +396,13 @@ pub fn run_build(
         .step(Step::BuildCheck)
         .map(|settings| Limits::from(&settings.limits))
         .ok_or_else(|| Error::NotReady("the profile has no build_check step".into()))?;
+    let limits = match crate::pipelines::chosen(&history) {
+        Some((_, _, Some(cap))) => Limits {
+            rounds: limits.rounds.min(cap),
+            ..limits
+        },
+        _ => limits,
+    };
 
     let (last, hint) = begin(&mut store, &ticket.id, &state, &history, last)?;
 
@@ -398,7 +421,11 @@ pub fn run_build(
         Environment::from_vars(env::vars_os()),
         &env::var_os("PATH").unwrap_or_default(),
     );
-    let policy = Policy::new(setup.profile).map_err(|error| Error::NotReady(error.to_string()))?;
+    // A project adds protected paths and lowers budgets; it never removes any.
+    let scoped = setup
+        .profile
+        .for_project(Some(&setup.repository.to_string_lossy()));
+    let policy = Policy::new(&scoped).map_err(|error| Error::NotReady(error.to_string()))?;
     let checks = standard_checks(&toolbox, std::sync::Arc::new(policy), None);
 
     let journal = Rc::new(RefCell::new(Journal {
@@ -421,6 +448,7 @@ pub fn run_build(
         kept: Kept::default(),
         session: latest_session(&history),
         hint,
+        rules: crate::rules::prompt_block(directory, Some(&setup.repository.to_string_lossy())),
         cancel: AtomicBool::new(false),
     };
     let sink = Rc::clone(&journal);

@@ -225,6 +225,8 @@ impl TicketState {
             | Event::Described { .. }
             | Event::Attached { .. }
             | Event::Explained { .. }
+            | Event::PipelineChosen { .. }
+            | Event::UsageReported { .. }
             | Event::Workspace { .. }
             | Event::Triaged { .. }
             | Event::DesignResult { .. }
