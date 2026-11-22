@@ -149,6 +149,71 @@ mod tests {
         assert_ne!(settled.badge, autopilot_engine::Badge::NeedsYou);
     }
 
+    // Invariant: a ticket started with no project runs the ask-only pipeline,
+    // so Plan is skipped and cannot be made; one with a project runs `full`.
+    // Deriving ask-only from a missing folder later would change old tickets.
+    #[test]
+    fn a_ticket_with_no_project_runs_ask_only_and_cannot_be_planned() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        perform(
+            &options,
+            &Action::Start {
+                title: "Just a question".into(),
+                description: "What does the export do?".into(),
+                attachments: Vec::new(),
+                workspace: None,
+            },
+        )
+        .unwrap();
+        let view = read(&options).tickets[0].clone();
+        assert_eq!(view.pipeline.as_ref().unwrap().0, "ask-only");
+        assert!(matches!(
+            view.step(Step::Plan).unwrap().state,
+            autopilot_pipeline::StepState::Skipped(_)
+        ));
+        let outcome = perform(&options, &Action::MakePlan(view.id.clone()));
+        assert!(outcome.is_err(), "{outcome:?}");
+        assert!(read(&options).problem.is_none(), "the history stays valid");
+    }
+
+    // Invariant: retrying with more turns doubles the cap for that ticket
+    // alone, up to the limit, and then says so. A project-wide change would
+    // raise spend for every ticket; no cap would loop forever.
+    #[test]
+    fn more_turns_raise_one_tickets_cap_up_to_the_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let one = autopilot_core::TicketId::from("demo-heartbeat");
+        let two = autopilot_core::TicketId::from("demo-timezone");
+        let turns = |ticket: &autopilot_core::TicketId| {
+            autopilot_engine::effective_overrides(&options.data_dir, ticket, Step::Understand)
+                .unwrap()
+                .turns
+        };
+        assert_eq!(turns(&one), None);
+        backend::raise_turns(&options, &one).unwrap();
+        assert_eq!(turns(&one), Some(40));
+        assert_eq!(turns(&two), None, "a sibling keeps the project cap");
+        for _ in 0..3 {
+            backend::raise_turns(&options, &one).unwrap();
+        }
+        assert_eq!(turns(&one), Some(200));
+        assert!(backend::raise_turns(&options, &one).is_err());
+    }
+
     // Invariant: pausing from the window writes the engine's pause flag, the
     // same one the CLI writes.
     #[test]
@@ -318,7 +383,8 @@ mod tests {
                 title: "Plan me".into(),
                 description: "Add an export option".into(),
                 attachments: Vec::new(),
-                workspace: None,
+                // A ticket with no project runs ask-only and has no plan.
+                workspace: Some(directory.path().to_path_buf()),
             },
         )
         .unwrap();

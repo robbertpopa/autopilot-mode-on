@@ -382,6 +382,16 @@ pub enum SettingsScope {
     Project,
 }
 
+/// What a ticket does when it is unsure: stop and ask, or pick the
+/// recommended option and say so. Mirrors the profile setting; the profile
+/// crate sits above core, so the ticket-level choice is its own type.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnsureMode {
+    Ask,
+    DecideAndTell,
+}
+
 /// A change to one step's settings. A missing field leaves that setting alone.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StepOverride {
@@ -391,6 +401,9 @@ pub struct StepOverride {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
+    /// The agent turn cap for this step. Absent in older histories.
+    #[serde(default)]
+    pub turns: Option<u32>,
 }
 
 impl StepOverride {
@@ -404,6 +417,9 @@ impl StepOverride {
         }
         if newer.effort.is_some() {
             self.effort.clone_from(&newer.effort);
+        }
+        if newer.turns.is_some() {
+            self.turns = newer.turns;
         }
     }
 }
@@ -443,6 +459,14 @@ pub struct StepChange {
     pub step: Step,
     #[serde(flatten)]
     pub change: StepOverride,
+}
+
+/// The owner's correction of one assumption Understand made, given when the
+/// owner approves. Later steps treat it as data to take into account.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AssumptionCorrection {
+    pub assumption: String,
+    pub correction: String,
 }
 
 /// What an attachment is, which decides how the window shows it.
@@ -519,6 +543,10 @@ pub enum Event {
         scope: SettingsScope,
         #[serde(default)]
         changes: Vec<StepChange>,
+        /// The ticket's own `when_unsure`. Absent in older histories, where
+        /// the profile setting applies.
+        #[serde(default)]
+        when_unsure: Option<UnsureMode>,
     },
     /// The words the owner wrote for the ticket, kept so a step can run again
     /// later without asking for them twice. Absent in older histories.
@@ -551,6 +579,18 @@ pub enum Event {
     Workspace {
         path: String,
     },
+    /// The pipeline the ticket runs, resolved when it was chosen so the log
+    /// stays readable if the profile changes. A ticket with none recorded ran
+    /// the `full` pipeline.
+    PipelineChosen {
+        name: String,
+        /// Steps the pipeline never runs.
+        #[serde(default)]
+        off: Vec<Step>,
+        /// A lower cap on build rounds, if the pipeline sets one.
+        #[serde(default)]
+        rounds: Option<u32>,
+    },
     /// The orchestrator's decision for the later steps. The settings it chose
     /// are recorded next to it as a ticket-scope `SettingsOverridden`.
     Triaged {
@@ -562,6 +602,11 @@ pub enum Event {
     StepReset {
         #[serde(default)]
         and_after: bool,
+    },
+    /// The owner approved a step and corrected assumptions on the way. Kept
+    /// with the plan so a review sees what was changed and why.
+    AssumptionsCorrected {
+        corrections: Vec<AssumptionCorrection>,
     },
     Paused,
     Resumed,
