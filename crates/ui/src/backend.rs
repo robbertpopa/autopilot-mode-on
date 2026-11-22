@@ -225,9 +225,10 @@ pub fn install_update(
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum AgentChoice {
     /// The built-in agent that answers from fixed text. Free and offline.
-    #[default]
+    /// Only for trying the app; it is never the default.
     Practice,
     /// Claude Code, billed to the signed-in subscription.
+    #[default]
     Claude,
 }
 
@@ -261,7 +262,8 @@ impl AgentChoice {
     pub fn read(data_dir: &Path) -> Self {
         match std::fs::read_to_string(data_dir.join(AGENT_FILE)) {
             Ok(text) if text.trim() == "claude" => Self::Claude,
-            _ => Self::Practice,
+            Ok(text) if text.trim() == "practice" => Self::Practice,
+            _ => Self::Claude,
         }
     }
 
