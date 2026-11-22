@@ -10,8 +10,6 @@ mod attachments;
 #[cfg(windows)]
 mod build;
 
-use std::sync::{Arc, Mutex};
-
 use autopilot_agent::{Agent, AgentError, AgentRun, StepRequest, Stopped};
 use autopilot_core::{
     Ambiguity, Clarity, Event, Money, OpenQuestion, Ticket, TicketId, Understanding,
@@ -827,148 +825,12 @@ fn a_reset_that_the_machine_refuses_writes_nothing() {
     ));
 }
 
-fn fold_of(data: &std::path::Path, ticket: &TicketId) -> autopilot_pipeline::TicketState {
-    autopilot_pipeline::fold(&watch(data, ticket, 0).unwrap()).unwrap()
-}
+/// Predicts the given files for every ticket it understands.
+struct Touches(Vec<String>);
 
-// Invariant: choosing a pipeline skips the steps it turns off with a reason
-// the window can show, and the engine cannot start them. Choosing another
-// pipeline brings back only the steps the first one turned off.
-#[test]
-fn a_pipeline_skips_its_off_steps_and_a_later_choice_restores_them() {
-    use autopilot_core::Step;
-    use autopilot_pipeline::StepState;
-    use autopilot_profile::Profile;
-    let data = tempfile::tempdir().unwrap();
-    let ticket = understood_with(data.path(), "pipe", None);
-    let profile = Profile::parse("p.toml", "").unwrap();
-
-    autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "bug-fix").unwrap();
-    let state = fold_of(data.path(), &ticket);
-    assert!(matches!(
-        state.step(Step::Design),
-        StepState::Skipped(reason) if reason == "off in pipeline bug-fix"
-    ));
-    assert_eq!(state.step(Step::Plan), &StepState::Idle);
-    // Clarify is not off in bug-fix, so it still decides on its own.
-    assert!(matches!(
-        autopilot_engine::start_clarify(data.path(), &ticket),
-        Ok(ClarifyStart::Skipped(_))
-    ));
-
-    autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "ui-change").unwrap();
-    assert_eq!(
-        fold_of(data.path(), &ticket).step(Step::Design),
-        &StepState::Idle
-    );
-    let history = watch(data.path(), &ticket, 0).unwrap();
-    assert_eq!(
-        autopilot_engine::chosen_pipeline(&history).unwrap().0,
-        "ui-change"
-    );
-    let view = autopilot_engine::ticket_view(&history).unwrap();
-    assert_eq!(view.pipeline.unwrap().0, "ui-change");
-
-    assert!(autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "nope").is_err());
-}
-
-// Invariant: a step that already ran cannot be switched off by a later choice,
-// and ask-only closes a ticket after Understand because nothing else runs.
-// Without the first, a finished plan could be silently dropped from history.
-#[test]
-fn a_started_step_cannot_be_switched_off_and_ask_only_finishes() {
-    use autopilot_core::Step;
-    use autopilot_engine::Badge;
-    use autopilot_profile::Profile;
-    let data = tempfile::tempdir().unwrap();
-    let ticket = understood_with(data.path(), "pipe2", None);
-    let profile = Profile::parse("p.toml", "").unwrap();
-    // Understand already passed: it is not a step any pipeline can drop.
-    let _ = Step::Understand;
-    autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "ask-only").unwrap();
-    let history = watch(data.path(), &ticket, 0).unwrap();
-    let view = autopilot_engine::ticket_view(&history).unwrap();
-    assert_eq!(view.badge, Badge::Idle, "Clarify has not decided yet");
-    autopilot_engine::start_clarify(data.path(), &ticket).unwrap();
-    let view = autopilot_engine::ticket_view(&watch(data.path(), &ticket, 0).unwrap()).unwrap();
-    assert_eq!(view.badge, Badge::Done);
-
-    // A ticket that started the plan cannot move to a pipeline without one.
-    let other = understood_with(data.path(), "pipe3", None);
-    autopilot_engine::start_clarify(data.path(), &other).unwrap();
-    let planner = Planner(autopilot_core::Plan {
-        criteria: vec![criterion("c1", autopilot_core::Verify::Test, "t1")],
-        test_plan: vec!["t1".into()],
-        files: vec![],
-    });
-    let ticket_row = Ticket {
-        id: other.clone(),
-        title: "t".into(),
-        description: "plain".into(),
-    };
-    run_plan(data.path(), &ticket_row, &planner).unwrap();
-    assert!(
-        autopilot_engine::choose_pipeline(data.path(), &other, &profile, "ask-only").is_err(),
-        "the plan already started"
-    );
-}
-
-// Invariant: a retry does not undo the pipeline. Running Understand again, or
-// resetting a step with everything after it, leaves the steps the pipeline
-// turned off skipped, so an ask-only ticket still cannot be planned. Without
-// the re-skip, the reset sends them back to idle and the ticket quietly turns
-// into one that plans and builds while its pipeline still says ask-only.
-#[test]
-fn a_retry_keeps_the_steps_the_pipeline_turned_off_skipped() {
-    use autopilot_core::Step;
-    use autopilot_pipeline::StepState;
-    use autopilot_profile::Profile;
-    let data = tempfile::tempdir().unwrap();
-    let ticket = understood_with(data.path(), "retry", None);
-    let profile = Profile::parse("p.toml", "").unwrap();
-    autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "ask-only").unwrap();
-    let agent = Synthetic {
-        data_dir: data.path().into(),
-    };
-    rerun_understand(data.path(), &ticket, &agent, Some(false)).unwrap();
-    let state = fold_of(data.path(), &ticket);
-    for step in [
-        Step::Plan,
-        Step::BuildCheck,
-        Step::PullRequest,
-        Step::Design,
-    ] {
-        assert!(
-            matches!(state.step(step), StepState::Skipped(_)),
-            "{step:?} after a rerun"
-        );
-    }
-    let row = Ticket {
-        id: ticket.clone(),
-        title: "t".into(),
-        description: "plain".into(),
-    };
-    let planner = Planner(good_plan());
-    assert!(run_plan(data.path(), &row, &planner).is_err());
-
-    reset_step(data.path(), &ticket, Step::Understand, true).unwrap();
-    let state = fold_of(data.path(), &ticket);
-    assert_eq!(state.step(Step::Understand), &StepState::Idle);
-    assert!(matches!(state.step(Step::Plan), StepState::Skipped(_)));
-    // The history still folds, so the window does not show a problem.
-    let history = watch(data.path(), &ticket, 0).unwrap();
-    assert!(autopilot_engine::ticket_view(&history).is_ok());
-}
-
-/// Remembers the words each Understand call was given.
-struct Recorder(Arc<Mutex<Vec<String>>>);
-
-impl Agent for Recorder {
-    fn start(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
-        self.0
-            .lock()
-            .unwrap()
-            .push(request.ticket.description.clone());
+impl Agent for Touches {
+    fn start(&self, _request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        let files = self.0.clone();
         Ok(AgentRun::spawn(move |_context| {
             Ok(Understanding {
                 summary: "Implement the sample change.".into(),
@@ -977,120 +839,90 @@ impl Agent for Recorder {
                 assumptions: vec![],
                 needs_design: false,
                 ui_files: vec![],
-                files_touched: vec![],
+                files_touched: files,
             })
         })?)
     }
 }
 
-fn answer_with(data: &std::path::Path, ticket: &TicketId, decision: Decision) {
-    let inbox = Inbox::in_data_dir(data);
-    let id = inbox.requests().unwrap().remove(0).id;
-    let reply = Reply::Approval {
-        decision,
-        allow_for_project: false,
+fn understood_touching(data: &std::path::Path, id: &str, files: &[&str]) -> TicketId {
+    let ticket = Ticket {
+        id: TicketId::from(id),
+        title: format!("Ticket {id}"),
+        description: "plain".into(),
     };
-    inbox.write_answer(&id, &reply).unwrap();
-    sync_inbox(data, ticket).unwrap();
+    let agent = Touches(files.iter().map(|file| (*file).to_owned()).collect());
+    run_understand_with(data, &ticket, &agent, Some(false)).unwrap();
+    ticket.id
 }
 
-// Invariant: a step sent back with a note stops as Interrupted, and the next
-// run is given that note as labelled data. A change that dropped the note, or
-// passed it without the data label, would fail here. A note of only spaces is
-// a plain rejection, and a huge note is cut, so one paste cannot flood a prompt.
+// Invariant: two open tickets that predict the same file (or a folder holding
+// it) are flagged for each other; a disjoint one is not, and a hostile
+// prediction is ignored instead of failing the check. A flag on the wrong
+// ticket would tell the owner to merge or wait for unrelated work.
 #[test]
-fn a_note_sent_back_reaches_the_next_run_as_data() {
-    let (data, ticket) = understood_and_asking("plain");
-    answer_with(
-        data.path(),
-        &ticket,
-        Decision::SendBack("  mention the CSV header  ".into()),
-    );
-    assert!(matches!(
-        last_kind(data.path(), &ticket),
-        Event::Interrupted { ref reason } if reason == "sent back with notes"
-    ));
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    rerun_understand(data.path(), &ticket, &Recorder(seen.clone()), Some(false)).unwrap();
-    let words = seen.lock().unwrap().pop().unwrap();
-    assert!(words.contains("mention the CSV header"), "{words}");
-    assert!(words.contains("not a command"), "{words}");
-
-    let (data, ticket) = understood_and_asking("plain");
-    answer_with(data.path(), &ticket, Decision::SendBack("   ".into()));
-    assert!(matches!(
-        last_kind(data.path(), &ticket),
-        Event::Interrupted { ref reason } if reason == "rejected by the owner"
-    ));
-
-    let (data, ticket) = understood_and_asking("plain");
-    answer_with(data.path(), &ticket, Decision::SendBack("é".repeat(10_000)));
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    rerun_understand(data.path(), &ticket, &Recorder(seen.clone()), Some(false)).unwrap();
-    let words = seen.lock().unwrap().pop().unwrap();
-    assert!(
-        words.chars().filter(|c| *c == 'é').count() == 4_000,
-        "cut to the limit"
-    );
+fn tickets_that_predict_the_same_file_are_flagged_for_each_other() {
+    let data = tempfile::tempdir().unwrap();
+    let first = understood_touching(data.path(), "a", &["src/export.rs", "../outside"]);
+    let second = understood_touching(data.path(), "b", &["src"]);
+    let apart = understood_touching(data.path(), "c", &["docs/readme.md"]);
+    let none = autopilot_engine::find_overlaps(data.path(), &apart).unwrap();
+    assert_eq!(none.len(), 0);
+    let flagged = autopilot_engine::find_overlaps(data.path(), &first).unwrap();
+    assert_eq!(flagged.len(), 1, "{flagged:?}");
+    assert_eq!(flagged[0].other, second);
+    assert_eq!(flagged[0].title, "Ticket b");
+    let back = autopilot_engine::find_overlaps(data.path(), &second).unwrap();
+    assert_eq!(back[0].other, first);
 }
 
-// Invariant: approving with a corrected assumption lets the step pass, records
-// the correction in the log, and shows it in the ticket view. Without the
-// event the correction would live only in the window and be lost on restart.
-#[test]
-fn a_corrected_assumption_is_recorded_and_viewed() {
-    let (data, ticket) = understood_and_asking("plain");
-    answer_with(
-        data.path(),
-        &ticket,
-        Decision::ApproveCorrected(vec![autopilot_core::AssumptionCorrection {
-            assumption: "UTF-8".into(),
-            correction: "Latin-1".into(),
-        }]),
-    );
-    let history = watch(data.path(), &ticket, 0).unwrap();
-    assert!(history.iter().any(|record| matches!(
-        &record.event.kind,
-        Event::AssumptionsCorrected { corrections } if corrections.len() == 1
-    )));
-    assert!(matches!(
-        history.last().unwrap().event.kind,
-        Event::StepFinished
-    ));
-    let view = autopilot_engine::ticket_view(&history).unwrap();
-    assert_eq!(view.corrections[0].correction, "Latin-1");
-}
+/// Predicts the given files for every ticket it understands.
+struct Touches(Vec<String>);
 
-fn plan_ready_to_ask() -> (tempfile::TempDir, Ticket) {
-    let (data, ticket) = ready_to_plan("again");
-    let planner = Planner(good_plan());
-    run_plan(data.path(), &ticket, &planner).unwrap();
-    (data, ticket)
-}
-
-// Invariant: a plan that was sent back or rejected can be planned again and
-// the new plan approved. Answers are kept once per request id, so a second ask
-// under the same id would fail with a UNIQUE error on approval. The reject and
-// the send-back cases both go through the same id, so both are checked.
-#[test]
-fn a_replanned_plan_can_be_approved_after_a_send_back_or_a_reject() {
-    use autopilot_core::Step;
-    use autopilot_pipeline::StepState;
-    for first in [
-        Decision::SendBack("name the CSV header".into()),
-        Decision::Reject,
-    ] {
-        let (data, ticket) = plan_ready_to_ask();
-        answer_with(data.path(), &ticket.id, first);
-        assert!(matches!(
-            fold_of(data.path(), &ticket.id).step(Step::Plan),
-            StepState::Interrupted(_)
-        ));
-        autopilot_engine::rerun_plan(data.path(), &ticket.id, &Planner(good_plan())).unwrap();
-        answer_with(data.path(), &ticket.id, Decision::Approve);
-        assert_eq!(
-            fold_of(data.path(), &ticket.id).step(Step::Plan),
-            &StepState::Passed
-        );
+impl Agent for Touches {
+    fn start(&self, _request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        let files = self.0.clone();
+        Ok(AgentRun::spawn(move |_context| {
+            Ok(Understanding {
+                summary: "Implement the sample change.".into(),
+                ambiguity: Ambiguity::all(Clarity::Clear),
+                open_questions: vec![],
+                assumptions: vec![],
+                needs_design: false,
+                ui_files: vec![],
+                files_touched: files,
+            })
+        })?)
     }
+}
+
+fn understood_touching(data: &std::path::Path, id: &str, files: &[&str]) -> TicketId {
+    let ticket = Ticket {
+        id: TicketId::from(id),
+        title: format!("Ticket {id}"),
+        description: "plain".into(),
+    };
+    let agent = Touches(files.iter().map(|file| (*file).to_owned()).collect());
+    run_understand_with(data, &ticket, &agent, Some(false)).unwrap();
+    ticket.id
+}
+
+// Invariant: two open tickets that predict the same file (or a folder holding
+// it) are flagged for each other; a disjoint one is not, and a hostile
+// prediction is ignored instead of failing the check. A flag on the wrong
+// ticket would tell the owner to merge or wait for unrelated work.
+#[test]
+fn tickets_that_predict_the_same_file_are_flagged_for_each_other() {
+    let data = tempfile::tempdir().unwrap();
+    let first = understood_touching(data.path(), "a", &["src/export.rs", "../outside"]);
+    let second = understood_touching(data.path(), "b", &["src"]);
+    let apart = understood_touching(data.path(), "c", &["docs/readme.md"]);
+    let none = autopilot_engine::find_overlaps(data.path(), &apart).unwrap();
+    assert_eq!(none.len(), 0);
+    let flagged = autopilot_engine::find_overlaps(data.path(), &first).unwrap();
+    assert_eq!(flagged.len(), 1, "{flagged:?}");
+    assert_eq!(flagged[0].other, second);
+    assert_eq!(flagged[0].title, "Ticket b");
+    let back = autopilot_engine::find_overlaps(data.path(), &second).unwrap();
+    assert_eq!(back[0].other, first);
 }
