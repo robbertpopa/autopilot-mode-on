@@ -59,6 +59,8 @@ pub struct App {
     pub(crate) today_selected: Option<TicketId>,
     pub(crate) pipeline_selected: Option<String>,
     pub(crate) pipeline_notice: Option<(bool, String)>,
+    pub(crate) draft_text: String,
+    pub(crate) draft: Option<autopilot_engine::PipelineDraft>,
     /// The owner picked the pipeline on New ticket, so the suggestion stops.
     pub(crate) pipeline_chosen: bool,
     /// The project open on the Projects page, by normalised folder path.
@@ -133,6 +135,8 @@ impl App {
             today_selected: None,
             pipeline_selected: None,
             pipeline_notice: None,
+            draft_text: String::new(),
+            draft: None,
             pipeline_chosen: false,
             project_selected: None,
             rules_text: String::new(),

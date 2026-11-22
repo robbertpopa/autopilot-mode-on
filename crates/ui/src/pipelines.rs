@@ -102,10 +102,100 @@ impl App {
             self.pipeline_detail(ui, &pipeline);
         }
         ui.add_space(14.0);
-        ui.add_enabled(false, egui::Button::new("Build with agent"))
-            .on_disabled_hover_text(
-                "needs request R9: an agent drafts a pipeline and a validator checks it first",
-            );
+        self.build_with_agent(ui);
+    }
+
+    /// Describe a workflow and an agent drafts a pipeline. The engine checks
+    /// the draft before it is shown; it is a dashed preview until the owner
+    /// saves it, and an agent cannot unlock Design or the pull request, drop a
+    /// forced ask or change a budget.
+    fn build_with_agent(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("Build with agent").size(18.0).strong());
+        ui.add(
+            egui::TextEdit::multiline(&mut self.draft_text)
+                .desired_rows(2)
+                .desired_width(f32::INFINITY)
+                .hint_text("Describe the workflow, e.g. a small change that needs no questions"),
+        );
+        let claude = self.agent == crate::backend::AgentChoice::Claude;
+        let ready = !self.draft_text.trim().is_empty();
+        let button = ui.add_enabled(ready && !claude, egui::Button::new("Draft"));
+        let button = if claude {
+            button.on_disabled_hover_text(
+                "coming soon: a live draft spends money, so only the practice agent drafts for now",
+            )
+        } else {
+            button
+        };
+        if button.clicked() {
+            match crate::backend::draft_pipeline(&self.options, &self.draft_text) {
+                Ok(draft) => {
+                    self.draft = Some(draft);
+                    self.pipeline_notice = None;
+                }
+                Err(why) => {
+                    self.draft = None;
+                    self.pipeline_notice = Some((false, why));
+                }
+            }
+        }
+        if let Some(draft) = self.draft.clone() {
+            let shown = egui::Frame::new()
+                .inner_margin(egui::Margin::same(10))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(format!("draft · {}", draft.name)).strong());
+                    dots(ui, &draft.pipeline);
+                    for step in Step::ALL {
+                        ui.horizontal(|ui| {
+                            ui.add_sized([150.0, 18.0], egui::Label::new(step_name(step)));
+                            ui.label(theme::muted(mode_word(draft.pipeline.mode(step))));
+                            if let Some((_, why)) =
+                                draft.reasons.iter().find(|(each, _)| *each == step)
+                            {
+                                ui.label(why);
+                            }
+                        });
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.add(theme::primary("Save to profile.toml")).clicked() {
+                            match autopilot_engine::save_draft(&self.options.profile, &draft) {
+                                Ok(profile) => {
+                                    self.profile = Ok(profile);
+                                    self.pipeline_selected = Some(draft.name.clone());
+                                    self.pipeline_notice =
+                                        Some((true, format!("saved {}", draft.name)));
+                                    self.draft = None;
+                                }
+                                Err(error) => {
+                                    self.pipeline_notice = Some((false, error.to_string()));
+                                }
+                            }
+                        }
+                        if ui.button("Discard").clicked() {
+                            self.draft = None;
+                        }
+                    });
+                });
+            // A draft is dashed: nothing is stored until it is saved.
+            let rect = shown.response.rect;
+            let points = vec![
+                rect.left_top(),
+                rect.right_top(),
+                rect.right_bottom(),
+                rect.left_bottom(),
+                rect.left_top(),
+            ];
+            ui.painter().extend(egui::Shape::dashed_line(
+                &points,
+                egui::Stroke::new(1.0_f32, theme::TEXT_MUTED()),
+                5.0,
+                4.0,
+            ));
+        }
+        if let Some((ok, text)) = &self.pipeline_notice {
+            let color = if *ok { theme::GREEN() } else { theme::RED() };
+            ui.label(RichText::new(text).color(color));
+        }
     }
 
     fn pipeline_detail(&mut self, ui: &mut egui::Ui, pipeline: &Pipeline) {

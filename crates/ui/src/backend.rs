@@ -821,6 +821,19 @@ fn start(
     }
 }
 
+/// Ask the chosen agent for a pipeline draft. The reply is checked by the
+/// engine before it comes back, and nothing is stored here.
+pub(crate) fn draft_pipeline(
+    options: &Options,
+    description: &str,
+) -> Result<autopilot_engine::PipelineDraft, String> {
+    let profile =
+        autopilot_engine::load_profile(&options.profile).map_err(|error| error.to_string())?;
+    let agent = chosen_agent(options, Step::Understand, None, None)?;
+    autopilot_engine::draft_pipeline(&profile, description, &agent)
+        .map_err(|error| error.to_string())
+}
+
 /// The pipeline a new ticket starts with.
 fn pipeline_for(profile: &autopilot_profile::Profile, workspace: Option<&Path>) -> String {
     let Some(folder) = workspace else {

@@ -546,6 +546,39 @@ mod tests {
         assert_eq!(pipeline, None, "no project means no pipeline is sent");
     }
 
+    // Invariant: the practice agent drafts a pipeline that the engine accepts,
+    // the draft is not stored until it is saved, and saving writes it to
+    // profile.toml where a fresh read finds it. The draft for the Claude
+    // choice is greyed, since a live draft spends money.
+    #[test]
+    fn a_pipeline_draft_is_shown_then_saved_only_on_request() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.mode = Mode::Pipelines;
+        app.draft_text = "a small change that needs no questions".into();
+        let draft = backend::draft_pipeline(&options, &app.draft_text).unwrap();
+        assert_eq!(draft.name, "practice-draft");
+        assert_eq!(
+            draft.pipeline.mode(Step::Clarify),
+            autopilot_profile::StepMode::Off
+        );
+        assert!(!options.profile.exists(), "a draft stores nothing");
+        app.draft = Some(draft.clone());
+        frame(&mut app, &context);
+        let saved = autopilot_engine::save_draft(&options.profile, &draft).unwrap();
+        assert!(saved.pipeline("practice-draft").is_some());
+        let reread = autopilot_engine::load_profile(&options.profile).unwrap();
+        assert!(reread.pipeline("practice-draft").is_some());
+    }
+
     // Invariant: pausing from the window writes the engine's pause flag, the
     // same one the CLI writes.
     #[test]
