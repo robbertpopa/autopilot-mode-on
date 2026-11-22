@@ -30,6 +30,14 @@ pub struct StepRequest<'a> {
     pub context: &'a str,
 }
 
+/// A request for a pipeline draft. The description is the owner's words, which
+/// are data for the agent, never instructions to the engine.
+pub struct DraftRequest<'a> {
+    pub description: &'a str,
+    /// The pipelines that already exist, so the draft can start from one.
+    pub known: &'a [String],
+}
+
 /// One build turn in a ticket's worktree.
 pub struct BuildRequest<'a> {
     pub ticket: &'a Ticket,
@@ -73,6 +81,9 @@ pub enum AgentEvent {
     },
     Result(Understanding),
     PlanResult(Plan),
+    /// The raw reply to a pipeline draft request. It is untrusted text: the
+    /// engine parses and checks it, so nothing is dropped before it is seen.
+    DraftResult(String),
     DesignResult(Design),
     /// A build turn ended normally. Its effect is in the worktree.
     BuildDone,
@@ -106,6 +117,20 @@ pub trait Agent {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "this agent cannot run the Design step",
+        )
+        .into())
+    }
+
+    /// Ask for a pipeline draft from the owner's description. The reply is raw
+    /// text for the engine to validate. Adapters that cannot draft keep this
+    /// default, which refuses.
+    ///
+    /// # Errors
+    /// Returns an error if the request cannot be started or is unsupported.
+    fn start_draft(&self, _request: DraftRequest<'_>) -> Result<AgentRun, AgentError> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this agent cannot draft a pipeline",
         )
         .into())
     }
@@ -202,6 +227,16 @@ impl AgentRun {
         work: impl FnOnce(AgentContext) -> Result<Design, AgentError> + Send + 'static,
     ) -> io::Result<Self> {
         Self::spawn_with(work, AgentEvent::DesignResult)
+    }
+
+    /// Like [`AgentRun::spawn`] for a pipeline draft, whose result is raw text.
+    ///
+    /// # Errors
+    /// Returns an error if the worker thread cannot be started.
+    pub fn spawn_draft(
+        work: impl FnOnce(AgentContext) -> Result<String, AgentError> + Send + 'static,
+    ) -> io::Result<Self> {
+        Self::spawn_with(work, AgentEvent::DraftResult)
     }
 
     /// Like [`AgentRun::spawn`] for a build turn, which has no structured result.

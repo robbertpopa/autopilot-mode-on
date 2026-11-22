@@ -27,6 +27,7 @@ mod build;
 mod change;
 mod control;
 mod design;
+mod draft;
 mod explain;
 mod metrics;
 mod notes;
@@ -54,6 +55,7 @@ pub use design::{
     context as design_context, folder as design_folder, latest as latest_design, rerun_design,
     run_design,
 };
+pub use draft::{PipelineDraft, draft_pipeline, save_draft, validate_draft};
 pub use explain::{explain_step, kept as explanation_kept, prompt as explain_prompt};
 pub use metrics::{PipelineMetrics, StepMetrics, UsageLine, metrics_of, pipeline_metrics};
 pub use overlap::{TicketOverlap, find_overlaps};
@@ -105,6 +107,8 @@ pub enum Error {
     Triage(String),
     #[error("cannot attach: {0}")]
     Attachment(String),
+    #[error("the pipeline draft was refused: {0}")]
+    Draft(String),
     #[error("the rules file cannot be used: {0}")]
     Rules(String),
     #[error("the recorded history is invalid: {0}")]
@@ -342,6 +346,11 @@ fn pump(
             Some(AgentEvent::Usage(usage)) => Event::UsageReported { usage },
             Some(AgentEvent::Cost { amount, estimated }) => Event::CostTick { amount, estimated },
             Some(AgentEvent::Result(result)) => break Pumped::Understanding(result),
+            Some(AgentEvent::DraftResult(_)) => {
+                break Pumped::Failed(
+                    io::Error::other("a step that expects a result got a pipeline draft").into(),
+                );
+            }
             Some(AgentEvent::PlanResult(plan)) => break Pumped::Plan(plan),
             Some(AgentEvent::DesignResult(design)) => break Pumped::Design(design),
             Some(AgentEvent::Stopped(reason)) => break Pumped::Stopped(reason),

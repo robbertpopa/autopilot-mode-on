@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use autopilot_agent::{Agent, AgentContext, AgentError, AgentRun, StepRequest};
+use autopilot_agent::{Agent, AgentContext, AgentError, AgentRun, DraftRequest, StepRequest};
 use autopilot_core::{Criterion, Plan, Step, Understanding, Verify};
 use autopilot_process::{CommandSpec, Limits, Outcome, Runner};
 use serde::Deserialize;
@@ -93,6 +93,20 @@ impl Agent for FixtureAgent {
                 }],
                 notes: "Practice design: switch the agent to Claude for a real one.".into(),
             })
+        })?)
+    }
+
+    /// A canned pipeline draft for the practice agent. It starts from bug-fix,
+    /// switches off Clarify when the description says the change is small, and
+    /// reads nothing else from the description.
+    fn start_draft(&self, request: DraftRequest<'_>) -> Result<AgentRun, AgentError> {
+        let small = request.description.to_lowercase().contains("small");
+        Ok(AgentRun::spawn_draft(move |context| {
+            context.message("practice draft".to_owned());
+            let off = if small { "[\"clarify\"]" } else { "[]" };
+            Ok(format!(
+                "{{\"name\":\"practice-draft\",\"based_on\":\"bug-fix\",\"off\":{off},\"rounds\":2,\"reasons\":{{\"clarify\":\"A small change rarely needs questions.\",\"plan\":\"Keep the plan: build needs it.\"}}}}"
+            ))
         })?)
     }
 

@@ -206,7 +206,10 @@ impl<A: Agent> Round for BuildRound<'_, A> {
                 // A limit stop is a turn that used what it was given, not a fault.
                 AgentEvent::Stopped(_) => stopped = true,
                 AgentEvent::Failed(error) => return Err(Error::Agent(error)),
-                AgentEvent::Result(_) | AgentEvent::PlanResult(_) | AgentEvent::DesignResult(_) => {
+                AgentEvent::Result(_)
+                | AgentEvent::PlanResult(_)
+                | AgentEvent::DraftResult(_)
+                | AgentEvent::DesignResult(_) => {
                     return Err(Error::NotReady(
                         "the agent answered Build with a result".into(),
                     ));

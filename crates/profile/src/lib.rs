@@ -10,7 +10,7 @@ use autopilot_core::{Money, Step};
 
 mod pipeline;
 pub use pipeline::{
-    ASK_ONLY, DEFAULT_PIPELINE, Pipeline, Project, StepMode, builtin_pipelines, leaf,
+    ASK_ONLY, DEFAULT_PIPELINE, Pipeline, Project, StepMode, builtin_pipelines, check_name, leaf,
     normalize_path,
 };
 use pipeline::{PipelineFile, ProjectFile};
@@ -206,6 +206,35 @@ impl Profile {
     #[must_use]
     pub fn pipeline(&self, name: &str) -> Option<Pipeline> {
         self.pipelines().into_iter().find(|each| each.name == name)
+    }
+
+    /// A pipeline as it would be if `name` were added: the named base with the
+    /// given steps switched, checked by the same rules as a saved one.
+    ///
+    /// # Errors
+    /// Returns a sentence when the base is unknown or the steps cannot run in order.
+    pub fn build_pipeline(
+        &self,
+        name: &str,
+        based_on: &str,
+        on: &[Step],
+        if_needed: &[Step],
+        off: &[Step],
+        rounds: Option<u32>,
+    ) -> Result<Pipeline, String> {
+        let known: BTreeMap<String, Pipeline> = self
+            .pipelines()
+            .into_iter()
+            .map(|pipeline| (pipeline.name.clone(), pipeline))
+            .collect();
+        let file = PipelineFile {
+            based_on: Some(based_on.to_owned()),
+            on: on.to_vec(),
+            if_needed: if_needed.to_vec(),
+            off: off.to_vec(),
+            rounds,
+        };
+        pipeline::resolve(name, &file, &known)
     }
 
     /// The project for a workspace folder, however its path is spelled.
