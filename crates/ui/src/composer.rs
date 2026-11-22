@@ -19,6 +19,8 @@ pub struct NewTicket {
     pub(crate) focused: bool,
     pub description: String,
     pub files: Vec<PathBuf>,
+    /// The project folder the agent reads for this ticket.
+    pub workspace: Option<PathBuf>,
 }
 
 impl NewTicket {
@@ -67,6 +69,7 @@ impl NewTicket {
             title: self.title(),
             description: self.description.clone(),
             attachments: self.files.clone(),
+            workspace: self.workspace.clone(),
         }
     }
 }
@@ -89,6 +92,18 @@ pub fn pick_files() -> Vec<PathBuf> {
 #[cfg(not(any(windows, target_os = "macos")))]
 pub const fn pick_files() -> Vec<PathBuf> {
     Vec::new()
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+pub fn pick_project() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title("Choose the project folder")
+        .pick_folder()
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub const fn pick_project() -> Option<PathBuf> {
+    None
 }
 
 #[cfg(any(windows, target_os = "macos"))]
@@ -209,7 +224,48 @@ pub fn show(ui: &mut egui::Ui, form: &mut NewTicket) -> Option<Action> {
                 });
             });
         });
+    project_row(ui, form);
     start
+}
+
+/// Which project the agent will read, under the box. Changing it picks another
+/// folder; clearing it sends the ticket with no project.
+fn project_row(ui: &mut egui::Ui, form: &mut NewTicket) {
+    if !has_picker() {
+        return;
+    }
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        let (text, hover) = match &form.workspace {
+            Some(path) => (
+                format!("Project: {}", chip_name(path)),
+                format!(
+                    "{}\nThe agent reads this folder to ground its answers. It cannot change or run anything in it.",
+                    path.display()
+                ),
+            ),
+            None => (
+                "Choose a project folder".to_owned(),
+                "Without a project the agent knows only your words and attachments.".to_owned(),
+            ),
+        };
+        let button = egui::Button::new(RichText::new(text).color(theme::TEXT_SOFT())).frame(false);
+        if ui.add(button).on_hover_text(hover).clicked()
+            && let Some(folder) = pick_project()
+        {
+            form.workspace = Some(folder);
+        }
+        if form.workspace.is_some()
+            && theme::named(
+                ui.add(egui::Button::new(theme::muted("×")).frame(false))
+                    .on_hover_text("Do not use a project"),
+                "Remove the project folder",
+            )
+            .clicked()
+        {
+            form.workspace = None;
+        }
+    });
 }
 
 /// One button for everything that can be attached.

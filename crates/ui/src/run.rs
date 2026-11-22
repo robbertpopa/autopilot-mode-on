@@ -105,6 +105,12 @@ impl App {
             return;
         };
         self.run_header(ui, &view);
+        if let Some(folder) = &view.workspace {
+            ui.label(theme::muted(format!("Project: {folder}")))
+                .on_hover_text(
+                    "The agent reads this folder. It cannot change or run anything in it.",
+                );
+        }
         ui.add_space(14.0);
         self.next_card(ui, &view);
         self.step_chips(ui, &view);

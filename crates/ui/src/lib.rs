@@ -185,6 +185,7 @@ mod tests {
                 title: "Real ticket".into(),
                 description: "Show the time in the right zone".into(),
                 attachments: Vec::new(),
+                workspace: None,
             },
         );
         assert!(outcome.is_ok(), "{outcome:?}");
@@ -224,6 +225,7 @@ mod tests {
                 title: "Again".into(),
                 description: "Words kept for the second run".into(),
                 attachments: Vec::new(),
+                workspace: None,
             },
         )
         .unwrap();
@@ -276,6 +278,7 @@ mod tests {
                 title: "With a file".into(),
                 description: "See the brief".into(),
                 attachments: vec![file.clone()],
+                workspace: None,
             },
         )
         .unwrap();
@@ -289,6 +292,7 @@ mod tests {
                 title: "Bad".into(),
                 description: "x".into(),
                 attachments: vec![directory.path().join("missing.txt")],
+                workspace: None,
             },
         );
         assert!(refused.is_err());
@@ -314,6 +318,7 @@ mod tests {
                 title: "Plan me".into(),
                 description: "Add an export option".into(),
                 attachments: Vec::new(),
+                workspace: None,
             },
         )
         .unwrap();
@@ -367,6 +372,7 @@ mod tests {
                 title: "Offline to-do app".into(),
                 description: "Build the offline to-do app from the attached spec.".into(),
                 attachments: vec![spec],
+                workspace: None,
             },
         );
         assert!(outcome.is_ok(), "{outcome:?}");
@@ -398,6 +404,51 @@ mod tests {
             read(&options).tickets[0].step(Step::Plan).unwrap().state,
             autopilot_pipeline::StepState::Asking(_)
         ));
+    }
+
+    // Invariant: with a project folder chosen, the real agent reads files in it
+    // (nothing was attached or pasted), the folder is kept on the ticket, and
+    // the step still cannot change anything there. Needs a signed-in Claude
+    // Code and spends subscription quota, so it only runs on request.
+    #[test]
+    #[ignore = "uses a real Claude Code subscription"]
+    fn real_claude_reads_the_project_folder() {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("NOTES.md"),
+            "Project rule: the storage key MUST be \"quokka-todos-v9\".",
+        )
+        .unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Claude.save(&options.data_dir);
+        let outcome = perform(
+            &options,
+            &Action::Start {
+                title: "Offline to-do app".into(),
+                description: "Build the to-do app. Follow the rules in NOTES.md in the project, and put the exact storage key in your summary.".into(),
+                attachments: Vec::new(),
+                workspace: Some(project.clone()),
+            },
+        );
+        assert!(outcome.is_ok(), "{outcome:?}");
+        let shown = read(&options);
+        let view = &shown.tickets[0];
+        assert!(view.workspace.is_some());
+        let events = autopilot_engine::watch(&options.data_dir, &view.id, 0).unwrap();
+        let text = format!("{events:?}");
+        assert!(text.contains("quokka-todos-v9"), "{text}");
+        assert_eq!(
+            std::fs::read_dir(&project).unwrap().count(),
+            1,
+            "the read-only step must not add files"
+        );
     }
 
     // Invariant: the theme choice is kept for the next start.

@@ -201,3 +201,38 @@ fn the_note_quotes_text_and_only_names_the_rest() {
     assert!(note.contains("- file blob.bin"));
     assert!(note.len() < 20_000, "{}", note.len());
 }
+
+// Invariant: the project folder is kept in the ticket's history and shows in
+// the view, a path that is not a folder is refused, and recording the same
+// folder twice adds nothing.
+#[test]
+fn the_project_folder_is_recorded_once_and_a_file_is_refused() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let ticket = ticket("ws-1");
+    let agent = Synthetic {
+        data_dir: data.path().into(),
+    };
+    run_understand(data.path(), &ticket, &agent).unwrap();
+    let first =
+        autopilot_engine::record_workspace(data.path(), &ticket.id, project.path()).unwrap();
+    let again =
+        autopilot_engine::record_workspace(data.path(), &ticket.id, project.path()).unwrap();
+    assert_eq!(first, again);
+    let history = watch(data.path(), &ticket.id, 0).unwrap();
+    let recorded = history
+        .iter()
+        .filter(|record| matches!(record.event.kind, Event::Workspace { .. }))
+        .count();
+    assert_eq!(recorded, 1);
+    assert_eq!(
+        autopilot_engine::workspace_of(&history),
+        Some(first.clone())
+    );
+    let view = autopilot_engine::ticket_view(&history).unwrap();
+    assert_eq!(view.workspace, Some(first));
+
+    let file = project.path().join("a.txt");
+    fs::write(&file, b"x").unwrap();
+    assert!(autopilot_engine::record_workspace(data.path(), &ticket.id, &file).is_err());
+}

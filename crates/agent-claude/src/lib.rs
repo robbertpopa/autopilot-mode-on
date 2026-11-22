@@ -47,6 +47,8 @@ pub struct ClaudeAgent {
     executable: PathBuf,
     guardian: PathBuf,
     build: Option<BuildConfig>,
+    /// The project folder the read-only steps look at, if there is one.
+    workspace: Option<PathBuf>,
 }
 
 impl ClaudeAgent {
@@ -65,10 +67,28 @@ impl ClaudeAgent {
             executable,
             guardian,
             build: None,
+            workspace: None,
         })
     }
 
     /// Allow build turns. Without this, `start_build` refuses.
+    /// Let the read-only steps (Understand, Design, Plan) look at a project
+    /// folder: they run in it with the Read, Glob and Grep tools and nothing
+    /// that changes a file or runs a command.
+    #[must_use]
+    pub fn in_workspace(mut self, folder: PathBuf) -> Self {
+        self.workspace = Some(folder);
+        self
+    }
+
+    fn in_project(&self, args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+        if self.workspace.is_some() {
+            command::read_project(args)
+        } else {
+            args
+        }
+    }
+
     #[must_use]
     pub fn with_build(mut self, build: BuildConfig) -> Self {
         self.build = Some(build);
@@ -139,9 +159,9 @@ impl Agent for ClaudeAgent {
         let schema = command::understand_schema()?;
         let spec = CommandSpec {
             program: self.executable.clone(),
-            args: command::understand_args(&self.config, &schema),
+            args: self.in_project(command::understand_args(&self.config, &schema)),
             env: child_env(self.config.auth, process_env::vars_os())?,
-            cwd: None,
+            cwd: self.workspace.clone(),
         };
         let prompt = prompt(request.ticket, request.context)?;
         let runner = Runner::new(self.guardian.clone());
@@ -205,9 +225,9 @@ impl Agent for ClaudeAgent {
         let schema = command::design_schema()?;
         let spec = CommandSpec {
             program: self.executable.clone(),
-            args: command::design_args(&self.config, &schema),
+            args: self.in_project(command::design_args(&self.config, &schema)),
             env: child_env(self.config.auth, process_env::vars_os())?,
-            cwd: None,
+            cwd: self.workspace.clone(),
         };
         let prompt = design_prompt(request.ticket, request.context)?;
         let runner = Runner::new(self.guardian.clone());
@@ -225,9 +245,9 @@ impl Agent for ClaudeAgent {
         let schema = command::plan_schema()?;
         let spec = CommandSpec {
             program: self.executable.clone(),
-            args: command::plan_args(&self.config, &schema),
+            args: self.in_project(command::plan_args(&self.config, &schema)),
             env: child_env(self.config.auth, process_env::vars_os())?,
-            cwd: None,
+            cwd: self.workspace.clone(),
         };
         let prompt = plan_prompt(request.ticket, request.context)?;
         let runner = Runner::new(self.guardian.clone());
