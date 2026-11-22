@@ -100,7 +100,7 @@ impl App {
             ),
         ] {
             ui.horizontal(|ui| {
-                ui.add_sized([200.0, 20.0], egui::Label::new(theme::mono(label)));
+                theme::cell(ui, 200.0, theme::mono(label));
                 ui.add(egui::DragValue::new(value).range(range));
             });
         }

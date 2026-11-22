@@ -233,88 +233,95 @@ impl App {
 
     /// The right panel without a drawer: pipeline, stepper, cost, actions.
     pub(crate) fn stepper_panel(&mut self, ui: &mut egui::Ui, view: &TicketView) {
-        ui.label(
-            RichText::new("PIPELINE")
-                .monospace()
-                .size(11.0)
-                .strong()
-                .color(theme::TEXT_MUTED()),
-        );
-        self.ticket_pipeline_select(ui, view);
-        ui.label(theme::muted("changes only steps not started"));
-        ui.add_space(8.0);
         let mut open = None;
-        for card in &view.steps {
-            let (glyph, color) = mark(&card.state);
-            let ask = self
-                .profile
-                .as_ref()
-                .ok()
-                .and_then(|profile| profile.step(card.step))
-                .is_some_and(|settings| settings.ask_after);
-            let locked = matches!(card.step, Step::Design | Step::PullRequest);
-            let skipped = matches!(card.state, StepState::Skipped(_));
-            let row = ui.horizontal(|ui| {
-                ui.label(RichText::new(glyph).color(color));
-                let name = RichText::new(step_name(card.step));
-                let name = if skipped { name.weak() } else { name };
-                if ui.link(name).clicked() {
-                    open = Some(card.step);
+        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                RichText::new("PIPELINE")
+                    .monospace()
+                    .size(11.0)
+                    .strong()
+                    .color(theme::TEXT_MUTED()),
+            );
+            self.ticket_pipeline_select(ui, view);
+            ui.label(theme::muted("changes only steps not started"));
+            ui.add_space(8.0);
+            for card in &view.steps {
+                let (glyph, color) = mark(&card.state);
+                let ask = self
+                    .profile
+                    .as_ref()
+                    .ok()
+                    .and_then(|profile| profile.step(card.step))
+                    .is_some_and(|settings| settings.ask_after);
+                let locked = matches!(card.step, Step::Design | Step::PullRequest);
+                let skipped = matches!(card.state, StepState::Skipped(_));
+                let row = ui.horizontal(|ui| {
+                    ui.label(RichText::new(glyph).color(color));
+                    let name = RichText::new(step_name(card.step));
+                    let name = if skipped { name.weak() } else { name };
+                    if ui.link(name).clicked() {
+                        open = Some(card.step);
+                    }
+                    if locked {
+                        ui.label(theme::muted("ask · locked"));
+                    } else if ask {
+                        ui.label(theme::muted("ask"));
+                    }
+                });
+                if let StepState::Skipped(reason) = &card.state {
+                    ui.label(theme::muted(format!("   skipped: {reason}")));
+                    dashed(ui, row.response.rect);
                 }
-                if locked {
-                    ui.label(theme::muted("ask · locked"));
-                } else if ask {
-                    ui.label(theme::muted("ask"));
-                }
-            });
-            if let StepState::Skipped(reason) = &card.state {
-                ui.label(theme::muted(format!("   skipped: {reason}")));
-                dashed(ui, row.response.rect);
             }
-        }
+        });
         if let Some(step) = open {
             self.screen = Screen::Step(step);
         }
-        ui.add_space(12.0);
-        ui.label(
-            RichText::new("COST")
-                .monospace()
-                .size(11.0)
-                .strong()
-                .color(theme::TEXT_MUTED()),
-        );
-        ui.horizontal(|ui| {
-            theme::cost_tag(ui, false);
-            ui.label(dollars(view.api));
-            theme::cost_tag(ui, true);
-            ui.label(dollars(view.subscription));
+        ui.add_space(10.0);
+        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                RichText::new("COST")
+                    .monospace()
+                    .size(11.0)
+                    .strong()
+                    .color(theme::TEXT_MUTED()),
+            );
+            ui.horizontal(|ui| {
+                theme::cost_tag(ui, false);
+                ui.label(dollars(view.api));
+                theme::cost_tag(ui, true);
+                ui.label(dollars(view.subscription));
+            });
+            ui.label(theme::muted("context  [not reported]"));
         });
-        ui.label(theme::muted("context  [not reported]"));
-        ui.add_space(12.0);
-        ui.label(
-            RichText::new("ACTIONS")
-                .monospace()
-                .size(11.0)
-                .strong()
-                .color(theme::TEXT_MUTED()),
-        );
-        for (text, why) in [
-            (
-                "Re-run from here",
-                "coming soon: only Understand can run again until real agents (S6)",
-            ),
-            ("Open the worktree", "coming soon: no worktree yet (S6)"),
-            (
-                "Open in a terminal",
-                "coming soon: needs a real session (S6)",
-            ),
-            (
-                "Explain in plain words",
-                "open a step, then use Explain in its drawer",
-            ),
-        ] {
-            ui.add_enabled(false, egui::Button::new(text))
+        ui.add_space(10.0);
+        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            for (text, why) in [
+                (
+                    "Re-run from here",
+                    "coming soon: only Understand can run again until real agents (S6)",
+                ),
+                ("Open the worktree", "coming soon: no worktree yet (S6)"),
+                (
+                    "Open in a terminal",
+                    "coming soon: needs a real session (S6)",
+                ),
+                (
+                    "Explain in plain words",
+                    "open a step, then use Explain in its drawer",
+                ),
+            ] {
+                ui.add_enabled(
+                    false,
+                    egui::Button::new(text)
+                        .frame(false)
+                        .min_size(egui::vec2(ui.available_width(), 28.0)),
+                )
                 .on_disabled_hover_text(why);
-        }
+            }
+        });
     }
 }

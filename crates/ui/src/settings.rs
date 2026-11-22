@@ -67,7 +67,7 @@ impl App {
         ui.add_space(10.0);
         for step in Step::ALL {
             ui.horizontal(|ui| {
-                ui.add_sized([170.0, 22.0], egui::Label::new(step_name(step)));
+                theme::cell(ui, 170.0, step_name(step));
                 if locked(step) {
                     ui.add_enabled(
                         false,
@@ -201,10 +201,7 @@ impl App {
         }
         for (name, command) in &profile.checks {
             ui.horizontal(|ui| {
-                ui.add_sized(
-                    [120.0, 20.0],
-                    egui::Label::new(RichText::new(name).strong()),
-                );
+                theme::cell(ui, 120.0, RichText::new(name).strong());
                 ui.label(theme::mono(format!(
                     "{} {}",
                     command.executable,

@@ -417,9 +417,10 @@ impl App {
 
 fn field_row(ui: &mut egui::Ui, label: &str, content: impl FnOnce(&mut egui::Ui)) {
     ui.horizontal(|ui| {
-        ui.add_sized(
-            [84.0, 24.0],
-            egui::Label::new(RichText::new(label).size(13.0).color(theme::TEXT_MUTED())),
+        theme::cell(
+            ui,
+            84.0,
+            RichText::new(label).size(13.0).color(theme::TEXT_MUTED()),
         );
         content(ui);
     });
