@@ -136,6 +136,8 @@ pub struct App {
     watching: bool,
     next_update_check: Option<std::time::Instant>,
     pub(crate) accounts: Option<autopilot_accounts::Accounts>,
+    /// The API key is saved in the user environment (maybe after this start).
+    pub(crate) key_saved: bool,
     open_newest: bool,
     pub(crate) icon: Option<egui::TextureHandle>,
     pub(crate) group_by_status: bool,
@@ -232,6 +234,7 @@ impl App {
             watching: watch,
             next_update_check: None,
             accounts: None,
+            key_saved: false,
             open_newest: false,
             icon: theme::icon_texture(context),
             group_by_status: false,
@@ -523,6 +526,7 @@ impl App {
                     ));
                 }
                 Message::Accounts(accounts) => self.accounts = Some(*accounts),
+                Message::KeySaved(saved) => self.key_saved = saved,
                 Message::Update(Ok(found)) => self.update = found,
                 // A failed check is not worth a banner: the next check retries.
                 Message::Update(Err(_)) => {}

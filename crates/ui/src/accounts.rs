@@ -124,6 +124,54 @@ pub fn rows(accounts: &Accounts) -> Vec<Row> {
     rows
 }
 
+/// A change of the account a tool uses.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Switch {
+    Github { host: String, login: String },
+    Azure { id: String },
+}
+
+/// One button per other account the tool already knows, so the owner can
+/// pick which one the app uses. Nothing is typed and nothing is signed in.
+pub(crate) fn switch_choices(ui: &mut egui::Ui, name: &str, accounts: &Accounts) -> Option<Switch> {
+    let mut picked = None;
+    match name {
+        "GitHub" => {
+            if let Status::SignedIn(list) = &accounts.github {
+                for account in list.iter().filter(|a| !a.active && a.valid) {
+                    let label = format!("Use {} on {}", account.login, account.host);
+                    if ui.small_button(label).clicked() {
+                        picked = Some(Switch::Github {
+                            host: account.host.clone(),
+                            login: account.login.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        "Azure" => {
+            for choice in accounts.azure_all.iter().filter(|c| !c.active) {
+                let label = format!("Use {} · {}", choice.user, choice.subscription);
+                if ui.small_button(label).clicked() {
+                    picked = Some(Switch::Azure {
+                        id: choice.id.clone(),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+    picked
+}
+
+impl App {
+    /// Run the tool's own switch command, then read the accounts again.
+    pub(crate) fn switch_account(&mut self, switch: Switch) {
+        self.accounts = None;
+        backend::switch_account(self.context.clone(), self.sender.clone(), switch);
+    }
+}
+
 fn color(level: Level) -> Color32 {
     match level {
         Level::Good => theme::GREEN(),
@@ -182,8 +230,9 @@ impl App {
             ui.label(theme::muted("Checking GitHub, Claude, Codex and Azure..."));
             return;
         };
+        let mut switch = None;
         for row in rows(&accounts) {
-            theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+            let shown = theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
                 ui.set_width(ui.available_width() - 38.0);
                 ui.horizontal(|ui| {
                     let (rect, _) =
@@ -201,8 +250,13 @@ impl App {
                         ui.label(theme::mono(hint));
                     });
                 }
+                switch_choices(ui, row.name, &accounts)
             });
+            switch = switch.or(shown.inner);
             ui.add_space(6.0);
+        }
+        if let Some(switch) = switch {
+            self.switch_account(switch);
         }
         if ui.add(theme::primary("Check again")).clicked() {
             self.accounts = None;
@@ -249,6 +303,7 @@ mod tests {
                 user: "me@example.test".into(),
                 subscription: "dev".into(),
             }),
+            azure_all: Vec::new(),
         }
     }
 
@@ -294,6 +349,7 @@ mod tests {
                 r#"{"hosts":{"github.com":[{"state":"success","active":true,"host":"github.com","login":"me"}]}}"#,
             ),
             azure: parse_azure("{}"),
+            azure_all: Vec::new(),
         };
         let rows = rows(&accounts);
         assert_eq!(rows[0].level, Level::Good);

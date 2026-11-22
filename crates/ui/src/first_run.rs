@@ -38,7 +38,10 @@ impl App {
             .map(rows)
             .and_then(|list| list.into_iter().find(|row| row.name == "Claude"))
             .is_some_and(|row| row.level == Level::Good);
-        signed_in || api_key_present() || self.agent == backend::AgentChoice::Practice
+        signed_in
+            || api_key_present()
+            || self.key_saved
+            || self.agent == backend::AgentChoice::Practice
     }
 
     /// The whole window is this one screen until it is done: no navigation,
@@ -149,15 +152,20 @@ impl App {
             signed_in,
             claude.and_then(|row| row.hint),
         );
-        let key = api_key_present();
+        let running = api_key_present();
+        let key = running || self.key_saved;
+        let state = if running {
+            "found in the environment"
+        } else if self.key_saved {
+            // A running program never sees a variable set after it started.
+            "saved; restart the app so runs can use it"
+        } else {
+            "not set"
+        };
         step_card(
             ui,
             "API key",
-            if key {
-                "found in the environment"
-            } else {
-                "not set"
-            },
+            state,
             key,
             Some("setx AUTOPILOT_ANTHROPIC_API_KEY <your key>"),
         );
@@ -189,6 +197,7 @@ impl App {
             "GitHub opens the pull requests. Codex and Azure are optional. You can sign in later.",
         ));
         ui.add_space(8.0);
+        let mut switch = None;
         match self.accounts.clone() {
             None => {
                 ui.label(theme::muted("Checking GitHub, Codex and Azure..."));
@@ -207,8 +216,16 @@ impl App {
                         "not signed in".to_owned()
                     };
                     step_card(ui, row.name, &state, ready, row.hint);
+                    ui.horizontal_wrapped(|ui| {
+                        switch = switch
+                            .take()
+                            .or(crate::accounts::switch_choices(ui, row.name, &accounts));
+                    });
                 }
             }
+        }
+        if let Some(switch) = switch {
+            self.switch_account(switch);
         }
         true
     }
