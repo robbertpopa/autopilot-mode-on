@@ -19,6 +19,7 @@ const COLUMN: f32 = 900.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
     Today,
+    Review,
     Health,
     Pipelines,
     Projects,
@@ -58,6 +59,12 @@ pub struct App {
     pub(crate) screen: Screen,
     pub(crate) selected: Option<TicketId>,
     pub(crate) today_selected: Option<TicketId>,
+    /// Open pipeline-review findings, from the record and the latest pass.
+    pub(crate) findings: Vec<autopilot_engine::Finding>,
+    review_stamp: u64,
+    review_running: bool,
+    /// Review settings being edited on the Pipeline review page.
+    pub(crate) review_edit: Option<autopilot_profile::ReviewSettings>,
     pub(crate) health_selected: Option<String>,
     pub(crate) health_cache: Option<(String, u64, autopilot_engine::PipelineMetrics)>,
     pub(crate) plan_note: String,
@@ -140,6 +147,10 @@ impl App {
             screen: Screen::Run,
             selected: None,
             today_selected: None,
+            findings: Vec::new(),
+            review_stamp: 0,
+            review_running: false,
+            review_edit: None,
             health_selected: None,
             health_cache: None,
             plan_note: String::new(),
@@ -219,11 +230,66 @@ impl App {
         self.announced = true;
     }
 
+    /// Tell the owner about findings that opened in the last pass, once each,
+    /// and only when the window is not in front and notifications are on.
+    fn announce_findings(&self, opened: &[autopilot_engine::Finding]) {
+        let focused = self.context.input(|input| input.focused);
+        if !self.notify || focused {
+            return;
+        }
+        for finding in opened {
+            backend::notify(
+                "Autopilot Mode On".to_owned(),
+                format!(
+                    "{} · {}: {}",
+                    finding.pipeline,
+                    autopilot_engine::step_name(finding.step),
+                    finding.evidence
+                ),
+            );
+        }
+    }
+
+    /// Start a review pass when the data changed and the review is on. A pass
+    /// runs off the window thread and never when the review is off.
+    fn review_if_changed(&mut self) {
+        let Ok(profile) = &self.profile else {
+            return;
+        };
+        let settings = profile.review;
+        if settings.mode == autopilot_profile::ReviewMode::Off || self.review_running {
+            return;
+        }
+        let stamp: u64 = self
+            .snapshot
+            .tickets
+            .iter()
+            .map(|view| view.last_seq)
+            .sum::<u64>()
+            + self.snapshot.tickets.len() as u64;
+        if stamp == self.review_stamp {
+            return;
+        }
+        self.review_stamp = stamp;
+        self.review_running = true;
+        backend::review(
+            self.options.data_dir.clone(),
+            settings,
+            self.context.clone(),
+            self.sender.clone(),
+        );
+    }
+
     pub fn set_snapshot(&mut self, snapshot: Snapshot) {
         let first = self.snapshot.tickets.is_empty() && !snapshot.tickets.is_empty();
         self.loaded = true;
         self.announce(&snapshot);
         self.snapshot = snapshot;
+        if self.findings.is_empty() {
+            self.findings =
+                autopilot_engine::open_findings(&self.options.data_dir).unwrap_or_default();
+        }
+        self.review_if_changed();
         if first {
             self.apply_start_view();
         }
@@ -272,6 +338,7 @@ impl App {
             ("projects", _) => self.mode = Mode::Projects,
             ("pipelines", _) => self.mode = Mode::Pipelines,
             ("health", _) => self.mode = Mode::Health,
+            ("review", _) => self.mode = Mode::Review,
             ("cost", _) => self.mode = Mode::Cost,
             ("accounts", _) => self.mode = Mode::Accounts,
             ("run", Some(id)) => self.open(&id),
@@ -321,6 +388,13 @@ impl App {
         while let Ok(message) = self.receiver.try_recv() {
             match message {
                 Message::Snapshot(snapshot) => self.set_snapshot(snapshot),
+                Message::Review(outcome) => {
+                    self.review_running = false;
+                    if let Ok(outcome) = outcome {
+                        self.findings.clone_from(&outcome.open);
+                        self.announce_findings(&outcome.opened);
+                    }
+                }
                 Message::Accounts(accounts) => self.accounts = Some(*accounts),
                 Message::Update(Ok(found)) => self.update = found,
                 // A failed check is not worth a banner: the next check retries.
@@ -385,6 +459,7 @@ impl App {
                                 self.notice_bar(ui);
                                 match self.mode {
                                     Mode::Today => self.today_screen(ui),
+                                    Mode::Review => self.review_screen(ui),
                                     Mode::Health => self.health_screen(ui),
                                     Mode::Pipelines => self.pipelines_screen(ui),
                                     Mode::Projects => self.projects_screen(ui),
@@ -575,6 +650,7 @@ impl App {
                 (Mode::Asking, "When it asks you"),
                 (Mode::Design, "Pipeline steps"),
                 (Mode::Cost, "Cost"),
+                (Mode::Review, "Pipeline review"),
                 (Mode::Checks, "Checks"),
                 (Mode::Accounts, "Accounts"),
                 (Mode::Look, "Look"),

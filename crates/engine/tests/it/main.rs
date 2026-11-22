@@ -1299,3 +1299,69 @@ fn the_description_cannot_steer_the_verdict_and_saving_rechecks() {
     );
     assert!(none.is_err());
 }
+
+/// Reports a high context peak for every Understand run.
+struct HotReporter;
+
+impl Agent for HotReporter {
+    fn start(&self, _request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        Ok(AgentRun::spawn(move |context| {
+            context.usage(autopilot_core::UsageReport {
+                peak_context_tokens: Some(900),
+                context_window_tokens: Some(1000),
+                ..autopilot_core::UsageReport::default()
+            });
+            Ok(Understanding {
+                summary: "Implement the sample change.".into(),
+                ambiguity: Ambiguity::all(Clarity::Clear),
+                open_questions: vec![],
+                assumptions: vec![],
+                needs_design: false,
+                ui_files: vec![],
+                files_touched: vec![],
+            })
+        })?)
+    }
+}
+
+// Invariant: a review of the same data twice opens a finding once. The second
+// pass writes and announces nothing, even though the finding is still true,
+// and turning the review off computes nothing. Otherwise one drift would be a
+// new notification every time the window looked at the data.
+#[test]
+fn reviewing_twice_announces_a_finding_once() {
+    use autopilot_profile::{ReviewMode, ReviewSettings};
+    let data = tempfile::tempdir().unwrap();
+    for id in ["r1", "r2", "r3"] {
+        let ticket = Ticket {
+            id: TicketId::from(id),
+            title: id.into(),
+            description: "plain".into(),
+        };
+        run_understand_with(data.path(), &ticket, &HotReporter, Some(false)).unwrap();
+    }
+    let on = ReviewSettings {
+        mode: ReviewMode::NotifyOnly,
+        ..ReviewSettings::default()
+    };
+    let first = autopilot_engine::run_review(data.path(), &on).unwrap();
+    assert_eq!(first.opened.len(), 1, "{first:?}");
+    assert!(
+        first.opened[0].evidence.contains("90.0%") || first.opened[0].evidence.contains("80.0%")
+    );
+    let record = std::fs::read_to_string(data.path().join("review-findings.jsonl")).unwrap();
+    let second = autopilot_engine::run_review(data.path(), &on).unwrap();
+    assert_eq!(second.opened.len(), 0);
+    assert_eq!(second.open.len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(data.path().join("review-findings.jsonl")).unwrap(),
+        record,
+        "the second pass writes nothing"
+    );
+    let off = autopilot_engine::run_review(data.path(), &ReviewSettings::default()).unwrap();
+    assert_eq!(off.open.len(), 0);
+    assert_eq!(
+        autopilot_engine::open_findings(data.path()).unwrap().len(),
+        1
+    );
+}

@@ -42,6 +42,8 @@ pub struct Snapshot {
 
 pub enum Message {
     Snapshot(Snapshot),
+    /// A pipeline review pass finished, or why it could not run.
+    Review(Result<Box<autopilot_engine::ReviewOutcome>, String>),
     /// What GitHub, Claude, Codex and Azure say about who is signed in.
     Accounts(Box<autopilot_accounts::Accounts>),
     /// The outcome of an action: a short confirmation, or the reason it failed.
@@ -978,4 +980,21 @@ pub(crate) fn raise_turns(options: &Options, ticket: &TicketId) -> Result<(), St
     };
     autopilot_engine::apply_to_ticket(&options.data_dir, ticket, &[proposal])
         .map_err(|error| error.to_string())
+}
+
+/// Run the pipeline review off the window thread and report what it found. It
+/// only reads histories and appends to its own record.
+pub fn review(
+    data_dir: PathBuf,
+    settings: autopilot_profile::ReviewSettings,
+    context: egui::Context,
+    sender: Sender<Message>,
+) {
+    thread::spawn(move || {
+        let outcome = autopilot_engine::run_review(&data_dir, &settings)
+            .map(Box::new)
+            .map_err(|error| error.to_string());
+        let _ = sender.send(Message::Review(outcome));
+        context.request_repaint();
+    });
 }

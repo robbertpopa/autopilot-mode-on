@@ -13,10 +13,6 @@ use crate::theme;
 /// Runs counted per pipeline. A starting default, not a measured value.
 const LAST_RUNS: usize = 5;
 
-/// The share a peak context may reach before a step is worth a look, in
-/// thousandths. The reviewer will own this number; the page only draws it.
-const WATCH_PERMILLE: u32 = 800;
-
 fn percent(permille: u32) -> String {
     format!("{}.{}%", permille / 10, permille % 10)
 }
@@ -71,7 +67,13 @@ impl App {
         } else {
             Self::health_tiles(ui, &metrics);
             ui.add_space(10.0);
-            health_table(ui, &metrics);
+            // The same line the review uses, so the page and the findings agree.
+            let watch = self
+                .profile
+                .as_ref()
+                .map_or(800, |profile| profile.review.peak_context_permille);
+            health_table(ui, &metrics, watch);
+            self.health_findings(ui, &name);
         }
         ui.add_space(14.0);
         ui.label(theme::muted(
@@ -100,6 +102,34 @@ impl App {
         self.health_cache
             .as_ref()
             .map(|(_, _, metrics)| metrics.clone())
+    }
+
+    /// Open findings of this pipeline, with the numbers behind each.
+    fn health_findings(&self, ui: &mut egui::Ui, name: &str) {
+        let mine: Vec<&autopilot_engine::Finding> = self
+            .findings
+            .iter()
+            .filter(|finding| finding.pipeline == name)
+            .collect();
+        if mine.is_empty() {
+            return;
+        }
+        ui.add_space(10.0);
+        ui.label(RichText::new("Findings").size(18.0).strong());
+        for finding in mine {
+            theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "{} · {}",
+                        autopilot_engine::step_name(finding.step),
+                        finding.rule.label()
+                    ))
+                    .strong()
+                    .color(theme::AMBER()),
+                );
+                ui.label(&finding.evidence);
+            });
+        }
     }
 
     fn health_tiles(ui: &mut egui::Ui, metrics: &PipelineMetrics) {
@@ -153,7 +183,7 @@ fn tile(ui: &mut egui::Ui, label: &str, value: &str) {
     });
 }
 
-fn health_table(ui: &mut egui::Ui, metrics: &PipelineMetrics) {
+fn health_table(ui: &mut egui::Ui, metrics: &PipelineMetrics, watch_permille: u32) {
     ui.label(RichText::new("Tokens by step").size(18.0).strong());
     for row in metrics.steps.iter().filter(|row| row.runs > 0) {
         ui.horizontal(|ui| {
@@ -161,7 +191,7 @@ fn health_table(ui: &mut egui::Ui, metrics: &PipelineMetrics) {
             ui.add_sized([170.0, 20.0], egui::Label::new(tokens(row)));
             let watch = row
                 .peak_context_permille
-                .is_some_and(|share| share >= WATCH_PERMILLE);
+                .is_some_and(|share| share >= watch_permille);
             let color = if watch {
                 theme::AMBER()
             } else {

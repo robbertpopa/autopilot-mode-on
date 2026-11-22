@@ -193,6 +193,37 @@ impl App {
             self.today_detail(ui, &view);
         }
         self.working_list(ui);
+        self.health_items(ui);
+    }
+
+    /// Open review findings, each linking to Health. Nothing shows when the
+    /// review is off or has found nothing.
+    fn health_items(&mut self, ui: &mut egui::Ui) {
+        if self.findings.is_empty() {
+            return;
+        }
+        ui.add_space(18.0);
+        ui.label(RichText::new("Pipeline health").size(18.0).strong());
+        let mut open = None;
+        for finding in &self.findings {
+            ui.horizontal(|ui| {
+                if ui
+                    .link(format!(
+                        "{} · {}",
+                        finding.pipeline,
+                        autopilot_engine::step_name(finding.step)
+                    ))
+                    .clicked()
+                {
+                    open = Some(finding.pipeline.clone());
+                }
+                ui.label(theme::muted(&finding.evidence));
+            });
+        }
+        if let Some(name) = open {
+            self.health_selected = Some(name);
+            self.mode = Mode::Health;
+        }
     }
 
     fn today_detail(&mut self, ui: &mut egui::Ui, view: &TicketView) {

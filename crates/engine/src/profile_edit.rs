@@ -154,6 +154,60 @@ pub fn edit_project(
     Ok(profile)
 }
 
+/// One setting of the pipeline review.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReviewField {
+    Mode(autopilot_profile::ReviewMode),
+    WindowRuns(u32),
+    PeakContextPermille(u32),
+    MinHits(u32),
+    CostMultiplePercent(u32),
+}
+
+/// Change one review setting. A value that cannot be a threshold is refused by
+/// the profile when it is read back, and the file is left as it was.
+///
+/// # Errors
+/// Returns an error for an unreadable file or the diagnostic for a bad value.
+pub fn edit_review(path: &Path, field: ReviewField) -> Result<Profile, ProfileEditError> {
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
+    let mut document: DocumentMut = source
+        .parse()
+        .map_err(|error: toml_edit::TomlError| ProfileEditError::Syntax(error.to_string()))?;
+    let table = child_table(document.as_table_mut(), "review")?;
+    match field {
+        ReviewField::Mode(mode) => {
+            table["mode"] = value(match mode {
+                autopilot_profile::ReviewMode::Off => "off",
+                autopilot_profile::ReviewMode::NotifyOnly => "notify_only",
+                autopilot_profile::ReviewMode::NotifyAndTune => "notify_and_tune",
+            });
+        }
+        ReviewField::WindowRuns(n) => table["window_runs"] = value(i64::from(n)),
+        ReviewField::PeakContextPermille(n) => {
+            table["peak_context_permille"] = value(i64::from(n));
+        }
+        ReviewField::MinHits(n) => table["min_hits"] = value(i64::from(n)),
+        ReviewField::CostMultiplePercent(n) => {
+            table["cost_multiple_percent"] = value(i64::from(n));
+        }
+    }
+    let text = document.to_string();
+    let profile = Profile::parse(path, &text)?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, text)?;
+    Ok(profile)
+}
+
 /// Save a custom pipeline. A built-in name is refused by the profile when it
 /// is read back, and so is a pipeline the engine could not run in order, so
 /// nothing invalid is ever written.
@@ -378,6 +432,46 @@ protected_paths = [\"infra/**\"]
         let before = fs::read_to_string(&path).unwrap();
         assert!(add_pipeline(&path, "full", "full", &[], &[], &[], None).is_err());
         assert!(add_pipeline(&path, "bad", "full", &[], &[], &[Step::Plan], None).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    // Invariant: a review setting is written once and read back, and a value
+    // that cannot be a threshold is refused with the file unchanged. The
+    // default mode is off, so a profile without a [review] section never runs
+    // a review.
+    #[test]
+    fn review_settings_default_off_and_bad_values_are_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("profile.toml");
+        fs::write(&path, "# notes\nprotected_paths = []\n").unwrap();
+        assert_eq!(
+            Profile::parse(&path, "protected_paths = []\n")
+                .unwrap()
+                .review
+                .mode,
+            autopilot_profile::ReviewMode::Off
+        );
+        let profile = edit_review(
+            &path,
+            ReviewField::Mode(autopilot_profile::ReviewMode::NotifyOnly),
+        )
+        .unwrap();
+        assert_eq!(
+            profile.review.mode,
+            autopilot_profile::ReviewMode::NotifyOnly
+        );
+        assert_eq!(profile.review.min_hits, 3);
+        let before = fs::read_to_string(&path).unwrap();
+        for bad in [
+            ReviewField::MinHits(0),
+            ReviewField::MinHits(9),
+            ReviewField::WindowRuns(0),
+            ReviewField::PeakContextPermille(1001),
+            ReviewField::PeakContextPermille(0),
+            ReviewField::CostMultiplePercent(50),
+        ] {
+            assert!(edit_review(&path, bad).is_err(), "{bad:?}");
+        }
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
     }
 }

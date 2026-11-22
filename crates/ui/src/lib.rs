@@ -15,6 +15,7 @@ mod pipeline;
 mod pipelines;
 mod plan_review;
 mod projects;
+mod review_page;
 mod run;
 mod settings;
 mod step;
@@ -97,6 +98,7 @@ mod tests {
         for mode in [
             Mode::Today,
             Mode::Board,
+            Mode::Review,
             Mode::Health,
             Mode::Projects,
             Mode::Pipelines,
@@ -680,6 +682,76 @@ mod tests {
         frame(&mut app, &context);
         app.health_selected = Some("ask-only".into());
         frame(&mut app, &context);
+    }
+
+    // Invariant: the review is off until the owner turns it on and saves, an
+    // off review writes no record even when tickets change, and the page, Today
+    // and Health all build with a finding present. Findings from a review that
+    // ran while it was off would be notifications nobody asked for.
+    #[test]
+    fn the_review_is_off_until_saved_and_its_pages_build() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        assert_eq!(
+            app.profile.as_ref().unwrap().review.mode,
+            autopilot_profile::ReviewMode::Off
+        );
+        perform(
+            &options,
+            &Action::Start {
+                title: "T".into(),
+                description: "Show the time".into(),
+                attachments: Vec::new(),
+                workspace: Some(directory.path().to_path_buf()),
+                pipeline: None,
+            },
+        )
+        .unwrap();
+        app.set_snapshot(read(&options));
+        assert!(!options.data_dir.join("review-findings.jsonl").exists());
+        app.mode = Mode::Review;
+        frame(&mut app, &context);
+        let mut edit = app.profile.as_ref().unwrap().review;
+        edit.mode = autopilot_profile::ReviewMode::NotifyOnly;
+        edit.min_hits = 2;
+        app.review_edit = Some(edit);
+        let saved = app.profile.as_ref().unwrap().review;
+        let changes: Vec<_> = vec![
+            (
+                autopilot_engine::ReviewField::Mode(edit.mode),
+                String::new(),
+            ),
+            (
+                autopilot_engine::ReviewField::MinHits(edit.min_hits),
+                String::new(),
+            ),
+        ];
+        assert_ne!(saved, edit);
+        app.save_review_for_test(&changes);
+        let after = autopilot_engine::load_profile(&options.profile)
+            .unwrap()
+            .review;
+        assert_eq!(after.mode, autopilot_profile::ReviewMode::NotifyOnly);
+        assert_eq!(after.min_hits, 2);
+        app.findings = vec![autopilot_engine::Finding {
+            pipeline: "full".into(),
+            step: Step::Plan,
+            rule: autopilot_engine::Rule::PeakContext,
+            evidence: "peak context at or above 80.0% in 3 of the last 3 reported runs".into(),
+            estimated: false,
+        }];
+        for mode in [Mode::Review, Mode::Today, Mode::Health] {
+            app.mode = mode;
+            frame(&mut app, &context);
+        }
     }
 
     // Invariant: pausing from the window writes the engine's pause flag, the

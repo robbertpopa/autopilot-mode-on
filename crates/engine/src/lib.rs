@@ -37,6 +37,7 @@ mod plan;
 mod profile_edit;
 mod publish;
 mod rerun;
+mod review;
 mod rules;
 mod settings;
 mod triage;
@@ -62,11 +63,13 @@ pub use overlap::{TicketOverlap, find_overlaps};
 pub use pipelines::{choose_pipeline, chosen as chosen_pipeline};
 pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use profile_edit::{
-    ProfileEditError, ProjectField, StepField, add_pipeline, edit_project, edit_step, load_profile,
+    ProfileEditError, ProjectField, ReviewField, StepField, add_pipeline, edit_project,
+    edit_review, edit_step, load_profile,
 };
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use rerun::ticket_words;
 pub use rerun::{rerun_plan, rerun_understand, reset_step};
+pub use review::{Finding, ReviewOutcome, Rule, findings_for, open_findings, run_review};
 pub use rules::{
     MAX_RULES_BYTES, RulesInfo, check_rules, project_key, read_rules, rules_info, rules_path,
     save_rules,

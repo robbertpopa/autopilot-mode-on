@@ -28,6 +28,67 @@ pub struct ProfileDiagnostic {
     pub message: String,
 }
 
+/// What the pipeline review does. Off is the default: nothing is computed,
+/// written or notified until the owner turns it on.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewMode {
+    #[default]
+    Off,
+    NotifyOnly,
+    /// Reserved for automatic tuning, which does not exist yet; it behaves
+    /// as notify only.
+    NotifyAndTune,
+}
+
+/// How the review decides something is worth a look. Whole numbers only:
+/// shares are thousandths of the context window, and the cost multiple is a
+/// percent (200 means twice the median). Starting defaults, not measured
+/// facts; the first real runs should tune them.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReviewSettings {
+    pub mode: ReviewMode,
+    /// How many of the latest runs of a step are looked at.
+    pub window_runs: u32,
+    pub peak_context_permille: u32,
+    /// How many runs in the window must cross the line to open a finding.
+    pub min_hits: u32,
+    pub cost_multiple_percent: u32,
+}
+
+impl Default for ReviewSettings {
+    fn default() -> Self {
+        Self {
+            mode: ReviewMode::Off,
+            window_runs: 5,
+            peak_context_permille: 800,
+            min_hits: 3,
+            cost_multiple_percent: 200,
+        }
+    }
+}
+
+impl ReviewSettings {
+    /// # Errors
+    /// Returns a sentence for a value that cannot be a sensible threshold.
+    pub fn check(&self) -> Result<(), String> {
+        if self.window_runs == 0 || self.window_runs > 50 {
+            return Err("window_runs must be between 1 and 50".into());
+        }
+        if self.min_hits == 0 || self.min_hits > self.window_runs {
+            return Err("min_hits must be between 1 and window_runs".into());
+        }
+        if self.peak_context_permille == 0 || self.peak_context_permille > 1000 {
+            return Err("peak_context_permille must be between 1 and 1000".into());
+        }
+        if self.cost_multiple_percent < 100 || self.cost_multiple_percent > 10_000 {
+            return Err("cost_multiple_percent must be between 100 and 10000".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Agent {
@@ -108,6 +169,7 @@ pub struct Profile {
     pub branch_rules: BranchRules,
     pub budgets: ProjectBudgets,
     pub when_unsure: WhenUnsure,
+    pub review: ReviewSettings,
     /// Projects by normalised workspace path.
     pub projects: BTreeMap<String, Project>,
     custom_pipelines: BTreeMap<String, Pipeline>,
@@ -122,6 +184,7 @@ struct ProfileFile {
     branch_rules: BranchRules,
     budgets: ProjectBudgets,
     when_unsure: WhenUnsure,
+    review: ReviewSettings,
     projects: BTreeMap<String, ProjectFile>,
     pipelines: BTreeMap<String, PipelineFile>,
 }
@@ -180,6 +243,10 @@ impl Profile {
             steps.insert(step, resolve_step(step, options, path, source)?);
         }
 
+        if let Err(why) = file.review.check() {
+            let offset = source.find("[review]").unwrap_or(0);
+            return Err(diagnostic(path, source, offset, "review".into(), why));
+        }
         let custom_pipelines = resolve_pipelines(&file.pipelines, path, source)?;
         let projects = resolve_projects(&file.projects, &custom_pipelines, path, source)?;
 
@@ -190,6 +257,7 @@ impl Profile {
             branch_rules: file.branch_rules,
             budgets: file.budgets,
             when_unsure: file.when_unsure,
+            review: file.review,
             projects,
             custom_pipelines,
         })
