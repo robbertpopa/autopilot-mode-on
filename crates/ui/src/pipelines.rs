@@ -54,55 +54,94 @@ fn dots(ui: &mut egui::Ui, pipeline: &Pipeline) {
 
 impl App {
     pub(crate) fn pipelines_screen(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Pipelines").size(30.0).strong());
+        ui.label(RichText::new("Pipelines").size(18.0).strong());
         let Ok(profile) = &self.profile else {
             ui.label(theme::muted("The profile could not be read."));
             return;
         };
         let all = profile.pipelines();
+        if self.pipeline_selected.is_none() {
+            self.pipeline_selected = all.first().map(|pipeline| pipeline.name.clone());
+        }
         ui.add_space(8.0);
+        let width = (ui.available_width() * 0.28).clamp(220.0, 300.0);
         let mut pick = None;
-        for pipeline in &all {
-            let chosen = self.pipeline_selected.as_deref() == Some(pipeline.name.as_str());
-            ui.horizontal(|ui| {
-                dots(ui, pipeline);
-                let button = egui::Button::new(&pipeline.name)
-                    .fill(if chosen {
-                        theme::SELECTED()
-                    } else {
-                        Color32::TRANSPARENT
-                    })
-                    .min_size(egui::vec2(180.0, 28.0));
-                if theme::named(ui.add(button), &pipeline.name).clicked() {
-                    pick = Some(pipeline.name.clone());
-                }
-                ui.label(theme::muted(if pipeline.builtin {
-                    "built-in"
-                } else {
-                    "custom"
-                }));
-            });
-        }
-        ui.horizontal(|ui| {
-            dots(ui, &all[0]);
-            ui.add_enabled(false, egui::Button::new("review"))
-                .on_disabled_hover_text("soon: the review pipeline arrives with M9");
-            ui.label(theme::muted("soon"));
-        });
-        if let Some(name) = pick {
-            self.pipeline_selected = Some(name);
-        }
+        let default_name = Some(autopilot_profile::DEFAULT_PIPELINE.to_owned());
         let selected = self
             .pipeline_selected
             .as_deref()
             .and_then(|name| all.iter().find(|pipeline| pipeline.name == name))
             .cloned();
-        if let Some(pipeline) = selected {
-            ui.add_space(14.0);
-            self.pipeline_detail(ui, &pipeline);
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 16.0;
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(width);
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    for pipeline in &all {
+                        let chosen =
+                            self.pipeline_selected.as_deref() == Some(pipeline.name.as_str());
+                        let word = if default_name.as_deref() == Some(pipeline.name.as_str()) {
+                            "default"
+                        } else if pipeline.builtin {
+                            "built-in"
+                        } else {
+                            "custom"
+                        };
+                        if pipeline_card(ui, pipeline, word, chosen) {
+                            pick = Some(pipeline.name.clone());
+                        }
+                    }
+                    let review = egui::Frame::new()
+                        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER()))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(egui::Margin::symmetric(12, 9))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("review")
+                                        .monospace()
+                                        .strong()
+                                        .color(theme::TEXT_MUTED()),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        theme::pill(
+                                            ui,
+                                            "soon",
+                                            theme::GREY_FILL(),
+                                            theme::GREY_TEXT(),
+                                        );
+                                    },
+                                );
+                            });
+                        });
+                    review
+                        .response
+                        .on_hover_text("soon: the review pipeline arrives with M9");
+                },
+            );
+            ui.vertical(|ui| {
+                if let Some(pipeline) = &selected {
+                    theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        self.pipeline_detail(ui, pipeline);
+                    });
+                }
+                ui.add_space(10.0);
+                theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    self.build_with_agent(ui);
+                });
+            });
+        });
+        if let Some(name) = pick {
+            self.pipeline_selected = Some(name);
         }
-        ui.add_space(14.0);
-        self.build_with_agent(ui);
     }
 
     /// Describe a workflow and an agent drafts a pipeline. The engine checks
@@ -110,7 +149,7 @@ impl App {
     /// saves it, and an agent cannot unlock Design or the pull request, drop a
     /// forced ask or change a budget.
     fn build_with_agent(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Build with agent").size(18.0).strong());
+        ui.label(RichText::new("Build with agent").size(14.0).strong());
         ui.add(
             egui::TextEdit::multiline(&mut self.draft_text)
                 .desired_rows(2)
@@ -199,7 +238,12 @@ impl App {
     }
 
     fn pipeline_detail(&mut self, ui: &mut egui::Ui, pipeline: &Pipeline) {
-        ui.label(RichText::new(&pipeline.name).size(20.0).strong());
+        ui.label(
+            RichText::new(&pipeline.name)
+                .monospace()
+                .size(14.0)
+                .strong(),
+        );
         if pipeline.builtin {
             ui.label(theme::muted(
                 "built-in, read-only. Duplicate it to change it.",
@@ -342,4 +386,51 @@ impl App {
     pub(crate) fn write_pipeline_for_test(&mut self, name: &str, modes: &[(Step, StepMode)]) {
         self.write_pipeline(name, modes, None);
     }
+}
+
+/// One pipeline in the list: name, a chip, and the six step dots.
+fn pipeline_card(ui: &mut egui::Ui, pipeline: &Pipeline, word: &str, chosen: bool) -> bool {
+    let shown = egui::Frame::new()
+        .fill(if chosen {
+            theme::CARD()
+        } else {
+            Color32::TRANSPARENT
+        })
+        .stroke(egui::Stroke::new(
+            1.0_f32,
+            if chosen {
+                theme::BORDER_STRONG()
+            } else {
+                theme::BORDER()
+            },
+        ))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(12, 9))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(&pipeline.name)
+                        .monospace()
+                        .size(13.0)
+                        .strong(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (fill, color) = if word == "default" {
+                        (theme::BLUE_FILL(), theme::BLUE_TEXT())
+                    } else {
+                        (theme::GREY_FILL(), theme::GREY_TEXT())
+                    };
+                    theme::pill(ui, word, fill, color);
+                });
+            });
+            dots(ui, pipeline);
+        });
+    let click = ui.interact(
+        shown.response.rect,
+        ui.id().with(("pipeline-card", pipeline.name.as_str())),
+        egui::Sense::click(),
+    );
+    theme::named(click, &pipeline.name).clicked()
 }

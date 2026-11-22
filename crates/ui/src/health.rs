@@ -32,7 +32,7 @@ fn peak(row: &StepMetrics) -> String {
 
 impl App {
     pub(crate) fn health_screen(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Pipeline health").size(30.0).strong());
+        ui.label(RichText::new("Pipeline health").size(18.0).strong());
         ui.label(theme::muted(format!(
             "last {LAST_RUNS} runs of each pipeline. Reported by the agent; nothing is estimated."
         )));
@@ -45,19 +45,42 @@ impl App {
             self.health_selected = names.first().cloned();
         }
         ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            for name in &names {
-                let chosen = self.health_selected.as_deref() == Some(name.as_str());
-                if ui.selectable_label(chosen, name).clicked() {
-                    self.health_selected = Some(name.clone());
-                }
-            }
+        let width = (ui.available_width() * 0.24).clamp(200.0, 280.0);
+        let mut picked = None;
+        let findings = self.findings.clone();
+        let tunings = self.tunings.clone();
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 16.0;
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(width);
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    for name in &names {
+                        let chosen = self.health_selected.as_deref() == Some(name.as_str());
+                        let watch = findings.iter().any(|finding| &finding.pipeline == name);
+                        let tuned = tunings.iter().any(|each| &each.tuning.pipeline == name);
+                        if pipeline_row(ui, name, chosen, watch, tuned) {
+                            picked = Some(name.clone());
+                        }
+                    }
+                },
+            );
+            ui.vertical(|ui| {
+                self.health_detail(ui);
+            });
         });
+        if picked.is_some() {
+            self.health_selected = picked;
+        }
+    }
+
+    fn health_detail(&mut self, ui: &mut egui::Ui) {
         let Some(name) = self.health_selected.clone() else {
             return;
         };
         let metrics = self.health_metrics(&name);
-        ui.add_space(10.0);
         let Some(metrics) = metrics else {
             ui.label(theme::muted("The runs could not be read."));
             return;
@@ -78,7 +101,7 @@ impl App {
         }
         ui.add_space(14.0);
         ui.label(theme::muted(
-            "Grades, findings and automatic tuning are not built: they need the reviewer and the tuning overlay.",
+            "Grades need the model-graded reviewer, which is not built. Findings and tier 1 tuning work from the recorded usage.",
         ));
     }
 
@@ -118,7 +141,7 @@ impl App {
             return;
         }
         ui.add_space(10.0);
-        ui.label(RichText::new("Tuned").size(18.0).strong());
+        ui.label(RichText::new("Tuned").size(14.0).strong());
         for each in mine {
             let tuning = &each.tuning;
             theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
@@ -168,7 +191,7 @@ impl App {
             return;
         }
         ui.add_space(10.0);
-        ui.label(RichText::new("Findings").size(18.0).strong());
+        ui.label(RichText::new("Findings").size(14.0).strong());
         for finding in mine {
             theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
                 ui.label(
@@ -228,17 +251,61 @@ impl App {
     }
 }
 
+/// One pipeline in the list: name, and a dot for watch (amber), tuned (green)
+/// or nothing to report (grey).
+fn pipeline_row(ui: &mut egui::Ui, name: &str, chosen: bool, watch: bool, tuned: bool) -> bool {
+    let shown = egui::Frame::new()
+        .fill(if chosen {
+            theme::CARD()
+        } else {
+            egui::Color32::TRANSPARENT
+        })
+        .stroke(egui::Stroke::new(
+            1.0_f32,
+            if chosen {
+                theme::BORDER_STRONG()
+            } else {
+                theme::BORDER()
+            },
+        ))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(12, 9))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(name).monospace().size(13.0).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (word, color) = if watch {
+                        ("watch", theme::AMBER())
+                    } else if tuned {
+                        ("tuned", theme::GREEN())
+                    } else {
+                        ("ok", theme::TEXT_MUTED())
+                    };
+                    ui.label(RichText::new(word).monospace().size(11.0).color(color));
+                });
+            });
+        });
+    let click = ui.interact(
+        shown.response.rect,
+        ui.id().with(("health-pipeline", name)),
+        egui::Sense::click(),
+    );
+    theme::named(click, name).clicked()
+}
+
 fn tile(ui: &mut egui::Ui, label: &str, value: &str) {
     theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
         ui.set_width(150.0);
-        ui.label(theme::muted(label));
-        ui.label(RichText::new(value).size(18.0).strong());
+        ui.label(
+            RichText::new(label.to_uppercase())
+                .monospace()
+                .size(11.0)
+                .strong()
+                .color(theme::TEXT_MUTED()),
+        );
+        ui.label(RichText::new(value).size(14.0).strong());
     });
-}
-
-fn health_table(ui: &mut egui::Ui, metrics: &PipelineMetrics, watch_permille: u32) {
-    ui.label(RichText::new("Tokens by step").size(18.0).strong());
-    step_rows(ui, metrics, watch_permille);
 }
 
 /// What one finished ticket used, step by step, from its own recorded usage.
@@ -267,40 +334,72 @@ pub(crate) fn review_card(
     });
 }
 
+fn header_cell(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        RichText::new(text.to_uppercase())
+            .monospace()
+            .size(11.0)
+            .strong()
+            .color(theme::TEXT_MUTED()),
+    );
+}
+
+fn health_table(ui: &mut egui::Ui, metrics: &PipelineMetrics, watch_permille: u32) {
+    ui.label(RichText::new("Tokens by step").size(14.0).strong());
+    theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        step_rows(ui, metrics, watch_permille);
+    });
+}
+
 fn step_rows(ui: &mut egui::Ui, metrics: &PipelineMetrics, watch_permille: u32) {
-    for row in metrics.steps.iter().filter(|row| row.runs > 0) {
-        ui.horizontal(|ui| {
-            ui.add_sized([130.0, 20.0], egui::Label::new(step_name(row.step)));
-            ui.add_sized([170.0, 20.0], egui::Label::new(tokens(row)));
-            let watch = row
-                .peak_context_permille
-                .is_some_and(|share| share >= watch_permille);
-            let color = if watch {
-                theme::AMBER()
-            } else {
-                theme::TEXT_SOFT()
-            };
-            ui.add_sized(
-                [150.0, 20.0],
-                egui::Label::new(RichText::new(format!("peak {}", peak(row))).color(color)),
-            );
-            let mut cost = format!("{} API", dollars(row.api));
-            if row.subscription.as_microusd() > 0 {
-                cost = format!("{cost} · ~{} est.", dollars(row.subscription));
+    egui::Grid::new(("step-rows", metrics.pipeline.as_str()))
+        .num_columns(5)
+        .spacing([24.0, 8.0])
+        .show(ui, |ui| {
+            for title in ["step", "tokens", "peak context", "cost", "rounds"] {
+                header_cell(ui, title);
             }
-            ui.label(theme::muted(cost));
-            if row.rounds > 0 {
-                ui.label(theme::muted(format!(
-                    "{} rounds · first passed {} of {}",
-                    row.rounds, row.first_round_passed, row.runs
-                )));
-            }
-            if row.reported < row.runs {
-                ui.label(theme::muted(format!(
-                    "{} of {} runs reported",
-                    row.reported, row.runs
-                )));
+            ui.end_row();
+            for row in metrics.steps.iter().filter(|row| row.runs > 0) {
+                ui.label(RichText::new(step_name(row.step)).monospace().size(12.0));
+                ui.label(RichText::new(tokens(row)).monospace().size(12.0));
+                let watch = row
+                    .peak_context_permille
+                    .is_some_and(|share| share >= watch_permille);
+                ui.label(
+                    RichText::new(peak(row))
+                        .monospace()
+                        .size(12.0)
+                        .color(if watch {
+                            theme::AMBER()
+                        } else {
+                            theme::TEXT_SOFT()
+                        }),
+                );
+                let mut cost = format!("{} API", dollars(row.api));
+                if row.subscription.as_microusd() > 0 {
+                    cost = format!("{cost} · ~{} est.", dollars(row.subscription));
+                }
+                ui.label(RichText::new(cost).monospace().size(12.0));
+                let mut rounds = if row.rounds > 0 {
+                    format!(
+                        "{} · first passed {} of {}",
+                        row.rounds, row.first_round_passed, row.runs
+                    )
+                } else {
+                    "–".to_owned()
+                };
+                if row.reported < row.runs {
+                    rounds = format!("{rounds} · {} of {} reported", row.reported, row.runs);
+                }
+                ui.label(
+                    RichText::new(rounds)
+                        .monospace()
+                        .size(12.0)
+                        .color(theme::TEXT_MUTED()),
+                );
+                ui.end_row();
             }
         });
-    }
 }

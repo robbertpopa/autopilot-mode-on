@@ -51,7 +51,7 @@ impl App {
         ui.add_space(14.0);
         ui.label(
             RichText::new("How does a ticket become a pull request?")
-                .size(30.0)
+                .size(18.0)
                 .strong(),
         );
         ui.label(theme::muted(
@@ -64,7 +64,7 @@ impl App {
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
             ui.set_width(ui.available_width() - 38.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("1   The steps, in order").size(19.0).strong());
+                ui.label(RichText::new("1   The steps, in order").size(14.0).strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     theme::segmented(
                         ui,
@@ -171,7 +171,7 @@ impl App {
             ui.horizontal(|ui| {
                 if ui
                     .add(
-                        egui::Label::new(RichText::new(step_name(step)).size(17.0).strong())
+                        egui::Label::new(RichText::new(step_name(step)).size(13.0).strong())
                             .sense(egui::Sense::click()),
                     )
                     .clicked()

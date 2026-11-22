@@ -36,7 +36,6 @@ macro_rules! colors {
 // because a bright fill colour on white fails 4.5:1 as text.
 colors! {
     BACKGROUND: Color32::from_rgb(0x0F, 0x10, 0x12), Color32::from_rgb(0xF4, 0xF5, 0xF7);
-    TITLE_BAR: Color32::from_rgb(0x13, 0x14, 0x17), Color32::from_rgb(0xFF, 0xFF, 0xFF);
     SIDEBAR: Color32::from_rgb(0x13, 0x14, 0x17), Color32::from_rgb(0xEC, 0xEE, 0xF2);
     CARD: Color32::from_rgb(0x17, 0x18, 0x1B), Color32::from_rgb(0xFF, 0xFF, 0xFF);
     NODE: Color32::from_rgb(0x1E, 0x20, 0x24), Color32::from_rgb(0xEE, 0xF0, 0xF3);
@@ -55,6 +54,9 @@ colors! {
     GREEN: Color32::from_rgb(0x4C, 0xC3, 0x8A), Color32::from_rgb(0x1E, 0x7A, 0x4E);
     GREEN_FILL: Color32::from_rgb(0x14, 0x2A, 0x1F), Color32::from_rgb(0xDD, 0xF3, 0xE8);
     AMBER: Color32::from_rgb(0xF0, 0xB9, 0x4D), Color32::from_rgb(0x8A, 0x56, 0x00);
+    AMBER_SOLID: Color32::from_rgb(0xF0, 0xB9, 0x4D), Color32::from_rgb(0xE9, 0xA9, 0x3A);
+    RED_SOLID: Color32::from_rgb(0xF0, 0x77, 0x7A), Color32::from_rgb(0xD9, 0x47, 0x4B);
+    GREEN_SOLID: Color32::from_rgb(0x4C, 0xC3, 0x8A), Color32::from_rgb(0x2E, 0x9E, 0x66);
     AMBER_FILL: Color32::from_rgb(0x2B, 0x21, 0x10), Color32::from_rgb(0xFF, 0xF1, 0xD6);
     RED: Color32::from_rgb(0xF5, 0x9A, 0x9C), Color32::from_rgb(0xB4, 0x2F, 0x33);
     RED_FILL: Color32::from_rgb(0x2E, 0x16, 0x18), Color32::from_rgb(0xFD, 0xE3, 0xE3);
@@ -158,7 +160,7 @@ pub fn apply(ctx: &egui::Context, light: bool) {
     visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, TEXT());
     visuals.selection.bg_fill = BLUE();
     visuals.hyperlink_color = BLUE();
-    let radius = CornerRadius::same(9);
+    let radius = CornerRadius::same(7);
     for widget in [
         &mut visuals.widgets.inactive,
         &mut visuals.widgets.hovered,
@@ -180,28 +182,28 @@ pub fn apply(ctx: &egui::Context, light: bool) {
     ctx.set_visuals_of(egui::Theme::Dark, visuals.clone());
     ctx.set_visuals_of(egui::Theme::Light, visuals);
     ctx.style_mut(|style| {
-        style.spacing.item_spacing = egui::vec2(10.0, 10.0);
-        style.spacing.button_padding = egui::vec2(14.0, 8.0);
+        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        style.spacing.button_padding = egui::vec2(12.0, 6.0);
         style.text_styles = [
             (
                 egui::TextStyle::Small,
-                FontId::new(12.0, FontFamily::Proportional),
+                FontId::new(11.0, FontFamily::Proportional),
             ),
             (
                 egui::TextStyle::Body,
-                FontId::new(15.0, FontFamily::Proportional),
+                FontId::new(13.0, FontFamily::Proportional),
             ),
             (
                 egui::TextStyle::Button,
-                FontId::new(15.0, FontFamily::Proportional),
+                FontId::new(13.0, FontFamily::Proportional),
             ),
             (
                 egui::TextStyle::Heading,
-                FontId::new(26.0, FontFamily::Proportional),
+                FontId::new(18.0, FontFamily::Proportional),
             ),
             (
                 egui::TextStyle::Monospace,
-                FontId::new(13.0, FontFamily::Monospace),
+                FontId::new(12.0, FontFamily::Monospace),
             ),
         ]
         .into();
@@ -213,18 +215,18 @@ pub fn card(fill: Color32, border: Color32) -> Frame {
     Frame::new()
         .fill(fill)
         .stroke(Stroke::new(1.0_f32, border))
-        .corner_radius(CornerRadius::same(14))
-        .inner_margin(Margin::same(18))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(Margin::same(14))
 }
 
 /// A small coloured label such as "Needs you" or "always runs".
 pub fn pill(ui: &mut Ui, text: &str, fill: Color32, color: Color32) {
     Frame::new()
         .fill(fill)
-        .corner_radius(CornerRadius::same(99))
-        .inner_margin(Margin::symmetric(9, 2))
+        .corner_radius(CornerRadius::same(5))
+        .inner_margin(Margin::symmetric(7, 2))
         .show(ui, |ui| {
-            ui.label(RichText::new(text).size(12.0).strong().color(color));
+            ui.label(RichText::new(text).monospace().size(11.0).color(color));
         });
 }
 
@@ -275,9 +277,9 @@ pub fn named(response: egui::Response, name: impl Into<String>) -> egui::Respons
 
 /// A button for the one main action of a screen.
 pub fn primary(text: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text).strong().size(16.0).color(ON_ACCENT()))
+    egui::Button::new(RichText::new(text).strong().size(13.0).color(ON_ACCENT()))
         .fill(BLUE())
-        .min_size(egui::vec2(0.0, 38.0))
+        .min_size(egui::vec2(0.0, 34.0))
 }
 
 /// A segmented switch. Returns true if the choice changed.
@@ -285,7 +287,7 @@ pub fn segmented<T: Copy + PartialEq>(ui: &mut Ui, current: &mut T, options: &[(
     let before = *current;
     Frame::new()
         .stroke(Stroke::new(1.0_f32, BORDER()))
-        .corner_radius(CornerRadius::same(9))
+        .corner_radius(CornerRadius::same(7))
         .inner_margin(Margin::same(3))
         .show(ui, |ui| {
             ui.horizontal(|ui| {

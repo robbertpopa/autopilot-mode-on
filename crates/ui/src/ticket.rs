@@ -235,7 +235,8 @@ impl App {
     pub(crate) fn stepper_panel(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         ui.label(
             RichText::new("PIPELINE")
-                .size(13.0)
+                .monospace()
+                .size(11.0)
                 .strong()
                 .color(theme::TEXT_MUTED()),
         );
@@ -277,7 +278,8 @@ impl App {
         ui.add_space(12.0);
         ui.label(
             RichText::new("COST")
-                .size(13.0)
+                .monospace()
+                .size(11.0)
                 .strong()
                 .color(theme::TEXT_MUTED()),
         );
@@ -291,7 +293,8 @@ impl App {
         ui.add_space(12.0);
         ui.label(
             RichText::new("ACTIONS")
-                .size(13.0)
+                .monospace()
+                .size(11.0)
                 .strong()
                 .color(theme::TEXT_MUTED()),
         );
