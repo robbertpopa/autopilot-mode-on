@@ -11,6 +11,7 @@ mod pipeline;
 mod run;
 mod step;
 mod theme;
+mod ticket;
 mod today;
 
 pub use app::{App, Mode, Screen, Tab};
@@ -106,16 +107,7 @@ mod tests {
             frame(&mut app, &context);
             for step in Step::ALL {
                 app.screen = Screen::Step(step);
-                for tab in [
-                    Tab::Overview,
-                    Tab::Input,
-                    Tab::Prompt,
-                    Tab::Output,
-                    Tab::Log,
-                    Tab::Changes,
-                    Tab::Cost,
-                    Tab::Settings,
-                ] {
+                for tab in [Tab::Summary, Tab::Output, Tab::Log, Tab::Changes] {
                     app.tab = tab;
                     frame(&mut app, &context);
                 }
@@ -212,6 +204,39 @@ mod tests {
             .find(|view| view.id == id)
             .unwrap();
         assert_ne!(settled.badge, autopilot_engine::Badge::NeedsYou);
+    }
+
+    // Invariant: the Timezone ticket page shows round 1 failed on protected
+    // paths and round 2 live, and the page builds with the drawer open and
+    // closed. The data is what the page paints, so a change that dropped a
+    // round from the view would fail here.
+    #[test]
+    fn the_timezone_ticket_shows_round_one_failed_and_round_two_live() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let id = autopilot_core::TicketId::from("demo-timezone");
+        let view = app.ticket(&id).unwrap().clone();
+        assert_eq!(view.rounds.len(), 2);
+        let first = view.rounds[0].failure().expect("round 1 failed");
+        assert!(first.note.contains("protected path"), "{}", first.note);
+        assert!(
+            view.rounds[1].failure().is_none(),
+            "round 2 has no failure yet"
+        );
+        app.open(&id);
+        frame(&mut app, &context);
+        app.screen = Screen::Step(Step::BuildCheck);
+        frame(&mut app, &context);
     }
 
     // Invariant: pausing from the window writes the engine's pause flag, the

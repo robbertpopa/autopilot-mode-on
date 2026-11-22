@@ -34,14 +34,10 @@ pub enum Screen {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Tab {
-    Overview,
-    Input,
-    Prompt,
+    Summary,
     Output,
     Log,
     Changes,
-    Cost,
-    Settings,
 }
 
 #[allow(clippy::struct_excessive_bools, reason = "independent view toggles")]
@@ -116,7 +112,7 @@ impl App {
             today_selected: None,
             design_step: Step::BuildCheck,
             advanced: true,
-            tab: Tab::Overview,
+            tab: Tab::Summary,
             notice: None,
             change_text: String::new(),
             reading: None,
@@ -298,13 +294,16 @@ impl App {
             self.start_new();
         }
         self.today_keys(ctx);
+        if matches!(self.screen, Screen::Step(_))
+            && !ctx.wants_keyboard_input()
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.screen = Screen::Run;
+        }
         self.take_drops(ctx);
         self.title_bar(ctx);
         self.nav(ctx);
-        if self.mode == Mode::Watch
-            && matches!(self.screen, Screen::Step(_))
-            && self.current().is_some()
-        {
+        if self.mode == Mode::Watch && self.current().is_some() {
             self.side_panel(ctx);
         }
         egui::CentralPanel::default()
@@ -523,10 +522,7 @@ impl App {
         ui.add_space(14.0);
         match self.current().map(|view| view.id.clone()) {
             None => self.home_screen(ui),
-            Some(id) => match self.screen {
-                Screen::Run => self.run_screen(ui, &id),
-                Screen::Step(step) => self.step_screen(ui, &id, step),
-            },
+            Some(id) => self.ticket_page(ui, &id),
         }
     }
 }

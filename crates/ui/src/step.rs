@@ -1,6 +1,6 @@
 //! Step detail: the tabs, the actions for one step and the change request.
 
-use autopilot_core::{Step, TicketId};
+use autopilot_core::Step;
 use autopilot_engine::{StepField, TicketView, dollars, step_name};
 use autopilot_pipeline::StepState;
 use eframe::egui::{self, Color32, Frame, Margin, RichText, Stroke};
@@ -10,15 +10,11 @@ use crate::backend::Action;
 use crate::run::{clock, state_text};
 use crate::theme;
 
-const TABS: [(Tab, &str); 8] = [
-    (Tab::Overview, "Overview"),
-    (Tab::Input, "Input"),
-    (Tab::Prompt, "Prompt"),
+const TABS: [(Tab, &str); 4] = [
+    (Tab::Summary, "Summary"),
     (Tab::Output, "Output"),
     (Tab::Log, "Log"),
     (Tab::Changes, "Changes"),
-    (Tab::Cost, "Cost"),
-    (Tab::Settings, "Settings"),
 ];
 
 fn why_it_ran(step: Step) -> &'static str {
@@ -36,15 +32,13 @@ impl App {
         clippy::too_many_lines,
         reason = "one screen drawn top to bottom; the sections share the same card"
     )]
-    pub(crate) fn step_screen(&mut self, ui: &mut egui::Ui, id: &TicketId, step: Step) {
-        let Some(view) = self.ticket(id).cloned() else {
-            return;
-        };
+    pub(crate) fn drawer(&mut self, ui: &mut egui::Ui, view: &TicketView, step: Step) {
+        let view = view.clone();
         let Some(card) = view.step(step).cloned() else {
             return;
         };
         ui.horizontal(|ui| {
-            if ui.link("< Pipeline").clicked() {
+            if ui.link("× Close (Esc)").clicked() {
                 self.screen = Screen::Run;
             }
             ui.label(RichText::new(step_name(step)).size(28.0).strong());
@@ -147,7 +141,7 @@ impl App {
             self.tab_body(ui, &view, step);
         });
         ui.add_space(8.0);
-        self.change_box(ui);
+        self.step_side(ui, &view, step);
     }
 
     fn tab_body(&mut self, ui: &mut egui::Ui, view: &TicketView, step: Step) {
@@ -155,12 +149,15 @@ impl App {
             ui.label(theme::muted(text));
         };
         match self.tab {
-            Tab::Overview => self.overview(ui, view, step),
-            Tab::Input => none(ui, "What this step received is not recorded yet."),
-            Tab::Prompt => none(
-                ui,
-                "The exact prompt, with secrets removed, is not recorded yet.",
-            ),
+            Tab::Summary => {
+                self.overview(ui, view, step);
+                ui.add_space(8.0);
+                ui.label(RichText::new("Cost").strong());
+                Self::cost_lines(ui, view, step);
+                ui.add_space(8.0);
+                ui.label(RichText::new("Settings").strong());
+                self.settings_tab(ui, step);
+            }
             Tab::Output => match view.outputs.iter().find(|(kept, _)| *kept == step) {
                 Some((_, text)) => {
                     egui::ScrollArea::vertical()
@@ -172,6 +169,10 @@ impl App {
                 None => none(ui, "This step has not produced a result."),
             },
             Tab::Log => {
+                none(
+                    ui,
+                    "Input and prompt are not recorded yet. The console follows.",
+                );
                 let lines: Vec<_> = view
                     .log
                     .iter()
@@ -189,27 +190,27 @@ impl App {
                 }
             }
             Tab::Changes => none(ui, "The diff of this step is not recorded yet."),
-            Tab::Cost => {
-                let lines: Vec<_> = view
-                    .costs
-                    .iter()
-                    .filter(|line| line.step == Some(step))
-                    .collect();
-                if lines.is_empty() {
-                    none(ui, "No cost was recorded for this step.");
-                }
-                for line in lines {
-                    ui.horizontal(|ui| {
-                        theme::cost_tag(ui, line.estimated);
-                        ui.label(theme::mono(format!(
-                            "{}   {}",
-                            clock(line.at_ms),
-                            dollars(line.amount)
-                        )));
-                    });
-                }
-            }
-            Tab::Settings => self.settings_tab(ui, step),
+        }
+    }
+
+    fn cost_lines(ui: &mut egui::Ui, view: &TicketView, step: Step) {
+        let lines: Vec<_> = view
+            .costs
+            .iter()
+            .filter(|line| line.step == Some(step))
+            .collect();
+        if lines.is_empty() {
+            ui.label(theme::muted("No cost was recorded for this step."));
+        }
+        for line in lines {
+            ui.horizontal(|ui| {
+                theme::cost_tag(ui, line.estimated);
+                ui.label(theme::mono(format!(
+                    "{}   {}",
+                    clock(line.at_ms),
+                    dollars(line.amount)
+                )));
+            });
         }
     }
 
