@@ -927,3 +927,41 @@ fn a_corrected_assumption_is_recorded_and_viewed() {
     let view = autopilot_engine::ticket_view(&history).unwrap();
     assert_eq!(view.corrections[0].correction, "Latin-1");
 }
+
+fn plan_ready_to_ask() -> (tempfile::TempDir, Ticket) {
+    let (data, ticket) = ready_to_plan("again");
+    let planner = Planner(good_plan());
+    run_plan(data.path(), &ticket, &planner).unwrap();
+    (data, ticket)
+}
+
+// Invariant: a plan that was sent back or rejected can be planned again and
+// the new plan approved. Answers are kept once per request id, so a second ask
+// under the same id would fail with a UNIQUE error on approval. The reject and
+// the send-back cases both go through the same id, so both are checked.
+#[test]
+fn a_replanned_plan_can_be_approved_after_a_send_back_or_a_reject() {
+    use autopilot_core::Step;
+    use autopilot_pipeline::StepState;
+    for first in [
+        Decision::SendBack("name the CSV header".into()),
+        Decision::Reject,
+    ] {
+        let (data, ticket) = plan_ready_to_ask();
+        answer_with(data.path(), &ticket.id, first);
+        assert!(matches!(
+            fold_of(data.path(), &ticket.id).step(Step::Plan),
+            StepState::Interrupted(_)
+        ));
+        autopilot_engine::rerun_plan(data.path(), &ticket.id, &Planner(good_plan())).unwrap();
+        answer_with(data.path(), &ticket.id, Decision::Approve);
+        assert_eq!(
+            fold_of(data.path(), &ticket.id).step(Step::Plan),
+            &StepState::Passed
+        );
+    }
+}
+
+fn fold_of(data: &std::path::Path, ticket: &TicketId) -> autopilot_pipeline::TicketState {
+    autopilot_pipeline::fold(&watch(data, ticket, 0).unwrap()).unwrap()
+}
