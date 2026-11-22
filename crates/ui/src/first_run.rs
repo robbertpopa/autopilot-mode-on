@@ -11,9 +11,7 @@ use crate::theme;
 impl App {
     /// An install with no tickets and no chosen project folder.
     pub(crate) fn is_first_run(&self) -> bool {
-        self.loaded
-            && self.snapshot.tickets.is_empty()
-            && backend::saved_workspace(&self.options.data_dir).is_none()
+        self.loaded && self.snapshot.tickets.is_empty() && self.saved_workspace.is_none()
     }
 
     pub(crate) fn first_run_screen(&mut self, ui: &mut egui::Ui) {
@@ -43,7 +41,7 @@ impl App {
             agent_ready,
             agent_hint,
         );
-        let folder = backend::saved_workspace(&self.options.data_dir);
+        let folder = self.saved_workspace.clone();
         step_card(
             ui,
             "Project folder",

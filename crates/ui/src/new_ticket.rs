@@ -55,13 +55,14 @@ impl App {
         ui.add_space(8.0);
         // The folder last chosen stays chosen until it is changed.
         if self.home.workspace.is_none() {
-            self.home.workspace = backend::saved_workspace(&self.options.data_dir);
+            self.home.workspace.clone_from(&self.saved_workspace);
         }
         let before = self.home.workspace.clone();
         self.pipeline_row(ui);
         let start = composer::show(ui, &mut self.home);
         if self.home.workspace != before {
             backend::save_workspace(&self.options.data_dir, self.home.workspace.as_deref());
+            self.saved_workspace.clone_from(&self.home.workspace);
         }
         if self.agent == backend::AgentChoice::Practice {
             ui.add_space(6.0);

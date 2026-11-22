@@ -315,6 +315,7 @@ mod tests {
         app.mode = Mode::Today;
         frame(&mut app, &context);
         backend::save_workspace(&options.data_dir, Some(directory.path()));
+        app.saved_workspace = backend::saved_workspace(&options.data_dir);
         assert!(!app.is_first_run());
     }
 

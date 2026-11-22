@@ -111,7 +111,7 @@ pub struct App {
     /// Whether the data folder holds the sample-data marker, read once per snapshot.
     sample_data: bool,
     /// The project folder last chosen, read once.
-    saved_workspace: Option<std::path::PathBuf>,
+    pub(crate) saved_workspace: Option<std::path::PathBuf>,
     /// Tickets started in this window that the orchestrator has not looked at.
     fresh: Vec<TicketId>,
     pub(crate) orchestrator: backend::Orchestrator,
@@ -307,6 +307,8 @@ impl App {
     pub fn set_snapshot(&mut self, snapshot: Snapshot) {
         let first = self.snapshot.tickets.is_empty() && !snapshot.tickets.is_empty();
         self.loaded = true;
+        self.waiting_cache.clear();
+        self.sample_data = self.options.data_dir.join(crate::demo::MARKER).exists();
         self.announce(&snapshot);
         self.snapshot = snapshot;
         if self.findings.is_empty() {
@@ -484,6 +486,7 @@ impl App {
     pub fn ui(&mut self, ctx: &egui::Context) {
         self.drain();
         self.update_clock(ctx);
+        self.auto_orchestrate();
         self.follow_system_theme(ctx);
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
             self.start_new();
