@@ -18,6 +18,7 @@ const COLUMN: f32 = 900.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
+    Today,
     Design,
     Watch,
     Cost,
@@ -51,6 +52,7 @@ pub struct App {
     pub(crate) mode: Mode,
     pub(crate) screen: Screen,
     pub(crate) selected: Option<TicketId>,
+    pub(crate) today_selected: Option<TicketId>,
     pub(crate) design_step: Step,
     pub(crate) advanced: bool,
     pub(crate) tab: Tab,
@@ -111,6 +113,7 @@ impl App {
             mode: Mode::Watch,
             screen: Screen::Run,
             selected: None,
+            today_selected: None,
             design_step: Step::BuildCheck,
             advanced: true,
             tab: Tab::Overview,
@@ -212,6 +215,7 @@ impl App {
             })
             .map(|ticket| ticket.id.clone());
         match (view.as_str(), id) {
+            ("today" | "inbox", _) => self.mode = Mode::Today,
             ("cost", _) => self.mode = Mode::Cost,
             ("accounts", _) => self.mode = Mode::Accounts,
             ("run", Some(id)) => self.open(&id),
@@ -257,7 +261,7 @@ impl App {
         self.screen = Screen::Run;
     }
 
-    fn drain(&mut self) {
+    pub(crate) fn drain(&mut self) {
         while let Ok(message) = self.receiver.try_recv() {
             match message {
                 Message::Snapshot(snapshot) => self.set_snapshot(snapshot),
@@ -293,6 +297,7 @@ impl App {
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
             self.start_new();
         }
+        self.today_keys(ctx);
         self.take_drops(ctx);
         self.title_bar(ctx);
         self.nav(ctx);
@@ -320,6 +325,7 @@ impl App {
                                 ui.set_width(ui.available_width().min(COLUMN));
                                 self.notice_bar(ui);
                                 match self.mode {
+                                    Mode::Today => self.today_screen(ui),
                                     Mode::Design => self.pipeline_screen(ui),
                                     Mode::Watch => self.watch_screen(ui),
                                     Mode::Cost => self.cost_screen(ui),

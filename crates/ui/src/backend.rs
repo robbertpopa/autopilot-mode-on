@@ -816,3 +816,28 @@ pub fn waiting_text(options: &Options, request: &RequestId) -> Option<String> {
             .join("\n"),
     })
 }
+
+/// What a waiting request is, for the Today page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Waiting {
+    pub text: String,
+    pub question: bool,
+    /// A confirmation the owner cannot switch off.
+    pub forced: bool,
+}
+
+#[must_use]
+pub fn waiting_request(options: &Options, request: &RequestId) -> Option<Waiting> {
+    let inbox = Inbox::in_data_dir(&options.data_dir);
+    let stored = inbox.read_request(request).ok()??;
+    let (question, forced) = match &stored.body {
+        RequestBody::Approval { forced, .. } => (false, *forced),
+        RequestBody::Question { .. } => (true, false),
+    };
+    let text = waiting_text(options, request)?;
+    Some(Waiting {
+        text,
+        question,
+        forced,
+    })
+}

@@ -11,6 +11,7 @@ mod pipeline;
 mod run;
 mod step;
 mod theme;
+mod today;
 
 pub use app::{App, Mode, Screen, Tab};
 pub use backend::{Action, Options, Snapshot, now_ms, perform, read};
@@ -84,13 +85,21 @@ mod tests {
         backend::AgentChoice::Practice.save(&options.data_dir);
         let context = egui::Context::default();
         let mut app = App::new(&context, options.clone(), false);
-        for mode in [Mode::Design, Mode::Watch, Mode::Cost, Mode::Accounts] {
+        for mode in [
+            Mode::Today,
+            Mode::Design,
+            Mode::Watch,
+            Mode::Cost,
+            Mode::Accounts,
+        ] {
             app.mode = mode;
             frame(&mut app, &context);
         }
         demo::seed(&options.data_dir, now_ms()).unwrap();
         app.set_snapshot(read(&options));
         assert_eq!(app.snapshot.tickets.len(), 3);
+        app.mode = Mode::Today;
+        frame(&mut app, &context);
         for index in 0..3 {
             let id = app.snapshot.tickets[index].id.clone();
             app.open(&id);
@@ -147,6 +156,61 @@ mod tests {
         assert_eq!(outcome, Ok("Approved".to_owned()), "{outcome:?}");
         let after = read(&options);
         let settled = after.tickets.iter().find(|view| view.id == id).unwrap();
+        assert_ne!(settled.badge, autopilot_engine::Badge::NeedsYou);
+    }
+
+    // Invariant: pressing A on Today approves the waiting ticket through the
+    // engine. A change that lost the key handler or the page check would leave
+    // the ticket waiting; the engine test above does not go through the keys.
+    #[test]
+    fn the_a_key_approves_the_waiting_ticket_on_today() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        app.mode = Mode::Today;
+        let id = autopilot_core::TicketId::from("demo-heartbeat");
+        let queued = today::queue(&app.snapshot.tickets);
+        assert_eq!(queued[0].id, id, "asking tickets lead the queue");
+        let press = egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: Some(egui::Key::A),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1500.0, 920.0),
+            )),
+            events: vec![press],
+            ..Default::default()
+        };
+        let _ = context.run(input, |context| app.ui(context));
+        for _ in 0..100 {
+            frame(&mut app, &context);
+            if app.notice.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(app.notice, Some((true, "Approved".to_owned())));
+        app.set_snapshot(read(&options));
+        let settled = app
+            .snapshot
+            .tickets
+            .iter()
+            .find(|view| view.id == id)
+            .unwrap();
         assert_ne!(settled.badge, autopilot_engine::Badge::NeedsYou);
     }
 

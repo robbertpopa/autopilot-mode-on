@@ -165,6 +165,7 @@ impl App {
                 self.nav_head(ui, narrow);
                 ui.add_space(14.0);
                 self.new_ticket_button(ui, narrow);
+                self.today_link(ui, narrow);
                 if !narrow {
                     ui.add_space(14.0);
                     self.nav_tickets(ui);
@@ -201,6 +202,32 @@ impl App {
             .min_size(egui::vec2(ui.available_width(), 40.0));
         if theme::named(ui.add(button), "New ticket").clicked() {
             self.start_new();
+        }
+    }
+
+    fn today_link(&mut self, ui: &mut egui::Ui, narrow: bool) {
+        let count = self.today_count();
+        let text = match (narrow, count) {
+            (true, _) => "T".to_owned(),
+            (false, 0) => "Today".to_owned(),
+            (false, count) => format!("Today   {count}"),
+        };
+        let color = if count > 0 {
+            theme::AMBER()
+        } else {
+            theme::TEXT()
+        };
+        let fill = if self.mode == Mode::Today {
+            theme::SELECTED()
+        } else {
+            Color32::TRANSPARENT
+        };
+        let button = egui::Button::new(RichText::new(text).color(color))
+            .fill(fill)
+            .stroke(Stroke::NONE)
+            .min_size(egui::vec2(ui.available_width(), 34.0));
+        if theme::named(ui.add(button), "Today").clicked() {
+            self.mode = Mode::Today;
         }
     }
 
