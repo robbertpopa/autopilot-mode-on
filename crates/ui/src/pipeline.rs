@@ -7,7 +7,6 @@ use autopilot_profile::{Auth, StepSettings};
 use eframe::egui::{self, Frame, Margin, RichText, Stroke};
 
 use crate::app::App;
-use crate::composer::NewTicket;
 use crate::theme;
 
 const MODELS: [&str; 3] = ["haiku-5-5", "sonnet-5-5", "opus-5-5"];
@@ -87,7 +86,7 @@ impl App {
                     .on_disabled_hover_text("Claude Code is the only agent connected today");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.add(theme::primary("Start")).clicked() {
-                        self.new_ticket = Some(NewTicket::default());
+                        self.start_new();
                     }
                 });
             });

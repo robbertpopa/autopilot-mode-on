@@ -172,6 +172,25 @@ impl App {
         {
             crate::backend::save_notifications(&self.options.data_dir, self.notify);
         }
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label("Agent");
+            let before = self.agent;
+            theme::segmented(
+                ui,
+                &mut self.agent,
+                &[
+                    (crate::backend::AgentChoice::Claude, "Claude"),
+                    (crate::backend::AgentChoice::Practice, "Offline demo"),
+                ],
+            );
+            if self.agent != before {
+                self.agent.save(&self.options.data_dir);
+            }
+        });
+        ui.label(theme::muted(
+            "Claude uses your Claude Code sign-in. The offline demo gives fixed sample answers, spends nothing and needs no sign-in; it is for trying the app.",
+        ));
         ui.add_space(10.0);
         let Some(accounts) = self.accounts.clone() else {
             ui.label(theme::muted("Checking GitHub, Claude, Codex and Azure..."));

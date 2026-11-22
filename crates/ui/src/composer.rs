@@ -1,4 +1,6 @@
-//! The box where work starts: a title, the words, and what to attach.
+//! The box where work starts: one message box like a chat, with a single
+//! attach button and a send button. There is no title field; the title is
+//! the first line of the message.
 //!
 //! Files, images and folders arrive by dropping them on the window or, on
 //! Windows and macOS, by the native pickers. They are only paths here; the
@@ -8,15 +10,13 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, RichText};
 
-use crate::{
-    backend::{Action, AgentChoice},
-    theme,
-};
+use crate::{backend::Action, theme};
+
+const TITLE_CHARS: usize = 60;
 
 #[derive(Default)]
 pub struct NewTicket {
     pub(crate) focused: bool,
-    pub title: String,
     pub description: String,
     pub files: Vec<PathBuf>,
 }
@@ -35,12 +35,36 @@ impl NewTicket {
     }
 
     fn ready(&self) -> bool {
-        !self.title.trim().is_empty()
+        !self.description.trim().is_empty() || !self.files.is_empty()
+    }
+
+    /// The title is the first line of the message, cut at a word near 60
+    /// characters. With no words, the first attachment's name stands in.
+    #[must_use]
+    pub fn title(&self) -> String {
+        let first = self
+            .description
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("");
+        if first.is_empty() {
+            return self
+                .files
+                .first()
+                .map_or_else(|| "New ticket".to_owned(), |path| chip_name(path));
+        }
+        if first.chars().count() <= TITLE_CHARS {
+            return first.to_owned();
+        }
+        let cut: String = first.chars().take(TITLE_CHARS).collect();
+        let kept = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
+        format!("{}...", kept.trim_end_matches([',', ';', ':', '.']))
     }
 
     fn action(&self) -> Action {
         Action::Start {
-            title: self.title.clone(),
+            title: self.title(),
             description: self.description.clone(),
             attachments: self.files.clone(),
         }
@@ -116,13 +140,10 @@ fn chip(ui: &mut egui::Ui, path: &Path) -> bool {
     remove
 }
 
-/// Draw the composer. Returns the action to run when the owner starts.
-pub fn show(
-    ui: &mut egui::Ui,
-    form: &mut NewTicket,
-    hint: &str,
-    agent: &mut AgentChoice,
-) -> Option<Action> {
+/// Draw the composer. Returns the action to run when the owner sends.
+///
+/// Enter sends and Shift+Enter starts a new line, as in a chat.
+pub fn show(ui: &mut egui::Ui, form: &mut NewTicket) -> Option<Action> {
     let mut start = None;
     let hovering = ui.input(|input| !input.raw.hovered_files.is_empty());
     let border = if hovering {
@@ -130,85 +151,123 @@ pub fn show(
     } else {
         theme::BORDER_STRONG()
     };
-    theme::card(theme::CARD(), border).show(ui, |ui| {
-        ui.set_width(ui.available_width() - 38.0);
-        let title = ui.add(
-            egui::TextEdit::singleline(&mut form.title)
-                .hint_text("A short title, e.g. Fix the timezone bug")
-                .font(egui::TextStyle::Heading)
-                .frame(false)
-                .desired_width(f32::INFINITY),
-        );
-        if !form.focused {
-            title.request_focus();
-            form.focused = true;
-        }
-        ui.add(
-            egui::TextEdit::multiline(&mut form.description)
-                .hint_text("What should change? Drop files, images or a folder here. (optional)")
-                .frame(false)
-                .desired_rows(3)
-                .desired_width(f32::INFINITY),
-        );
-        let mut removed = None;
-        if !form.files.is_empty() {
-            ui.horizontal_wrapped(|ui| {
-                for (index, path) in form.files.iter().enumerate() {
-                    if chip(ui, path) {
-                        removed = Some(index);
-                    }
-                }
-            });
-        }
-        if let Some(index) = removed {
-            form.files.remove(index);
-        }
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label(theme::muted("Agent"));
-            theme::segmented(
-                ui,
-                agent,
-                &[
-                    (AgentChoice::Practice, "Practice"),
-                    (AgentChoice::Claude, "Claude"),
-                ],
+    let text_id = egui::Id::new("composer-text");
+    // Take Enter before the text box turns it into a new line.
+    let send_key = ui.memory(|memory| memory.has_focus(text_id))
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    egui::Frame::new()
+        .fill(theme::CARD())
+        .stroke(egui::Stroke::new(1.0_f32, border))
+        .corner_radius(egui::CornerRadius::same(22))
+        .inner_margin(egui::Margin::symmetric(18, 14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let text = ui.add(
+                egui::TextEdit::multiline(&mut form.description)
+                    .id(text_id)
+                    .hint_text("Describe what should change, or drop files here")
+                    .frame(false)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY),
             );
-            if has_picker() {
-                if ui
-                    .button("Add files")
-                    .on_hover_text(
-                        "Files and images. Their contents are kept as data and never run.",
-                    )
-                    .clicked()
-                {
-                    form.add(pick_files());
-                }
-                if ui
-                    .button("Add folder")
-                    .on_hover_text("The folder is recorded by its path, not copied.")
-                    .clicked()
-                {
-                    form.add(pick_folder());
-                }
+            if !form.focused {
+                text.request_focus();
+                form.focused = true;
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let ready = form.ready();
-                let enter = ui
-                    .input(|input| input.key_pressed(egui::Key::Enter) && input.modifiers.command);
-                if ui.add_enabled(ready, theme::primary("Start")).clicked() || (enter && ready) {
-                    start = Some(form.action());
-                }
-                ui.label(theme::muted(hint));
+            let mut removed = None;
+            if !form.files.is_empty() {
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    for (index, path) in form.files.iter().enumerate() {
+                        if chip(ui, path) {
+                            removed = Some(index);
+                        }
+                    }
+                });
+            }
+            if let Some(index) = removed {
+                form.files.remove(index);
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                attach_menu(ui, form);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let ready = form.ready();
+                    let send = egui::Button::new(RichText::new("↑").size(18.0).strong())
+                        .fill(if ready { theme::BLUE() } else { theme::NODE() })
+                        .corner_radius(egui::CornerRadius::same(99))
+                        .min_size(egui::vec2(36.0, 36.0));
+                    let clicked = theme::named(
+                        ui.add_enabled(ready, send)
+                            .on_hover_text("Send (Enter). Shift+Enter adds a line."),
+                        "Send",
+                    )
+                    .clicked();
+                    if (clicked || send_key) && ready {
+                        start = Some(form.action());
+                    }
+                });
             });
         });
-    });
     start
+}
+
+/// One button for everything that can be attached.
+fn attach_menu(ui: &mut egui::Ui, form: &mut NewTicket) {
+    if !has_picker() {
+        ui.label(theme::muted(
+            "Drop files or a folder on the window to attach them",
+        ));
+        return;
+    }
+    let button = egui::Button::new(RichText::new("+").size(20.0))
+        .fill(theme::NODE())
+        .corner_radius(egui::CornerRadius::same(99))
+        .min_size(egui::vec2(36.0, 36.0));
+    let response = ui
+        .add(button)
+        .on_hover_text("Attach files, images or a folder");
+    let response = theme::named(response, "Attach");
+    egui::Popup::menu(&response).show(|ui| {
+        if ui
+            .button("Files or images")
+            .on_hover_text("Their contents are kept as data and never run.")
+            .clicked()
+        {
+            form.add(pick_files());
+            ui.close();
+        }
+        if ui
+            .button("Folder")
+            .on_hover_text("The folder is recorded by its path, not copied.")
+            .clicked()
+        {
+            form.add(pick_folder());
+            ui.close();
+        }
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Invariant: the title comes from the first non-empty line, is cut at a
+    // word and never empty, so a ticket started with no title still has a
+    // readable name in the sidebar.
+    #[test]
+    fn the_title_is_the_first_line_of_the_message() {
+        let mut form = NewTicket::default();
+        assert_eq!(form.title(), "New ticket");
+        form.add([PathBuf::from("/x/spec.md")]);
+        assert_eq!(form.title(), "spec.md");
+        form.description = "\n  Fix the timezone bug\nand more".into();
+        assert_eq!(form.title(), "Fix the timezone bug");
+        form.description = "word ".repeat(30);
+        let title = form.title();
+        assert!(title.ends_with("..."), "{title}");
+        assert!(title.chars().count() <= TITLE_CHARS + 3);
+    }
 
     // Invariant: the same path added twice (a drop and a pick of one file)
     // appears once, and the list stops at the engine's limit, so the start
