@@ -48,6 +48,9 @@ pub enum Message {
     Tuned(autopilot_engine::TuningOutcome),
     /// What GitHub, Claude, Codex and Azure say about who is signed in.
     Accounts(Box<autopilot_accounts::Accounts>),
+    /// Whether the API key is saved in the user environment, even if this
+    /// running app was started before it was.
+    KeySaved(bool),
     /// The outcome of an action: a short confirmation, or the reason it failed.
     Done(Result<String, String>),
     /// The answer of the release check: a newer version, nothing, or why not.
@@ -218,9 +221,37 @@ pub fn fetch_accounts(context: egui::Context, sender: Sender<Message>) {
                 ))
             })
             .unwrap_or_default();
+        let saved = autopilot_accounts::saved_in_user_environment(
+            guardian.clone(),
+            autopilot_agent_claude::API_KEY_SOURCE,
+        );
+        let _ = sender.send(Message::KeySaved(saved));
         let accounts = autopilot_accounts::collect(guardian);
         let _ = sender.send(Message::Accounts(Box::new(accounts)));
         context.request_repaint();
+    });
+}
+
+/// Switch GitHub or Azure to another account that is already signed in, then
+/// read the accounts again. A refusal shows as the owner's notice.
+pub fn switch_account(
+    context: egui::Context,
+    sender: Sender<Message>,
+    switch: crate::accounts::Switch,
+) {
+    thread::spawn(move || {
+        let result = match &switch {
+            crate::accounts::Switch::Github { host, login } => {
+                autopilot_accounts::switch_github(guardian(), host, login)
+            }
+            crate::accounts::Switch::Azure { id } => {
+                autopilot_accounts::switch_azure(guardian(), id)
+            }
+        };
+        if let Err(reason) = result {
+            let _ = sender.send(Message::Done(Err(format!("Could not switch: {reason}"))));
+        }
+        fetch_accounts(context, sender);
     });
 }
 
