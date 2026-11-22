@@ -131,36 +131,61 @@ pub enum Switch {
     Azure { id: String },
 }
 
-/// One button per other account the tool already knows, so the owner can
-/// pick which one the app uses. Nothing is typed and nothing is signed in.
+/// A dropdown of the accounts the tool already knows, the active one
+/// selected. It shows only when there is something to choose between.
+/// Nothing is typed and nothing is signed in.
 pub(crate) fn switch_choices(ui: &mut egui::Ui, name: &str, accounts: &Accounts) -> Option<Switch> {
-    let mut picked = None;
+    let mut options: Vec<(String, Switch, bool)> = Vec::new();
     match name {
         "GitHub" => {
             if let Status::SignedIn(list) = &accounts.github {
-                for account in list.iter().filter(|a| !a.active && a.valid) {
-                    let label = format!("Use {} on {}", account.login, account.host);
-                    if ui.small_button(label).clicked() {
-                        picked = Some(Switch::Github {
+                for account in list.iter().filter(|a| a.valid) {
+                    options.push((
+                        format!("{} on {}", account.login, account.host),
+                        Switch::Github {
                             host: account.host.clone(),
                             login: account.login.clone(),
-                        });
-                    }
+                        },
+                        account.active,
+                    ));
                 }
             }
         }
         "Azure" => {
-            for choice in accounts.azure_all.iter().filter(|c| !c.active) {
-                let label = format!("Use {} · {}", choice.user, choice.subscription);
-                if ui.small_button(label).clicked() {
-                    picked = Some(Switch::Azure {
+            for choice in &accounts.azure_all {
+                options.push((
+                    format!("{} · {}", choice.user, choice.subscription),
+                    Switch::Azure {
                         id: choice.id.clone(),
-                    });
-                }
+                    },
+                    choice.active,
+                ));
             }
         }
         _ => {}
     }
+    if options.len() < 2 {
+        return None;
+    }
+    let current = options
+        .iter()
+        .find(|(_, _, active)| *active)
+        .map_or("choose one", |(label, _, _)| label.as_str())
+        .to_owned();
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        ui.label(theme::muted("Use"));
+        egui::ComboBox::from_id_salt(("account-switch", name))
+            .selected_text(current)
+            .width(ui.available_width().min(420.0))
+            .show_ui(ui, |ui| {
+                for (label, switch, active) in &options {
+                    if ui.selectable_label(*active, label).clicked() && !*active {
+                        picked = Some(switch.clone());
+                    }
+                }
+            });
+    });
     picked
 }
 

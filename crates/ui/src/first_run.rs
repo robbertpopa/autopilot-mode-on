@@ -215,12 +215,10 @@ impl App {
                     } else {
                         "not signed in".to_owned()
                     };
-                    step_card(ui, row.name, &state, ready, row.hint);
-                    ui.horizontal_wrapped(|ui| {
-                        switch = switch
-                            .take()
-                            .or(crate::accounts::switch_choices(ui, row.name, &accounts));
+                    let picked = step_card_with(ui, row.name, &state, ready, row.hint, |ui| {
+                        crate::accounts::switch_choices(ui, row.name, &accounts)
                     });
+                    switch = switch.take().or(picked);
                 }
             }
         }
@@ -292,7 +290,19 @@ impl App {
 }
 
 fn step_card(ui: &mut egui::Ui, name: &str, state: &str, ready: bool, hint: Option<&str>) {
-    theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+    step_card_with(ui, name, state, ready, hint, |_| None::<()>);
+}
+
+/// A step card with something extra inside it, such as an account picker.
+fn step_card_with<T>(
+    ui: &mut egui::Ui,
+    name: &str,
+    state: &str,
+    ready: bool,
+    hint: Option<&str>,
+    extra: impl FnOnce(&mut egui::Ui) -> Option<T>,
+) -> Option<T> {
+    let shown = theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
         ui.set_width(ui.available_width() - 38.0);
         ui.horizontal(|ui| {
             let mark = if ready { "✔" } else { "×" };
@@ -316,6 +326,8 @@ fn step_card(ui: &mut egui::Ui, name: &str, state: &str, ready: bool, hint: Opti
                 }
             });
         }
+        extra(ui)
     });
     ui.add_space(6.0);
+    shown.inner
 }
