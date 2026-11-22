@@ -661,6 +661,7 @@ dependencies = [
  "autopilot-update",
  "eframe",
  "rfd",
+ "serde_json",
  "tempfile",
 ]
 

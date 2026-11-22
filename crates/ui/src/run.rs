@@ -4,7 +4,7 @@
 use autopilot_core::{Step, TicketId};
 use autopilot_engine::{Badge, TicketView, dollars, step_name};
 use autopilot_pipeline::StepState;
-use eframe::egui::{self, Color32, Frame, Margin, RichText, Stroke};
+use eframe::egui::{self, Frame, Margin, RichText, Stroke};
 
 use crate::app::{App, Screen, badge_colors};
 use crate::backend::Action;
@@ -75,17 +75,6 @@ pub fn clock(ms: u64) -> String {
     )
 }
 
-fn glyph(state: &StepState) -> (&'static str, Color32) {
-    match state {
-        StepState::Passed => ("✔", theme::GREEN()),
-        StepState::Running => ("▶", theme::BLUE()),
-        StepState::Asking(_) => ("▶", theme::AMBER()),
-        StepState::Paused => ("||", theme::AMBER()),
-        StepState::Failed(_) | StepState::Interrupted(_) => ("×", theme::RED()),
-        StepState::Skipped(_) | StepState::Idle => ("○", theme::TEXT_MUTED()),
-    }
-}
-
 pub(crate) fn state_text(state: &StepState) -> String {
     match state {
         StepState::Idle => "waiting".into(),
@@ -100,47 +89,8 @@ pub(crate) fn state_text(state: &StepState) -> String {
 }
 
 impl App {
-    pub(crate) fn run_screen(&mut self, ui: &mut egui::Ui, id: &TicketId) {
-        let Some(view) = self.ticket(id).cloned() else {
-            return;
-        };
-        self.run_header(ui, &view);
-        if let Some(folder) = &view.workspace {
-            ui.label(theme::muted(format!("Project: {folder}")))
-                .on_hover_text(
-                    "The agent reads this folder. It cannot change or run anything in it.",
-                );
-        }
-        ui.add_space(14.0);
-        self.next_card(ui, &view);
-        self.orchestrator_card(ui, &view);
-        self.step_chips(ui, &view);
-        ui.add_space(14.0);
-        self.build_panel(ui, &view);
-        ui.add_space(6.0);
-        self.files_panel(ui, &view);
-        egui::CollapsingHeader::new("History")
-            .id_salt("history")
-            .show(ui, |ui| {
-                ui.label(theme::muted(format!(
-                    "Started {} UTC",
-                    clock(view.started_ms)
-                )));
-                for line in &view.timeline {
-                    ui.label(theme::mono(format!(
-                        "{}   {}",
-                        clock(line.at_ms),
-                        line.text
-                    )));
-                }
-            });
-        egui::CollapsingHeader::new("Change the settings in plain words")
-            .id_salt("change")
-            .show(ui, |ui| self.change_box(ui));
-    }
-
     /// What is attached to the ticket, and how to add more.
-    fn files_panel(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+    pub(crate) fn files_panel(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         let title = if view.attachments.is_empty() {
             "Files".to_owned()
         } else {
@@ -199,7 +149,7 @@ impl App {
     }
 
     /// Title, status, spend, and the controls that matter.
-    fn run_header(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+    pub(crate) fn run_header(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         ui.horizontal(|ui| {
             ui.label(RichText::new(&view.title).size(28.0).strong());
             let (text, fill, color) = badge_colors(view.badge, view);
@@ -268,7 +218,7 @@ impl App {
 
     /// The one thing to know or do right now.
     /// What the orchestrator decided for the later steps, or a way to ask it.
-    fn orchestrator_card(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+    pub(crate) fn orchestrator_card(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         if let Some(triage) = &view.triage {
             ui.add_space(10.0);
             theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
@@ -310,7 +260,7 @@ impl App {
         }
     }
 
-    fn next_card(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+    pub(crate) fn next_card(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         if view.asking.is_some() {
             self.waiting_card(ui, view);
             return;
@@ -406,44 +356,6 @@ impl App {
         ui.add_space(14.0);
     }
 
-    /// The six steps as one row of chips. Click one for its details.
-    fn step_chips(&mut self, ui: &mut egui::Ui, view: &TicketView) {
-        ui.horizontal_wrapped(|ui| {
-            for card in &view.steps {
-                let (mark, color) = glyph(&card.state);
-                let active = card.state.is_active();
-                let skipped = matches!(card.state, StepState::Skipped(_));
-                let name = RichText::new(format!("{mark}  {}", step_name(card.step))).size(15.0);
-                let chip = egui::Button::new(if skipped {
-                    name.weak()
-                } else {
-                    name.color(color)
-                })
-                .fill(if active {
-                    theme::BLUE_FILL()
-                } else {
-                    theme::CARD()
-                })
-                .stroke(Stroke::new(
-                    if active { 2.0_f32 } else { 1.0_f32 },
-                    if active {
-                        theme::BLUE()
-                    } else {
-                        theme::BORDER()
-                    },
-                ))
-                .min_size(egui::vec2(0.0, 38.0));
-                let detail = card
-                    .in_short
-                    .clone()
-                    .unwrap_or_else(|| state_text(&card.state));
-                if ui.add(chip).on_hover_text(detail).clicked() {
-                    self.screen = Screen::Step(card.step);
-                }
-            }
-        });
-    }
-
     fn waiting_card(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         let Some((step, request)) = &view.asking else {
             return;
@@ -473,6 +385,9 @@ impl App {
                     );
                 }
                 ui.horizontal(|ui| {
+                    if *step == Step::Plan && ui.button("Review the plan").clicked() {
+                        self.mode = crate::app::Mode::PlanReview;
+                    }
                     if question {
                         if ui
                             .add(theme::primary("Use the recommended answers"))
@@ -504,7 +419,7 @@ impl App {
     }
 
     #[allow(clippy::too_many_lines, reason = "one panel, top to bottom")]
-    fn build_panel(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+    pub(crate) fn build_panel(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         let Some(build) = view.step(Step::BuildCheck) else {
             return;
         };
@@ -723,19 +638,22 @@ impl App {
         let Some(view) = self.current().cloned() else {
             return;
         };
-        egui::SidePanel::right("details")
-            .exact_width(380.0)
+        let drawer = matches!(self.screen, Screen::Step(_));
+        egui::SidePanel::right("drawer")
+            .exact_width(if drawer { 460.0 } else { 300.0 })
             .resizable(false)
             .frame(
                 Frame::new()
                     .fill(theme::BACKGROUND())
                     .stroke(Stroke::new(1.0_f32, theme::BORDER()))
-                    .inner_margin(Margin::same(24)),
+                    .inner_margin(Margin::same(20)),
             )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     if let Screen::Step(step) = self.screen {
-                        self.step_side(ui, &view, step);
+                        self.drawer(ui, &view, step);
+                    } else {
+                        self.stepper_panel(ui, &view);
                     }
                 });
             });

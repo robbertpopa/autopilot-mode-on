@@ -27,7 +27,9 @@ mod build;
 mod change;
 mod control;
 mod design;
+mod draft;
 mod explain;
+mod metrics;
 mod notes;
 mod overlap;
 mod pipelines;
@@ -35,6 +37,8 @@ mod plan;
 mod profile_edit;
 mod publish;
 mod rerun;
+mod review;
+mod rules;
 mod settings;
 mod triage;
 mod view;
@@ -52,14 +56,24 @@ pub use design::{
     context as design_context, folder as design_folder, latest as latest_design, rerun_design,
     run_design,
 };
+pub use draft::{PipelineDraft, draft_pipeline, save_draft, validate_draft};
 pub use explain::{explain_step, kept as explanation_kept, prompt as explain_prompt};
+pub use metrics::{PipelineMetrics, StepMetrics, UsageLine, metrics_of, pipeline_metrics};
 pub use overlap::{TicketOverlap, find_overlaps};
 pub use pipelines::{choose_pipeline, chosen as chosen_pipeline};
 pub use plan::{approved_plan, plan_ticket, run_plan};
-pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
+pub use profile_edit::{
+    ProfileEditError, ProjectField, ReviewField, StepField, add_pipeline, edit_project,
+    edit_review, edit_step, load_profile,
+};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use rerun::ticket_words;
 pub use rerun::{rerun_plan, rerun_understand, reset_step};
+pub use review::{Finding, ReviewOutcome, Rule, findings_for, open_findings, run_review};
+pub use rules::{
+    MAX_RULES_BYTES, RulesInfo, check_rules, project_key, read_rules, rules_info, rules_path,
+    save_rules,
+};
 pub use settings::{
     effective_overrides, effective_when_unsure, override_settings, project_overrides,
     set_when_unsure,
@@ -69,7 +83,9 @@ pub use view::{
     AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,
     TimelineLine, dollars, load_ticket, spent_since, step_name, ticket_view, tickets,
 };
-pub use workspace::{of as workspace_of, record as record_workspace};
+pub use workspace::{
+    canonical as canonical_folder, of as workspace_of, record as record_workspace,
+};
 
 pub(crate) const DATABASE: &str = "events.sqlite3";
 const UNDERSTAND: Option<Step> = Some(Step::Understand);
@@ -94,6 +110,10 @@ pub enum Error {
     Triage(String),
     #[error("cannot attach: {0}")]
     Attachment(String),
+    #[error("the pipeline draft was refused: {0}")]
+    Draft(String),
+    #[error("the rules file cannot be used: {0}")]
+    Rules(String),
     #[error("the recorded history is invalid: {0}")]
     History(String),
     #[error("ticket has no recorded run")]
@@ -156,6 +176,23 @@ pub fn run_understand_attached(
     ask_after: Option<bool>,
     attachments: &[Attachment],
 ) -> Result<Understanding, Error> {
+    run_understand_in(directory, ticket, agent, ask_after, attachments, None)
+}
+
+/// Like [`run_understand_attached`], for a ticket in a project folder. The
+/// project's rules file reaches the prompt; the folder is recorded by the
+/// caller afterwards, so the first run is told about it here.
+///
+/// # Errors
+/// Returns an error if the ticket, agent, data directory or store cannot be used.
+pub fn run_understand_in(
+    directory: &Path,
+    ticket: &Ticket,
+    agent: &impl Agent,
+    ask_after: Option<bool>,
+    attachments: &[Attachment],
+    workspace: Option<&Path>,
+) -> Result<Understanding, Error> {
     // An explicit choice wins; otherwise the project setting decides.
     let ask_after = match ask_after {
         Some(choice) => choice,
@@ -210,7 +247,18 @@ pub fn run_understand_attached(
     };
     let last = start.last().map_or(0, |record| record.seq);
 
-    run_attempt(directory, &mut store, ticket, last, ask_after, agent)
+    let workspace = workspace.map(|path| {
+        workspace::canonical(path).unwrap_or_else(|| path.to_string_lossy().into_owned())
+    });
+    run_attempt(
+        directory,
+        &mut store,
+        ticket,
+        last,
+        ask_after,
+        agent,
+        workspace.as_deref(),
+    )
 }
 
 /// Run the Understand agent for an attempt that is already recorded as
@@ -222,8 +270,22 @@ pub(crate) fn run_attempt(
     last: u64,
     ask_after: bool,
     agent: &impl Agent,
+    workspace: Option<&str>,
 ) -> Result<Understanding, Error> {
-    let notes = attachments::note(directory, &store.events(&ticket.id, 0)?);
+    let history = store.events(&ticket.id, 0)?;
+    let mut notes = attachments::note(directory, &history);
+    let project = workspace
+        .map(str::to_owned)
+        .or_else(|| workspace::of(&history));
+    let last = rules::include_in_prompt(
+        store,
+        directory,
+        &ticket.id,
+        Step::Understand,
+        last,
+        project.as_deref(),
+        &mut notes,
+    )?;
     let started = agent.start(StepRequest {
         step: Step::Understand,
         ticket,
@@ -241,7 +303,6 @@ pub(crate) fn run_attempt(
         (Pumped::Failed(error), last) => (Err(Outcome::Failed(error)), last),
     };
     let asked = response.is_ok() && ask_after;
-    let history = store.events(&ticket.id, 0)?;
     let approval = approval_id(&history, Step::Understand);
     let result = conclude(store, &ticket.id, last, response, ask_after, &approval)?;
     if asked {
@@ -286,8 +347,14 @@ fn pump(
                 );
             }
             Some(AgentEvent::Message { summary }) => Event::AgentActivity { summary },
+            Some(AgentEvent::Usage(usage)) => Event::UsageReported { usage },
             Some(AgentEvent::Cost { amount, estimated }) => Event::CostTick { amount, estimated },
             Some(AgentEvent::Result(result)) => break Pumped::Understanding(result),
+            Some(AgentEvent::DraftResult(_)) => {
+                break Pumped::Failed(
+                    io::Error::other("a step that expects a result got a pipeline draft").into(),
+                );
+            }
             Some(AgentEvent::PlanResult(plan)) => break Pumped::Plan(plan),
             Some(AgentEvent::DesignResult(design)) => break Pumped::Design(design),
             Some(AgentEvent::Stopped(reason)) => break Pumped::Stopped(reason),

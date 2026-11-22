@@ -140,29 +140,6 @@ mod tests {
         );
     }
 
-    // Invariant: an override saved before `turns` existed still reads, the
-    // turn cap merges like the other fields, and a later override that leaves
-    // it unset keeps the earlier cap. Otherwise a model change would silently
-    // drop the raised cap a retry depends on.
-    #[test]
-    fn turns_merge_and_old_overrides_still_read() {
-        let old = r#"{"step":"understand","ask_after":null,"model":"opus"}"#;
-        let parsed: StepChange = serde_json::from_str(old).unwrap();
-        assert_eq!(parsed.change.turns, None);
-        let mut merged = StepOverride {
-            turns: Some(40),
-            ..StepOverride::default()
-        };
-        merged.merge(&parsed.change);
-        assert_eq!(merged.turns, Some(40));
-        assert_eq!(merged.model.as_deref(), Some("opus"));
-        merged.merge(&StepOverride {
-            turns: Some(80),
-            ..StepOverride::default()
-        });
-        assert_eq!(merged.turns, Some(80));
-    }
-
     // Invariant: a history from before per-ticket `when_unsure` reads as "use
     // the profile", and the latest ticket-scope choice wins. A project-scope
     // event never sets it, so one ticket cannot change another.
@@ -191,5 +168,28 @@ mod tests {
         );
         history.push(set(4, SettingsScope::Ticket, UnsureMode::Ask));
         assert_eq!(when_unsure_for_ticket(&history), Some(UnsureMode::Ask));
+    }
+
+    // Invariant: an override saved before `turns` existed still reads, the
+    // turn cap merges like the other fields, and a later override that leaves
+    // it unset keeps the earlier cap. Otherwise a model change would silently
+    // drop the raised cap a retry depends on.
+    #[test]
+    fn turns_merge_and_old_overrides_still_read() {
+        let old = r#"{"step":"understand","ask_after":null,"model":"opus"}"#;
+        let parsed: StepChange = serde_json::from_str(old).unwrap();
+        assert_eq!(parsed.change.turns, None);
+        let mut merged = StepOverride {
+            turns: Some(40),
+            ..StepOverride::default()
+        };
+        merged.merge(&parsed.change);
+        assert_eq!(merged.turns, Some(40));
+        assert_eq!(merged.model.as_deref(), Some("opus"));
+        merged.merge(&StepOverride {
+            turns: Some(80),
+            ..StepOverride::default()
+        });
+        assert_eq!(merged.turns, Some(80));
     }
 }

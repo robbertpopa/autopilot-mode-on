@@ -21,6 +21,7 @@ pub struct NewTicket {
     pub files: Vec<PathBuf>,
     /// The project folder the agent reads for this ticket.
     pub workspace: Option<PathBuf>,
+    pub pipeline: Option<String>,
 }
 
 impl NewTicket {
@@ -64,12 +65,14 @@ impl NewTicket {
         format!("{}...", kept.trim_end_matches([',', ';', ':', '.']))
     }
 
-    fn action(&self) -> Action {
+    pub(crate) fn start_action(&self) -> Action {
         Action::Start {
             title: self.title(),
             description: self.description.clone(),
             attachments: self.files.clone(),
             workspace: self.workspace.clone(),
+            // Without a project the ticket is ask-only whatever was picked.
+            pipeline: self.workspace.as_ref().and(self.pipeline.clone()),
         }
     }
 }
@@ -219,7 +222,7 @@ pub fn show(ui: &mut egui::Ui, form: &mut NewTicket) -> Option<Action> {
                     )
                     .clicked();
                     if (clicked || send_key) && ready {
-                        start = Some(form.action());
+                        start = Some(form.start_action());
                     }
                 });
             });

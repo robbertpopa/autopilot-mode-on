@@ -21,6 +21,7 @@ autopilot-pipeline = { path = "../pipeline" }
 autopilot-profile = { path = "../profile" }
 autopilot-store = { path = "../store" }
 autopilot-update = { path = "../update" }
+serde_json.workspace = true
 eframe = { version = "0.33", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
 
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]

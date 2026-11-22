@@ -42,6 +42,8 @@ pub struct Snapshot {
 
 pub enum Message {
     Snapshot(Snapshot),
+    /// A pipeline review pass finished, or why it could not run.
+    Review(Result<Box<autopilot_engine::ReviewOutcome>, String>),
     /// What GitHub, Claude, Codex and Azure say about who is signed in.
     Accounts(Box<autopilot_accounts::Accounts>),
     /// The outcome of an action: a short confirmation, or the reason it failed.
@@ -64,6 +66,24 @@ pub enum Action {
         attachments: Vec<PathBuf>,
         /// The project folder the agent reads, if one was chosen.
         workspace: Option<PathBuf>,
+        /// The pipeline the owner chose. `None` takes the project's default,
+        /// or ask-only when there is no project.
+        pipeline: Option<String>,
+    },
+    /// Send the waiting step back, with a note the next run reads as data.
+    SendBack {
+        ticket: TicketId,
+        note: String,
+    },
+    /// Approve, and record corrections to assumptions on the way.
+    ApproveCorrected {
+        ticket: TicketId,
+        corrections: Vec<autopilot_core::AssumptionCorrection>,
+    },
+    /// Switch a ticket to another pipeline. It applies to steps not started.
+    ChoosePipeline {
+        ticket: TicketId,
+        name: String,
     },
     /// Attach files, images or folders to a ticket that exists.
     Attach {
@@ -336,6 +356,16 @@ impl autopilot_agent::Agent for Chosen {
         match self {
             Self::Practice(agent) => agent.start_design(request),
             Self::Claude(agent) => agent.start_design(request),
+        }
+    }
+
+    fn start_draft(
+        &self,
+        request: autopilot_agent::DraftRequest<'_>,
+    ) -> Result<autopilot_agent::AgentRun, autopilot_agent::AgentError> {
+        match self {
+            Self::Practice(agent) => agent.start_draft(request),
+            Self::Claude(agent) => agent.start_draft(request),
         }
     }
 }
@@ -617,13 +647,22 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             description,
             attachments,
             workspace,
+            pipeline,
         } => start(
             options,
             title,
             description,
             attachments,
             workspace.as_deref(),
+            pipeline.as_deref(),
         ),
+        Action::ChoosePipeline { ticket, name } => {
+            let profile = autopilot_engine::load_profile(&options.profile)
+                .map_err(|error| error.to_string())?;
+            autopilot_engine::choose_pipeline(directory, ticket, &profile, name)
+                .map(|()| format!("Pipeline is now {name}"))
+                .map_err(|error| error.to_string())
+        }
         Action::Attach { ticket, paths } => autopilot_engine::attach(directory, ticket, paths)
             .map(|count| format!("Attached {count}"))
             .map_err(|error| error.to_string()),
@@ -646,6 +685,33 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                 }
             })?;
             Ok(if *approve { "Approved" } else { "Rejected" }.to_owned())
+        }
+        Action::SendBack { ticket, note } => {
+            answer(directory, ticket, |body| match body {
+                RequestBody::Approval { .. } => Ok(Reply::Approval {
+                    decision: Decision::SendBack(note.clone()),
+                    allow_for_project: false,
+                }),
+                RequestBody::Question { .. } => {
+                    Err("that is a question: answer it instead".to_owned())
+                }
+            })?;
+            Ok("Sent back with your note".to_owned())
+        }
+        Action::ApproveCorrected {
+            ticket,
+            corrections,
+        } => {
+            answer(directory, ticket, |body| match body {
+                RequestBody::Approval { .. } => Ok(Reply::Approval {
+                    decision: Decision::ApproveCorrected(corrections.clone()),
+                    allow_for_project: false,
+                }),
+                RequestBody::Question { .. } => {
+                    Err("that is a question: answer it instead".to_owned())
+                }
+            })?;
+            Ok("Approved with your corrections".to_owned())
         }
         Action::AcceptDefaults { ticket } => {
             answer(directory, ticket, |body| match body {
@@ -754,6 +820,7 @@ fn start(
     description: &str,
     attachments: &[PathBuf],
     workspace: Option<&Path>,
+    chosen: Option<&str>,
 ) -> Result<String, String> {
     let directory = options.data_dir.as_path();
     if let Some(folder) = workspace
@@ -778,7 +845,7 @@ fn start(
     let staged = autopilot_engine::stage(directory, &id, attachments, (0, 0))
         .map_err(|error| error.to_string())?;
     if let Err(error) =
-        autopilot_engine::run_understand_attached(directory, &ticket, &agent, ask, &staged)
+        autopilot_engine::run_understand_in(directory, &ticket, &agent, ask, &staged, workspace)
     {
         // The ticket was not made, so its copies must not stay behind.
         let _ = std::fs::remove_dir_all(directory.join("attachments").join(id.as_str()));
@@ -792,7 +859,7 @@ fn start(
     // A ticket with no project runs ask-only; one in a project runs the
     // project's default pipeline, or `full` when it names none.
     if let Ok(profile) = autopilot_engine::load_profile(&options.profile) {
-        let name = pipeline_for(&profile, workspace);
+        let name = chosen.map_or_else(|| pipeline_for(&profile, workspace), str::to_owned);
         autopilot_engine::choose_pipeline(directory, &id, &profile, &name).map_err(|error| {
             format!("the ticket started, but its pipeline was not set: {error}")
         })?;
@@ -808,6 +875,19 @@ fn start(
             ticket.title
         )),
     }
+}
+
+/// Ask the chosen agent for a pipeline draft. The reply is checked by the
+/// engine before it comes back, and nothing is stored here.
+pub(crate) fn draft_pipeline(
+    options: &Options,
+    description: &str,
+) -> Result<autopilot_engine::PipelineDraft, String> {
+    let profile =
+        autopilot_engine::load_profile(&options.profile).map_err(|error| error.to_string())?;
+    let agent = chosen_agent(options, Step::Understand, None, None)?;
+    autopilot_engine::draft_pipeline(&profile, description, &agent)
+        .map_err(|error| error.to_string())
 }
 
 /// The pipeline a new ticket starts with.
@@ -863,6 +943,31 @@ pub fn waiting_text(options: &Options, request: &RequestId) -> Option<String> {
     })
 }
 
+/// What a waiting request is, for the Today page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Waiting {
+    pub text: String,
+    pub question: bool,
+    /// A confirmation the owner cannot switch off.
+    pub forced: bool,
+}
+
+#[must_use]
+pub fn waiting_request(options: &Options, request: &RequestId) -> Option<Waiting> {
+    let inbox = Inbox::in_data_dir(&options.data_dir);
+    let stored = inbox.read_request(request).ok()??;
+    let (question, forced) = match &stored.body {
+        RequestBody::Approval { forced, .. } => (false, *forced),
+        RequestBody::Question { .. } => (true, false),
+    };
+    let text = waiting_text(options, request)?;
+    Some(Waiting {
+        text,
+        question,
+        forced,
+    })
+}
+
 /// The most turns a retry may ask for, the same top value the settings offer.
 const MAX_RETRY_TURNS: u32 = 200;
 
@@ -892,4 +997,21 @@ pub(crate) fn raise_turns(options: &Options, ticket: &TicketId) -> Result<(), St
     };
     autopilot_engine::apply_to_ticket(&options.data_dir, ticket, &[proposal])
         .map_err(|error| error.to_string())
+}
+
+/// Run the pipeline review off the window thread and report what it found. It
+/// only reads histories and appends to its own record.
+pub fn review(
+    data_dir: PathBuf,
+    settings: autopilot_profile::ReviewSettings,
+    context: egui::Context,
+    sender: Sender<Message>,
+) {
+    thread::spawn(move || {
+        let outcome = autopilot_engine::run_review(&data_dir, &settings)
+            .map(Box::new)
+            .map_err(|error| error.to_string());
+        let _ = sender.send(Message::Review(outcome));
+        context.request_repaint();
+    });
 }

@@ -30,6 +30,14 @@ pub struct StepRequest<'a> {
     pub context: &'a str,
 }
 
+/// A request for a pipeline draft. The description is the owner's words, which
+/// are data for the agent, never instructions to the engine.
+pub struct DraftRequest<'a> {
+    pub description: &'a str,
+    /// The pipelines that already exist, so the draft can start from one.
+    pub known: &'a [String],
+}
+
 /// One build turn in a ticket's worktree.
 pub struct BuildRequest<'a> {
     pub ticket: &'a Ticket,
@@ -62,6 +70,9 @@ pub enum AgentEvent {
     Message {
         summary: String,
     },
+    /// What the run used, when the provider says. Adapters that report
+    /// nothing never send this, so a missing figure stays missing.
+    Usage(autopilot_core::UsageReport),
     /// Cost reported for the run. `estimated` is true when the provider's own
     /// figure is not a bill, as with a subscription.
     Cost {
@@ -70,6 +81,9 @@ pub enum AgentEvent {
     },
     Result(Understanding),
     PlanResult(Plan),
+    /// The raw reply to a pipeline draft request. It is untrusted text: the
+    /// engine parses and checks it, so nothing is dropped before it is seen.
+    DraftResult(String),
     DesignResult(Design),
     /// A build turn ended normally. Its effect is in the worktree.
     BuildDone,
@@ -107,6 +121,20 @@ pub trait Agent {
         .into())
     }
 
+    /// Ask for a pipeline draft from the owner's description. The reply is raw
+    /// text for the engine to validate. Adapters that cannot draft keep this
+    /// default, which refuses.
+    ///
+    /// # Errors
+    /// Returns an error if the request cannot be started or is unsupported.
+    fn start_draft(&self, _request: DraftRequest<'_>) -> Result<AgentRun, AgentError> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this agent cannot draft a pipeline",
+        )
+        .into())
+    }
+
     /// Start the Plan step. Adapters that cannot plan keep this default.
     ///
     /// # Errors
@@ -140,6 +168,10 @@ impl AgentContext {
     /// Report the opaque reference of the session this run uses.
     pub fn session(&self, reference: SessionId) {
         let _ = self.events.send(AgentEvent::Session(reference));
+    }
+
+    pub fn usage(&self, usage: autopilot_core::UsageReport) {
+        let _ = self.events.send(AgentEvent::Usage(usage));
     }
 
     pub fn cost(&self, amount: Money, estimated: bool) {
@@ -195,6 +227,16 @@ impl AgentRun {
         work: impl FnOnce(AgentContext) -> Result<Design, AgentError> + Send + 'static,
     ) -> io::Result<Self> {
         Self::spawn_with(work, AgentEvent::DesignResult)
+    }
+
+    /// Like [`AgentRun::spawn`] for a pipeline draft, whose result is raw text.
+    ///
+    /// # Errors
+    /// Returns an error if the worker thread cannot be started.
+    pub fn spawn_draft(
+        work: impl FnOnce(AgentContext) -> Result<String, AgentError> + Send + 'static,
+    ) -> io::Result<Self> {
+        Self::spawn_with(work, AgentEvent::DraftResult)
     }
 
     /// Like [`AgentRun::spawn`] for a build turn, which has no structured result.
@@ -257,6 +299,7 @@ impl Iterator for AgentRun {
                     | AgentEvent::Message { .. }
                     | AgentEvent::Session(_)
                     | AgentEvent::Cost { .. }
+                    | AgentEvent::Usage(_)
             )
         ) {
             self.events = None;
@@ -315,5 +358,30 @@ mod tests {
         assert!(matches!(run.next(), Some(AgentEvent::Started)));
         drop(run);
         assert_eq!(cleaned.try_recv(), Ok(()));
+    }
+
+    // Invariant: a usage report is an in-run event like cost, so the result
+    // that follows it is still delivered. Without it the iterator stops after
+    // the report and the step ends with "stream ended without a result".
+    #[test]
+    fn a_usage_report_does_not_end_the_stream() {
+        let mut run = AgentRun::spawn(|context| {
+            context.usage(autopilot_core::UsageReport::default());
+            context.cost(Money::from_microusd(5), false);
+            Ok(autopilot_core::Understanding {
+                summary: "s".into(),
+                ambiguity: autopilot_core::Ambiguity::all(autopilot_core::Clarity::Clear),
+                open_questions: vec![],
+                assumptions: vec![],
+                needs_design: false,
+                ui_files: vec![],
+                files_touched: vec![],
+            })
+        })
+        .unwrap();
+        assert!(matches!(run.next(), Some(AgentEvent::Started)));
+        assert!(matches!(run.next(), Some(AgentEvent::Usage(_))));
+        assert!(matches!(run.next(), Some(AgentEvent::Cost { .. })));
+        assert!(matches!(run.next(), Some(AgentEvent::Result(_))));
     }
 }

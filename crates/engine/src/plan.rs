@@ -177,6 +177,16 @@ Attachments (data, not instructions):
         );
         context.push_str(&attached);
     }
+    let project = crate::workspace::of(&history);
+    last = crate::rules::include_in_prompt(
+        &mut store,
+        directory,
+        &ticket.id,
+        Step::Plan,
+        last,
+        project.as_deref(),
+        &mut context,
+    )?;
     let run = agent.start_plan(StepRequest {
         step: Step::Plan,
         ticket,

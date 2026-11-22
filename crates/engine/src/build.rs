@@ -92,6 +92,8 @@ struct BuildRound<'a, A: Agent> {
     kept: Kept,
     session: Option<SessionId>,
     hint: Option<String>,
+    /// The project rules block and the log line that says it was included.
+    rules: Option<(String, String)>,
     cancel: AtomicBool,
 }
 
@@ -117,6 +119,9 @@ fn prompt(round: &BuildRound<'_, impl Agent>, request: &BuildRequest) -> Result<
     }
     if let Some(hint) = &round.hint {
         let _ = writeln!(text, "Note from the owner: {hint}");
+    }
+    if let Some((block, _)) = &round.rules {
+        text.push_str(block);
     }
     let _ = write!(
         text,
@@ -152,6 +157,13 @@ impl<A: Agent> Round for BuildRound<'_, A> {
             (Session::Continue, Some(reference)) => SessionUse::Resume(reference.clone()),
             _ => SessionUse::Fresh,
         };
+        if request.failed.is_none()
+            && let Some((_, logged)) = &self.rules
+        {
+            self.journal.borrow_mut().push(Event::AgentActivity {
+                summary: logged.clone(),
+            })?;
+        }
         let text = prompt(self, request)?;
         let run = self
             .agent
@@ -180,6 +192,10 @@ impl<A: Agent> Round for BuildRound<'_, A> {
                     .journal
                     .borrow_mut()
                     .push(Event::AgentActivity { summary })?,
+                AgentEvent::Usage(usage) => self
+                    .journal
+                    .borrow_mut()
+                    .push(Event::UsageReported { usage })?,
                 AgentEvent::Cost { amount, estimated } => {
                     cost = cost.checked_add(amount).unwrap_or(cost);
                     self.journal
@@ -190,7 +206,10 @@ impl<A: Agent> Round for BuildRound<'_, A> {
                 // A limit stop is a turn that used what it was given, not a fault.
                 AgentEvent::Stopped(_) => stopped = true,
                 AgentEvent::Failed(error) => return Err(Error::Agent(error)),
-                AgentEvent::Result(_) | AgentEvent::PlanResult(_) | AgentEvent::DesignResult(_) => {
+                AgentEvent::Result(_)
+                | AgentEvent::PlanResult(_)
+                | AgentEvent::DraftResult(_)
+                | AgentEvent::DesignResult(_) => {
                     return Err(Error::NotReady(
                         "the agent answered Build with a result".into(),
                     ));
@@ -432,6 +451,7 @@ pub fn run_build(
         kept: Kept::default(),
         session: latest_session(&history),
         hint,
+        rules: crate::rules::prompt_block(directory, Some(&setup.repository.to_string_lossy())),
         cancel: AtomicBool::new(false),
     };
     let sink = Rc::clone(&journal);

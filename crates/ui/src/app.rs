@@ -11,7 +11,7 @@ use autopilot_profile::Profile;
 use eframe::egui::{self, Align, Color32, Frame, Layout, Margin, RichText, Stroke};
 
 use crate::backend::{self, Action, Message, Options, Snapshot};
-use crate::composer::{self, NewTicket};
+use crate::composer::NewTicket;
 use crate::theme;
 
 /// The width of the one column the screens are laid out in.
@@ -19,6 +19,17 @@ const COLUMN: f32 = 900.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
+    Today,
+    Review,
+    Health,
+    Pipelines,
+    Projects,
+    Board,
+    Asking,
+    Checks,
+    Look,
+    NewTicket,
+    PlanReview,
     Design,
     Watch,
     Cost,
@@ -34,14 +45,10 @@ pub enum Screen {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Tab {
-    Overview,
-    Input,
-    Prompt,
+    Summary,
     Output,
     Log,
     Changes,
-    Cost,
-    Settings,
 }
 
 #[allow(clippy::struct_excessive_bools, reason = "independent view toggles")]
@@ -52,6 +59,36 @@ pub struct App {
     pub(crate) mode: Mode,
     pub(crate) screen: Screen,
     pub(crate) selected: Option<TicketId>,
+    pub(crate) today_selected: Option<TicketId>,
+    /// Open pipeline-review findings, from the record and the latest pass.
+    pub(crate) findings: Vec<autopilot_engine::Finding>,
+    review_stamp: u64,
+    review_running: bool,
+    /// Review settings being edited on the Pipeline review page.
+    pub(crate) review_edit: Option<autopilot_profile::ReviewSettings>,
+    pub(crate) health_selected: Option<String>,
+    pub(crate) health_cache: Option<(String, u64, autopilot_engine::PipelineMetrics)>,
+    pub(crate) plan_note: String,
+    pub(crate) corrections: Vec<String>,
+    /// The overlap check of the open ticket, kept until its history changes.
+    pub(crate) overlaps: Option<(TicketId, u64, Vec<autopilot_engine::TicketOverlap>)>,
+    pub(crate) search_open: bool,
+    pub(crate) search_query: String,
+    pub(crate) search_selected: usize,
+    pub(crate) pipeline_selected: Option<String>,
+    pub(crate) pipeline_notice: Option<(bool, String)>,
+    pub(crate) draft_text: String,
+    pub(crate) draft: Option<autopilot_engine::PipelineDraft>,
+    /// The owner picked the pipeline on New ticket, so the suggestion stops.
+    pub(crate) pipeline_chosen: bool,
+    /// The project open on the Projects page, by normalised folder path.
+    pub(crate) project_selected: Option<String>,
+    pub(crate) rules_text: String,
+    pub(crate) rules_saved: String,
+    pub(crate) rules_notice: Option<(bool, String)>,
+    /// A snapshot has arrived, so an empty list means no tickets, not no data yet.
+    pub(crate) loaded: bool,
+    pub(crate) ask_edits: std::collections::BTreeMap<Step, bool>,
     pub(crate) design_step: Step,
     pub(crate) advanced: bool,
     pub(crate) tab: Tab,
@@ -62,8 +99,10 @@ pub struct App {
     pub(crate) profile_problem: Option<(Step, String)>,
     pub(crate) help_open: bool,
     pub(crate) busy: bool,
-    new_started: bool,
+    pub(crate) new_started: bool,
+    /// The palette in use, resolved from `theme`.
     pub(crate) light: bool,
+    pub(crate) theme: theme::ThemeChoice,
     pub(crate) agent: backend::AgentChoice,
     /// What the running action is doing, in words.
     busy_what: &'static str,
@@ -72,7 +111,7 @@ pub struct App {
     /// Whether the data folder holds the sample-data marker, read once per snapshot.
     sample_data: bool,
     /// The project folder last chosen, read once.
-    saved_workspace: Option<std::path::PathBuf>,
+    pub(crate) saved_workspace: Option<std::path::PathBuf>,
     /// Tickets started in this window that the orchestrator has not looked at.
     fresh: Vec<TicketId>,
     pub(crate) orchestrator: backend::Orchestrator,
@@ -83,12 +122,15 @@ pub struct App {
     last_badges: std::collections::HashMap<TicketId, Badge>,
     update: Option<autopilot_update::Update>,
     installing: bool,
-    home: NewTicket,
+    pub(crate) home: NewTicket,
+    pub(crate) kind: crate::new_ticket::Kind,
     watching: bool,
     next_update_check: Option<std::time::Instant>,
     pub(crate) accounts: Option<autopilot_accounts::Accounts>,
     open_newest: bool,
-    icon: Option<egui::TextureHandle>,
+    pub(crate) icon: Option<egui::TextureHandle>,
+    pub(crate) group_by_status: bool,
+    pub(crate) closed_groups: std::collections::HashSet<String>,
     pub(crate) context: egui::Context,
     pub(crate) sender: Sender<Message>,
     receiver: Receiver<Message>,
@@ -99,7 +141,8 @@ impl App {
     /// directory; tests leave it off and feed snapshots themselves.
     #[must_use]
     pub fn new(context: &egui::Context, options: Options, watch: bool) -> Self {
-        let light = read_theme(&options);
+        let choice = read_theme(&options);
+        let light = choice.is_light(context.system_theme());
         let agent = backend::AgentChoice::read(&options.data_dir);
         let orchestrator = backend::Orchestrator::read(&options.data_dir);
         let sample_data = options.data_dir.join(crate::demo::MARKER).exists();
@@ -119,9 +162,33 @@ impl App {
             mode: Mode::Watch,
             screen: Screen::Run,
             selected: None,
+            today_selected: None,
+            findings: Vec::new(),
+            review_stamp: 0,
+            review_running: false,
+            review_edit: None,
+            health_selected: None,
+            health_cache: None,
+            plan_note: String::new(),
+            corrections: Vec::new(),
+            overlaps: None,
+            search_open: false,
+            search_query: String::new(),
+            search_selected: 0,
+            pipeline_selected: None,
+            pipeline_notice: None,
+            draft_text: String::new(),
+            draft: None,
+            pipeline_chosen: false,
+            project_selected: None,
+            rules_text: String::new(),
+            rules_saved: String::new(),
+            rules_notice: None,
+            loaded: false,
+            ask_edits: std::collections::BTreeMap::new(),
             design_step: Step::BuildCheck,
             advanced: true,
-            tab: Tab::Overview,
+            tab: Tab::Summary,
             notice: None,
             change_text: String::new(),
             reading: None,
@@ -131,6 +198,7 @@ impl App {
             busy: false,
             new_started: false,
             light,
+            theme: choice,
             agent,
             busy_what: "Working",
             waiting_cache: std::collections::HashMap::new(),
@@ -145,11 +213,14 @@ impl App {
             update: None,
             installing: false,
             home: NewTicket::default(),
+            kind: crate::new_ticket::Kind::default(),
             watching: watch,
             next_update_check: None,
             accounts: None,
             open_newest: false,
             icon: theme::icon_texture(context),
+            group_by_status: false,
+            closed_groups: std::collections::HashSet::new(),
             context: context.clone(),
             sender,
             receiver,
@@ -183,12 +254,68 @@ impl App {
         self.announced = true;
     }
 
+    /// Tell the owner about findings that opened in the last pass, once each,
+    /// and only when the window is not in front and notifications are on.
+    fn announce_findings(&self, opened: &[autopilot_engine::Finding]) {
+        let focused = self.context.input(|input| input.focused);
+        if !self.notify || focused {
+            return;
+        }
+        for finding in opened {
+            backend::notify(
+                "Autopilot Mode On".to_owned(),
+                format!(
+                    "{} · {}: {}",
+                    finding.pipeline,
+                    autopilot_engine::step_name(finding.step),
+                    finding.evidence
+                ),
+            );
+        }
+    }
+
+    /// Start a review pass when the data changed and the review is on. A pass
+    /// runs off the window thread and never when the review is off.
+    fn review_if_changed(&mut self) {
+        let Ok(profile) = &self.profile else {
+            return;
+        };
+        let settings = profile.review;
+        if settings.mode == autopilot_profile::ReviewMode::Off || self.review_running {
+            return;
+        }
+        let stamp: u64 = self
+            .snapshot
+            .tickets
+            .iter()
+            .map(|view| view.last_seq)
+            .sum::<u64>()
+            + self.snapshot.tickets.len() as u64;
+        if stamp == self.review_stamp {
+            return;
+        }
+        self.review_stamp = stamp;
+        self.review_running = true;
+        backend::review(
+            self.options.data_dir.clone(),
+            settings,
+            self.context.clone(),
+            self.sender.clone(),
+        );
+    }
+
     pub fn set_snapshot(&mut self, snapshot: Snapshot) {
         let first = self.snapshot.tickets.is_empty() && !snapshot.tickets.is_empty();
-        self.announce(&snapshot);
-        self.snapshot = snapshot;
+        self.loaded = true;
         self.waiting_cache.clear();
         self.sample_data = self.options.data_dir.join(crate::demo::MARKER).exists();
+        self.announce(&snapshot);
+        self.snapshot = snapshot;
+        if self.findings.is_empty() {
+            self.findings =
+                autopilot_engine::open_findings(&self.options.data_dir).unwrap_or_default();
+        }
+        self.review_if_changed();
         if first {
             self.apply_start_view();
         }
@@ -225,6 +352,20 @@ impl App {
             })
             .map(|ticket| ticket.id.clone());
         match (view.as_str(), id) {
+            ("today" | "inbox", _) => self.mode = Mode::Today,
+            ("plan", Some(id)) => {
+                self.open(&id);
+                self.mode = Mode::PlanReview;
+            }
+            ("new", _) => self.mode = Mode::NewTicket,
+            ("settings" | "asking", _) => self.mode = Mode::Asking,
+            ("checks", _) => self.mode = Mode::Checks,
+            ("look", _) => self.mode = Mode::Look,
+            ("board", _) => self.mode = Mode::Board,
+            ("projects", _) => self.mode = Mode::Projects,
+            ("pipelines", _) => self.mode = Mode::Pipelines,
+            ("health", _) => self.mode = Mode::Health,
+            ("review", _) => self.mode = Mode::Review,
             ("cost", _) => self.mode = Mode::Cost,
             ("accounts", _) => self.mode = Mode::Accounts,
             ("run", Some(id)) => self.open(&id),
@@ -296,7 +437,7 @@ impl App {
     /// "New ticket": go to the home screen with an empty message box.
     pub(crate) fn start_new(&mut self) {
         self.selected = None;
-        self.mode = Mode::Watch;
+        self.mode = Mode::NewTicket;
         self.home = NewTicket::default();
     }
 
@@ -306,10 +447,17 @@ impl App {
         self.screen = Screen::Run;
     }
 
-    fn drain(&mut self) {
+    pub(crate) fn drain(&mut self) {
         while let Ok(message) = self.receiver.try_recv() {
             match message {
                 Message::Snapshot(snapshot) => self.set_snapshot(snapshot),
+                Message::Review(outcome) => {
+                    self.review_running = false;
+                    if let Ok(outcome) = outcome {
+                        self.findings.clone_from(&outcome.open);
+                        self.announce_findings(&outcome.opened);
+                    }
+                }
                 Message::Accounts(accounts) => self.accounts = Some(*accounts),
                 Message::Update(Ok(found)) => self.update = found,
                 // A failed check is not worth a banner: the next check retries.
@@ -339,16 +487,22 @@ impl App {
         self.drain();
         self.update_clock(ctx);
         self.auto_orchestrate();
+        self.follow_system_theme(ctx);
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
             self.start_new();
         }
+        self.search_keys(ctx);
+        self.today_keys(ctx);
+        if matches!(self.screen, Screen::Step(_))
+            && !ctx.wants_keyboard_input()
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.screen = Screen::Run;
+        }
         self.take_drops(ctx);
         self.title_bar(ctx);
-        self.sidebar(ctx);
-        if self.mode == Mode::Watch
-            && matches!(self.screen, Screen::Step(_))
-            && self.current().is_some()
-        {
+        self.nav(ctx);
+        if self.mode == Mode::Watch && self.current().is_some() {
             self.side_panel(ctx);
         }
         egui::CentralPanel::default()
@@ -369,6 +523,17 @@ impl App {
                                 ui.set_width(ui.available_width().min(COLUMN));
                                 self.notice_bar(ui);
                                 match self.mode {
+                                    Mode::Today => self.today_screen(ui),
+                                    Mode::Review => self.review_screen(ui),
+                                    Mode::Health => self.health_screen(ui),
+                                    Mode::Pipelines => self.pipelines_screen(ui),
+                                    Mode::Projects => self.projects_screen(ui),
+                                    Mode::Board => self.board_screen(ui),
+                                    Mode::NewTicket => self.new_ticket_screen(ui),
+                                    Mode::PlanReview => self.plan_review(ui),
+                                    Mode::Asking => self.asking_screen(ui),
+                                    Mode::Checks => self.checks_screen(ui),
+                                    Mode::Look => self.look_screen(ui),
                                     Mode::Design => self.pipeline_screen(ui),
                                     Mode::Watch => self.watch_screen(ui),
                                     Mode::Cost => self.cost_screen(ui),
@@ -379,6 +544,7 @@ impl App {
                     });
             });
         self.dialogs(ctx);
+        self.search_overlay(ctx);
     }
 
     /// Files dropped on the window go to the open form, or to the ticket on
@@ -395,11 +561,12 @@ impl App {
         if paths.is_empty() {
             return;
         }
-        if self.mode == Mode::Watch {
-            match self.current().map(|view| view.id.clone()) {
-                Some(ticket) => self.act(Action::Attach { ticket, paths }),
-                None => self.home.add(paths),
-            }
+        if self.mode == Mode::NewTicket {
+            self.home.add(paths);
+        } else if self.mode == Mode::Watch
+            && let Some(ticket) = self.current().map(|view| view.id.clone())
+        {
+            self.act(Action::Attach { ticket, paths });
         }
     }
 
@@ -424,13 +591,6 @@ impl App {
                         if theme::named(ui.button("?").on_hover_text("Help"), "Help").clicked() {
                             self.help_open = !self.help_open;
                         }
-                        let label = if self.light { "Dark" } else { "Light" };
-                        if ui.button(label).on_hover_text("Switch theme").clicked() {
-                            self.light = !self.light;
-                            theme::apply(&self.context, self.light);
-                            save_theme(&self.options, self.light);
-                        }
-                        self.spend_chip(ui);
                         self.update_button(ui);
                     });
                 });
@@ -464,85 +624,6 @@ impl App {
                 ui.label(theme::mono(name));
             }
         }
-    }
-
-    fn spend_chip(&self, ui: &mut egui::Ui) {
-        let budget = self
-            .profile
-            .as_ref()
-            .ok()
-            .and_then(|profile| profile.budgets.daily_microusd);
-        let mut text = format!("today {}", dollars(self.snapshot.today_api));
-        if let Some(limit) = budget {
-            text = format!(
-                "{text} of {}",
-                dollars(autopilot_core::Money::from_microusd(limit.get()))
-            );
-        }
-        Frame::new()
-            .stroke(Stroke::new(1.0_f32, theme::BORDER()))
-            .corner_radius(egui::CornerRadius::same(8))
-            .inner_margin(Margin::symmetric(12, 6))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    theme::cost_tag(ui, false);
-                    ui.label(RichText::new(text).color(theme::TEXT_SOFT()));
-                });
-            });
-    }
-
-    fn sidebar(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("sidebar")
-            .exact_width(270.0)
-            .resizable(false)
-            .frame(
-                Frame::new()
-                    .fill(theme::SIDEBAR())
-                    .stroke(Stroke::new(1.0_f32, theme::BORDER()))
-                    .inner_margin(Margin::same(12)),
-            )
-            .show(ctx, |ui| {
-                ui.add_space(40.0);
-                let new = egui::Button::new(RichText::new("+  New ticket").size(16.0))
-                    .fill(theme::SELECTED())
-                    .min_size(egui::vec2(ui.available_width(), 46.0));
-                if ui.add(new).clicked() {
-                    self.start_new();
-                }
-                ui.add_space(24.0);
-                ui.label(RichText::new("   Tickets").color(theme::TEXT_MUTED()));
-                if self.snapshot.tickets.is_empty() {
-                    ui.label(theme::muted("   No tickets yet."));
-                }
-                let mut open = None;
-                let mut ordered: Vec<&TicketView> = self.snapshot.tickets.iter().collect();
-                ordered.sort_by_key(|view| view.badge != Badge::NeedsYou);
-                for view in ordered {
-                    if ticket_row(ui, view, self.selected.as_ref() == Some(&view.id)) {
-                        open = Some(view.id.clone());
-                    }
-                }
-                if let Some(id) = open {
-                    self.open(&id);
-                }
-                ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                    if self.account_dots(ui) {
-                        self.mode = Mode::Accounts;
-                    }
-                    ui.add_space(6.0);
-                    let settings = egui::Button::new(RichText::new("Settings").size(16.0))
-                        .fill(Color32::TRANSPARENT)
-                        .stroke(Stroke::NONE)
-                        .min_size(egui::vec2(ui.available_width(), 44.0));
-                    if ui
-                        .add(settings)
-                        .on_hover_text("Pipeline steps, cost and accounts")
-                        .clicked()
-                    {
-                        self.mode = Mode::Design;
-                    }
-                });
-            });
     }
 
     fn notice_bar(&mut self, ui: &mut egui::Ui) {
@@ -632,9 +713,13 @@ impl App {
             ui,
             &mut self.mode,
             &[
+                (Mode::Asking, "When it asks you"),
                 (Mode::Design, "Pipeline steps"),
                 (Mode::Cost, "Cost"),
+                (Mode::Review, "Pipeline review"),
+                (Mode::Checks, "Checks"),
                 (Mode::Accounts, "Accounts"),
+                (Mode::Look, "Look"),
             ],
         );
     }
@@ -643,11 +728,8 @@ impl App {
         self.mode_tabs(ui);
         ui.add_space(14.0);
         match self.current().map(|view| view.id.clone()) {
-            None => self.home_screen(ui),
-            Some(id) => match self.screen {
-                Screen::Run => self.run_screen(ui, &id),
-                Screen::Step(step) => self.step_screen(ui, &id, step),
-            },
+            None => self.today_screen(ui),
+            Some(id) => self.ticket_page(ui, &id),
         }
     }
 }
@@ -673,7 +755,7 @@ pub fn badge_colors(badge: Badge, view: &TicketView) -> (String, Color32, Color3
     }
 }
 
-fn ticket_row(ui: &mut egui::Ui, view: &TicketView, selected: bool) -> bool {
+pub(crate) fn ticket_row(ui: &mut egui::Ui, view: &TicketView, selected: bool) -> bool {
     let fill = if selected {
         theme::SELECTED()
     } else {
@@ -736,17 +818,33 @@ pub fn banner(ui: &mut egui::Ui, text: &str, ok: bool) {
 
 const THEME_FILE: &str = "ui-theme.txt";
 
-fn read_theme(options: &Options) -> bool {
+fn read_theme(options: &Options) -> theme::ThemeChoice {
     std::fs::read_to_string(options.data_dir.join(THEME_FILE))
-        .is_ok_and(|text| text.trim() == "light")
+        .map(|text| theme::ThemeChoice::parse(&text))
+        .unwrap_or_default()
 }
 
-fn save_theme(options: &Options, light: bool) {
+fn save_theme(options: &Options, choice: theme::ThemeChoice) {
     let _ = std::fs::create_dir_all(&options.data_dir);
-    let _ = std::fs::write(
-        options.data_dir.join(THEME_FILE),
-        if light { "light" } else { "dark" },
-    );
+    let _ = std::fs::write(options.data_dir.join(THEME_FILE), choice.word());
+}
+
+impl App {
+    pub(crate) fn choose_theme(&mut self, choice: theme::ThemeChoice) {
+        self.theme = choice;
+        save_theme(&self.options, choice);
+        self.light = choice.is_light(self.context.system_theme());
+        theme::apply(&self.context, self.light);
+    }
+
+    /// Re-apply the palette when the system switches while `System` is chosen.
+    fn follow_system_theme(&mut self, ctx: &egui::Context) {
+        let light = self.theme.is_light(ctx.system_theme());
+        if light != self.light {
+            self.light = light;
+            theme::apply(ctx, light);
+        }
+    }
 }
 
 impl App {}
@@ -803,120 +901,5 @@ impl App {
             backend::check_for_update(ctx.clone(), self.sender.clone());
         }
         ctx.request_repaint_after(UPDATE_EVERY);
-    }
-}
-
-impl App {
-    /// The first screen: one box to start work, then what waits for you.
-    fn home_screen(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("What should it work on?").size(32.0).strong());
-        ui.label(theme::muted(
-            "Describe a change. It reads the code, asks only what it must, and shows every step. Writing code is not switched on yet.",
-        ));
-        ui.add_space(14.0);
-        // The folder last chosen stays chosen until it is changed.
-        if self.home.workspace.is_none() {
-            self.home.workspace.clone_from(&self.saved_workspace);
-        }
-        let before = self.home.workspace.clone();
-        let start = composer::show(ui, &mut self.home);
-        if self.home.workspace != before {
-            backend::save_workspace(&self.options.data_dir, self.home.workspace.as_deref());
-            self.saved_workspace.clone_from(&self.home.workspace);
-        }
-        if self.agent == backend::AgentChoice::Practice {
-            ui.add_space(6.0);
-            ui.label(theme::muted(
-                "Offline demo agent: the answers are fixed samples. Switch to Claude in Settings > Accounts.",
-            ));
-        }
-        if let Some(action) = start {
-            self.home = NewTicket::default();
-            self.new_started = true;
-            self.act(action);
-        }
-        ui.add_space(18.0);
-        let mut open = None;
-        let waiting: Vec<&TicketView> = self
-            .snapshot
-            .tickets
-            .iter()
-            .filter(|view| view.badge == Badge::NeedsYou)
-            .collect();
-        if !waiting.is_empty() {
-            ui.label(
-                RichText::new("Waiting for you")
-                    .size(18.0)
-                    .strong()
-                    .color(theme::AMBER()),
-            );
-            for view in waiting {
-                if home_row(ui, view, "Answer") {
-                    open = Some(view.id.clone());
-                }
-            }
-            ui.add_space(14.0);
-        }
-        let rest: Vec<&TicketView> = self
-            .snapshot
-            .tickets
-            .iter()
-            .filter(|view| view.badge != Badge::NeedsYou)
-            .collect();
-        if !rest.is_empty() {
-            ui.label(RichText::new("Tickets").size(18.0).strong());
-            for view in rest {
-                if home_row(ui, view, "Open") {
-                    open = Some(view.id.clone());
-                }
-            }
-        }
-        if let Some(id) = open {
-            self.open(&id);
-        }
-    }
-}
-
-fn home_row(ui: &mut egui::Ui, view: &TicketView, action: &str) -> bool {
-    let mut clicked = false;
-    theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-        ui.set_width(ui.available_width() - 38.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(&view.title).size(16.0).strong());
-            let (text, fill, color) = badge_colors(view.badge, view);
-            theme::pill(ui, &text, fill, color);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                clicked = ui.button(action).clicked();
-            });
-        });
-    });
-    clicked
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Invariant: opening the window never starts the orchestrator on tickets
-    // from an earlier session, so launching the app spends nothing. Only a
-    // ticket started in this window (in `fresh`) is picked up.
-    #[test]
-    fn old_tickets_are_never_sent_to_the_orchestrator() {
-        let directory = tempfile::tempdir().unwrap();
-        let options = Options {
-            data_dir: directory.path().join("data"),
-            profile: directory.path().join("profile.toml"),
-            view: None,
-            ticket: None,
-        };
-        crate::demo::seed(&options.data_dir, crate::now_ms()).unwrap();
-        backend::AgentChoice::Claude.save(&options.data_dir);
-        backend::Orchestrator::Opus.save(&options.data_dir);
-        let context = egui::Context::default();
-        let mut app = App::new(&context, options.clone(), false);
-        app.set_snapshot(backend::read(&options));
-        assert_eq!(app.fresh.len(), 0);
-        app.auto_orchestrate();
-        assert!(!app.busy, "an old ticket must not start an action");
     }
 }

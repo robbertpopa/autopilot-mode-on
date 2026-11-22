@@ -10,7 +10,7 @@ use autopilot_core::{Money, Step};
 
 mod pipeline;
 pub use pipeline::{
-    ASK_ONLY, DEFAULT_PIPELINE, Pipeline, Project, StepMode, builtin_pipelines, leaf,
+    ASK_ONLY, DEFAULT_PIPELINE, Pipeline, Project, StepMode, builtin_pipelines, check_name, leaf,
     normalize_path,
 };
 use pipeline::{PipelineFile, ProjectFile};
@@ -26,6 +26,67 @@ pub struct ProfileDiagnostic {
     pub column: usize,
     pub key: String,
     pub message: String,
+}
+
+/// What the pipeline review does. Off is the default: nothing is computed,
+/// written or notified until the owner turns it on.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewMode {
+    #[default]
+    Off,
+    NotifyOnly,
+    /// Reserved for automatic tuning, which does not exist yet; it behaves
+    /// as notify only.
+    NotifyAndTune,
+}
+
+/// How the review decides something is worth a look. Whole numbers only:
+/// shares are thousandths of the context window, and the cost multiple is a
+/// percent (200 means twice the median). Starting defaults, not measured
+/// facts; the first real runs should tune them.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReviewSettings {
+    pub mode: ReviewMode,
+    /// How many of the latest runs of a step are looked at.
+    pub window_runs: u32,
+    pub peak_context_permille: u32,
+    /// How many runs in the window must cross the line to open a finding.
+    pub min_hits: u32,
+    pub cost_multiple_percent: u32,
+}
+
+impl Default for ReviewSettings {
+    fn default() -> Self {
+        Self {
+            mode: ReviewMode::Off,
+            window_runs: 5,
+            peak_context_permille: 800,
+            min_hits: 3,
+            cost_multiple_percent: 200,
+        }
+    }
+}
+
+impl ReviewSettings {
+    /// # Errors
+    /// Returns a sentence for a value that cannot be a sensible threshold.
+    pub fn check(&self) -> Result<(), String> {
+        if self.window_runs == 0 || self.window_runs > 50 {
+            return Err("window_runs must be between 1 and 50".into());
+        }
+        if self.min_hits == 0 || self.min_hits > self.window_runs {
+            return Err("min_hits must be between 1 and window_runs".into());
+        }
+        if self.peak_context_permille == 0 || self.peak_context_permille > 1000 {
+            return Err("peak_context_permille must be between 1 and 1000".into());
+        }
+        if self.cost_multiple_percent < 100 || self.cost_multiple_percent > 10_000 {
+            return Err("cost_multiple_percent must be between 100 and 10000".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -108,6 +169,7 @@ pub struct Profile {
     pub branch_rules: BranchRules,
     pub budgets: ProjectBudgets,
     pub when_unsure: WhenUnsure,
+    pub review: ReviewSettings,
     /// Projects by normalised workspace path.
     pub projects: BTreeMap<String, Project>,
     custom_pipelines: BTreeMap<String, Pipeline>,
@@ -122,6 +184,7 @@ struct ProfileFile {
     branch_rules: BranchRules,
     budgets: ProjectBudgets,
     when_unsure: WhenUnsure,
+    review: ReviewSettings,
     projects: BTreeMap<String, ProjectFile>,
     pipelines: BTreeMap<String, PipelineFile>,
 }
@@ -180,6 +243,10 @@ impl Profile {
             steps.insert(step, resolve_step(step, options, path, source)?);
         }
 
+        if let Err(why) = file.review.check() {
+            let offset = source.find("[review]").unwrap_or(0);
+            return Err(diagnostic(path, source, offset, "review".into(), why));
+        }
         let custom_pipelines = resolve_pipelines(&file.pipelines, path, source)?;
         let projects = resolve_projects(&file.projects, &custom_pipelines, path, source)?;
 
@@ -190,6 +257,7 @@ impl Profile {
             branch_rules: file.branch_rules,
             budgets: file.budgets,
             when_unsure: file.when_unsure,
+            review: file.review,
             projects,
             custom_pipelines,
         })
@@ -206,6 +274,35 @@ impl Profile {
     #[must_use]
     pub fn pipeline(&self, name: &str) -> Option<Pipeline> {
         self.pipelines().into_iter().find(|each| each.name == name)
+    }
+
+    /// A pipeline as it would be if `name` were added: the named base with the
+    /// given steps switched, checked by the same rules as a saved one.
+    ///
+    /// # Errors
+    /// Returns a sentence when the base is unknown or the steps cannot run in order.
+    pub fn build_pipeline(
+        &self,
+        name: &str,
+        based_on: &str,
+        on: &[Step],
+        if_needed: &[Step],
+        off: &[Step],
+        rounds: Option<u32>,
+    ) -> Result<Pipeline, String> {
+        let known: BTreeMap<String, Pipeline> = self
+            .pipelines()
+            .into_iter()
+            .map(|pipeline| (pipeline.name.clone(), pipeline))
+            .collect();
+        let file = PipelineFile {
+            based_on: Some(based_on.to_owned()),
+            on: on.to_vec(),
+            if_needed: if_needed.to_vec(),
+            off: off.to_vec(),
+            rounds,
+        };
+        pipeline::resolve(name, &file, &known)
     }
 
     /// The project for a workspace folder, however its path is spelled.

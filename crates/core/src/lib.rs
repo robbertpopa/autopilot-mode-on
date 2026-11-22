@@ -461,6 +461,33 @@ pub struct StepChange {
     pub change: StepOverride,
 }
 
+/// What a step consumed, as the agent reported it. Every figure is optional
+/// where an adapter may report nothing: a missing figure is "not reported",
+/// never zero and never a guess.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct UsageReport {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    /// The largest prompt any single turn sent, in tokens.
+    #[serde(default)]
+    pub peak_context_tokens: Option<u64>,
+    /// The model's context window as the agent reported it.
+    #[serde(default)]
+    pub context_window_tokens: Option<u64>,
+}
+
+impl UsageReport {
+    /// The peak as a share of the window in thousandths, when both are known.
+    #[must_use]
+    pub fn peak_context_permille(&self) -> Option<u32> {
+        let peak = self.peak_context_tokens?;
+        let window = self.context_window_tokens.filter(|window| *window > 0)?;
+        u32::try_from(peak.saturating_mul(1000) / window).ok()
+    }
+}
+
 /// The owner's correction of one assumption Understand made, given when the
 /// owner approves. Later steps treat it as data to take into account.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -602,6 +629,10 @@ pub enum Event {
     StepReset {
         #[serde(default)]
         and_after: bool,
+    },
+    /// What the agent reported using for a step's run, kept next to its cost.
+    UsageReported {
+        usage: UsageReport,
     },
     /// The owner approved a step and corrected assumptions on the way. Kept
     /// with the plan so a review sees what was changed and why.

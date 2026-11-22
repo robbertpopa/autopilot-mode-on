@@ -190,5 +190,5 @@ pub fn rerun_understand(
         title,
         description,
     };
-    run_attempt(directory, &mut store, &ticket, last, ask_after, agent)
+    run_attempt(directory, &mut store, &ticket, last, ask_after, agent, None)
 }

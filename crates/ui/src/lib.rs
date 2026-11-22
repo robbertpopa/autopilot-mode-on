@@ -4,12 +4,25 @@
 mod accounts;
 mod app;
 mod backend;
+mod board;
 mod composer;
 pub mod demo;
+mod first_run;
+mod health;
+mod nav;
+mod new_ticket;
 mod pipeline;
+mod pipelines;
+mod plan_review;
+mod projects;
+mod review_page;
 mod run;
+mod search;
+mod settings;
 mod step;
 mod theme;
+mod ticket;
+mod today;
 
 pub use app::{App, Mode, Screen, Tab};
 pub use backend::{Action, Options, Snapshot, now_ms, perform, read};
@@ -83,29 +96,40 @@ mod tests {
         backend::AgentChoice::Practice.save(&options.data_dir);
         let context = egui::Context::default();
         let mut app = App::new(&context, options.clone(), false);
-        for mode in [Mode::Design, Mode::Watch, Mode::Cost, Mode::Accounts] {
+        for mode in [
+            Mode::Today,
+            Mode::Board,
+            Mode::Review,
+            Mode::Health,
+            Mode::Projects,
+            Mode::Pipelines,
+            Mode::NewTicket,
+            Mode::Asking,
+            Mode::Checks,
+            Mode::Look,
+            Mode::Design,
+            Mode::Watch,
+            Mode::Cost,
+            Mode::Accounts,
+        ] {
             app.mode = mode;
             frame(&mut app, &context);
         }
         demo::seed(&options.data_dir, now_ms()).unwrap();
         app.set_snapshot(read(&options));
         assert_eq!(app.snapshot.tickets.len(), 3);
+        app.mode = Mode::Today;
+        frame(&mut app, &context);
         for index in 0..3 {
             let id = app.snapshot.tickets[index].id.clone();
             app.open(&id);
+            app.mode = Mode::PlanReview;
+            frame(&mut app, &context);
+            app.mode = Mode::Watch;
             frame(&mut app, &context);
             for step in Step::ALL {
                 app.screen = Screen::Step(step);
-                for tab in [
-                    Tab::Overview,
-                    Tab::Input,
-                    Tab::Prompt,
-                    Tab::Output,
-                    Tab::Log,
-                    Tab::Changes,
-                    Tab::Cost,
-                    Tab::Settings,
-                ] {
+                for tab in [Tab::Summary, Tab::Output, Tab::Log, Tab::Changes] {
                     app.tab = tab;
                     frame(&mut app, &context);
                 }
@@ -149,6 +173,152 @@ mod tests {
         assert_ne!(settled.badge, autopilot_engine::Badge::NeedsYou);
     }
 
+    // Invariant: pressing A on Today approves the waiting ticket through the
+    // engine. A change that lost the key handler or the page check would leave
+    // the ticket waiting; the engine test above does not go through the keys.
+    #[test]
+    fn the_a_key_approves_the_waiting_ticket_on_today() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        app.mode = Mode::Today;
+        let id = autopilot_core::TicketId::from("demo-heartbeat");
+        let queued = today::queue(&app.snapshot.tickets);
+        assert_eq!(queued[0].id, id, "asking tickets lead the queue");
+        let press = egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: Some(egui::Key::A),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1500.0, 920.0),
+            )),
+            events: vec![press],
+            ..Default::default()
+        };
+        let _ = context.run(input, |context| app.ui(context));
+        for _ in 0..100 {
+            frame(&mut app, &context);
+            if app.notice.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(app.notice, Some((true, "Approved".to_owned())));
+        app.set_snapshot(read(&options));
+        let settled = app
+            .snapshot
+            .tickets
+            .iter()
+            .find(|view| view.id == id)
+            .unwrap();
+        assert_ne!(settled.badge, autopilot_engine::Badge::NeedsYou);
+    }
+
+    // Invariant: the Timezone ticket page shows round 1 failed on protected
+    // paths and round 2 live, and the page builds with the drawer open and
+    // closed. The data is what the page paints, so a change that dropped a
+    // round from the view would fail here.
+    #[test]
+    fn the_timezone_ticket_shows_round_one_failed_and_round_two_live() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let id = autopilot_core::TicketId::from("demo-timezone");
+        let view = app.ticket(&id).unwrap().clone();
+        assert_eq!(view.rounds.len(), 2);
+        let first = view.rounds[0].failure().expect("round 1 failed");
+        assert!(first.note.contains("protected path"), "{}", first.note);
+        assert!(
+            view.rounds[1].failure().is_none(),
+            "round 2 has no failure yet"
+        );
+        app.open(&id);
+        frame(&mut app, &context);
+        app.screen = Screen::Step(Step::BuildCheck);
+        frame(&mut app, &context);
+    }
+
+    // Invariant: toggling Plan's switch collects an edit, shows no change on
+    // disk until Save, and Save writes `ask_after` to profile.toml so a fresh
+    // read of the file sees it. Design stays locked: its edit is ignored.
+    #[test]
+    fn toggling_plans_switch_and_saving_writes_profile_toml() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.mode = Mode::Asking;
+        frame(&mut app, &context);
+        let before = autopilot_engine::load_profile(&options.profile)
+            .unwrap()
+            .step(Step::Plan)
+            .unwrap()
+            .ask_after;
+        app.ask_edits.insert(Step::Plan, !before);
+        app.ask_edits.insert(Step::Design, false);
+        assert_eq!(app.ask_changes(), vec![(Step::Plan, !before)]);
+        assert!(!options.profile.exists(), "nothing is written before Save");
+        frame(&mut app, &context);
+        app.save_asking();
+        let after = autopilot_engine::load_profile(&options.profile).unwrap();
+        assert_eq!(after.step(Step::Plan).unwrap().ask_after, !before);
+        assert!(app.ask_edits.is_empty());
+    }
+
+    // Invariant: an install with no tickets and no chosen folder opens First
+    // run; a chosen folder or a ticket ends it. Before the first snapshot it
+    // is not first run, so the page does not flash while data loads.
+    #[test]
+    fn an_empty_data_directory_opens_first_run() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        assert!(!app.is_first_run(), "nothing has loaded yet");
+        app.set_snapshot(read(&options));
+        assert!(app.is_first_run());
+        app.mode = Mode::Today;
+        frame(&mut app, &context);
+        backend::save_workspace(&options.data_dir, Some(directory.path()));
+        app.saved_workspace = backend::saved_workspace(&options.data_dir);
+        assert!(!app.is_first_run());
+    }
+
     // Invariant: a ticket started with no project runs the ask-only pipeline,
     // so Plan is skipped and cannot be made; one with a project runs `full`.
     // Deriving ask-only from a missing folder later would change old tickets.
@@ -169,6 +339,7 @@ mod tests {
                 description: "What does the export do?".into(),
                 attachments: Vec::new(),
                 workspace: None,
+                pipeline: None,
             },
         )
         .unwrap();
@@ -214,6 +385,449 @@ mod tests {
         assert!(backend::raise_turns(&options, &one).is_err());
     }
 
+    // Invariant: a folder a ticket used shows up as a project the profile does
+    // not know, adding it writes one entry, the rules the owner saves are read
+    // back from the data folder (and not from the project), and a refused
+    // rules file leaves the saved one as it was. Grouping by folder name would
+    // merge two projects that share it.
+    #[test]
+    fn projects_list_register_and_keep_rules_outside_the_folder() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        let project = directory.path().join("work").join("app");
+        std::fs::create_dir_all(&project).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.mode = Mode::Projects;
+        frame(&mut app, &context);
+        app.add_project(&project);
+        let path = app.project_selected.clone().unwrap();
+        assert_eq!(app.profile.as_ref().unwrap().projects.len(), 1);
+        assert!(app.profile.as_ref().unwrap().project(&path).is_some());
+        app.rules_text = "Prefer short functions.".into();
+        app.save_project_rules();
+        assert_eq!(app.rules_notice.as_ref().map(|n| n.0), Some(true));
+        app.rules_text = "x".repeat(autopilot_engine::MAX_RULES_BYTES + 1);
+        app.save_project_rules();
+        assert_eq!(app.rules_notice.as_ref().map(|n| n.0), Some(false));
+        app.revert_rules();
+        assert_eq!(app.rules_text, "Prefer short functions.");
+        assert_eq!(std::fs::read_dir(&project).unwrap().count(), 0);
+        frame(&mut app, &context);
+        // Two folders that share a name are two rows.
+        let other = directory.path().join("elsewhere").join("app");
+        std::fs::create_dir_all(&other).unwrap();
+        app.add_project(&other);
+        assert_eq!(app.profile.as_ref().unwrap().projects.len(), 2);
+        frame(&mut app, &context);
+    }
+
+    // Invariant: a pipeline can be copied from a built-in, its steps switched,
+    // and an impossible order is refused with the stored file unchanged; a
+    // ticket can move to another pipeline while the step that would change has
+    // not started; and a kind suggests a pipeline while a missing project locks
+    // the choice to ask-only. A start that sent the picked pipeline without a
+    // project would let an ask-only ticket run a build.
+    #[test]
+    #[allow(clippy::too_many_lines, reason = "one scenario from copy to start")]
+    fn pipelines_are_copied_switched_per_ticket_and_suggested_by_kind() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let project = directory.path().join("work").join("app");
+        std::fs::create_dir_all(&project).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.mode = Mode::Pipelines;
+        frame(&mut app, &context);
+        app.duplicate_pipeline("bug-fix");
+        let copy = app.pipeline_selected.clone().unwrap();
+        assert_eq!(copy, "bug-fix-copy");
+        assert!(app.profile.as_ref().unwrap().pipeline(&copy).is_some());
+        let stored = std::fs::read_to_string(&options.profile).unwrap();
+        let mut modes: Vec<(Step, autopilot_profile::StepMode)> = Step::ALL
+            .iter()
+            .map(|step| {
+                (
+                    *step,
+                    app.profile
+                        .as_ref()
+                        .unwrap()
+                        .pipeline(&copy)
+                        .unwrap()
+                        .mode(*step),
+                )
+            })
+            .collect();
+        for (step, mode) in &mut modes {
+            if *step == Step::Plan {
+                *mode = autopilot_profile::StepMode::Off;
+            }
+        }
+        app.write_pipeline_for_test(&copy, &modes);
+        assert_eq!(app.pipeline_notice.as_ref().map(|n| n.0), Some(false));
+        assert_eq!(std::fs::read_to_string(&options.profile).unwrap(), stored);
+        frame(&mut app, &context);
+
+        // Per ticket: a ticket in a project starts on full, then moves.
+        perform(
+            &options,
+            &Action::Start {
+                title: "T".into(),
+                description: "Show the time".into(),
+                attachments: Vec::new(),
+                workspace: Some(project.clone()),
+                pipeline: None,
+            },
+        )
+        .unwrap();
+        let id = read(&options).tickets[0].id.clone();
+        assert_eq!(
+            read(&options).tickets[0].pipeline.as_ref().unwrap().0,
+            "full"
+        );
+        // Clarify already asked its question, so a pipeline that turns it off
+        // is refused and the ticket keeps what it had.
+        let refused = perform(
+            &options,
+            &Action::ChoosePipeline {
+                ticket: id.clone(),
+                name: "quick-change".into(),
+            },
+        );
+        assert!(refused.is_err(), "{refused:?}");
+        assert_eq!(
+            read(&options).tickets[0].pipeline.as_ref().unwrap().0,
+            "full"
+        );
+        perform(
+            &options,
+            &Action::ChoosePipeline {
+                ticket: id.clone(),
+                name: "bug-fix".into(),
+            },
+        )
+        .unwrap();
+        let view = read(&options).tickets[0].clone();
+        assert_eq!(view.pipeline.as_ref().unwrap().0, "bug-fix");
+        assert!(matches!(
+            view.step(Step::Design).unwrap().state,
+            autopilot_pipeline::StepState::Skipped(_)
+        ));
+        assert!(
+            perform(
+                &options,
+                &Action::ChoosePipeline {
+                    ticket: id,
+                    name: "no-such".into(),
+                },
+            )
+            .is_err()
+        );
+
+        // New ticket: the kind suggests, no project locks.
+        app.mode = Mode::NewTicket;
+        app.home.workspace = Some(project);
+        app.kind = new_ticket::Kind::Bug;
+        frame(&mut app, &context);
+        assert_eq!(app.home.pipeline.as_deref(), Some("bug-fix"));
+        app.kind = new_ticket::Kind::Ask;
+        frame(&mut app, &context);
+        assert_eq!(app.home.pipeline.as_deref(), Some("ask-only"));
+        app.home.workspace = None;
+        app.home.description = "x".into();
+        let Action::Start { pipeline, .. } = app.home.start_action() else {
+            panic!("a start");
+        };
+        assert_eq!(pipeline, None, "no project means no pipeline is sent");
+    }
+
+    // Invariant: the practice agent drafts a pipeline that the engine accepts,
+    // the draft is not stored until it is saved, and saving writes it to
+    // profile.toml where a fresh read finds it. The draft for the Claude
+    // choice is greyed, since a live draft spends money.
+    #[test]
+    fn a_pipeline_draft_is_shown_then_saved_only_on_request() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.mode = Mode::Pipelines;
+        app.draft_text = "a small change that needs no questions".into();
+        let draft = backend::draft_pipeline(&options, &app.draft_text).unwrap();
+        assert_eq!(draft.name, "practice-draft");
+        assert_eq!(
+            draft.pipeline.mode(Step::Clarify),
+            autopilot_profile::StepMode::Off
+        );
+        assert!(!options.profile.exists(), "a draft stores nothing");
+        app.draft = Some(draft.clone());
+        frame(&mut app, &context);
+        let saved = autopilot_engine::save_draft(&options.profile, &draft).unwrap();
+        assert!(saved.pipeline("practice-draft").is_some());
+        let reread = autopilot_engine::load_profile(&options.profile).unwrap();
+        assert!(reread.pipeline("practice-draft").is_some());
+    }
+
+    // Invariant: a plan can be sent back with a note (the step stops as
+    // interrupted and can be planned again) and approved with a corrected
+    // assumption, which the ticket view then shows. The window only sends the
+    // engine's decisions; a click that sent a plain approval instead would drop
+    // the correction.
+    #[test]
+    fn a_plan_is_sent_back_with_a_note_and_approved_with_a_correction() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        perform(
+            &options,
+            &Action::Start {
+                title: "Plan me".into(),
+                description: "Add an export option".into(),
+                attachments: Vec::new(),
+                workspace: Some(directory.path().to_path_buf()),
+                pipeline: None,
+            },
+        )
+        .unwrap();
+        let id = read(&options).tickets[0].id.clone();
+        if read(&options).tickets[0].asking.is_some() {
+            perform(&options, &Action::AcceptDefaults { ticket: id.clone() }).unwrap();
+        }
+        perform(&options, &Action::MakePlan(id.clone())).unwrap();
+        perform(
+            &options,
+            &Action::SendBack {
+                ticket: id.clone(),
+                note: "mention the CSV header".into(),
+            },
+        )
+        .unwrap();
+        let view = read(&options).tickets[0].clone();
+        assert!(matches!(
+            view.step(Step::Plan).unwrap().state,
+            autopilot_pipeline::StepState::Interrupted(_)
+        ));
+        perform(&options, &Action::RerunPlan(id.clone())).unwrap();
+        perform(
+            &options,
+            &Action::ApproveCorrected {
+                ticket: id.clone(),
+                corrections: vec![autopilot_core::AssumptionCorrection {
+                    assumption: "UTF-8".into(),
+                    correction: "Latin-1".into(),
+                }],
+            },
+        )
+        .unwrap();
+        let view = read(&options).tickets[0].clone();
+        assert_eq!(view.corrections[0].correction, "Latin-1");
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        app.open(&id);
+        app.mode = Mode::PlanReview;
+        frame(&mut app, &context);
+        app.mode = Mode::Watch;
+        frame(&mut app, &context);
+    }
+
+    // Invariant: the Health page shows runs of a pipeline from the recorded
+    // histories and says "not reported" for usage no adapter reported. It must
+    // not draw a zero for a missing figure. The demo tickets carry no usage, so
+    // every step's usage is missing.
+    #[test]
+    fn health_counts_runs_and_never_shows_a_missing_figure_as_zero() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let metrics = autopilot_engine::pipeline_metrics(&options.data_dir, "full", 5).unwrap();
+        assert_eq!(
+            metrics.tickets, 3,
+            "demo tickets have no pipeline choice, so they ran full"
+        );
+        let understand = &metrics.steps[0];
+        assert!(understand.runs >= 1);
+        assert_eq!(understand.reported, 0);
+        assert_eq!(understand.peak_context_permille, None);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        app.mode = Mode::Health;
+        frame(&mut app, &context);
+        app.health_selected = Some("ask-only".into());
+        frame(&mut app, &context);
+    }
+
+    // Invariant: the review is off until the owner turns it on and saves, an
+    // off review writes no record even when tickets change, and the page, Today
+    // and Health all build with a finding present. Findings from a review that
+    // ran while it was off would be notifications nobody asked for.
+    #[test]
+    fn the_review_is_off_until_saved_and_its_pages_build() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        assert_eq!(
+            app.profile.as_ref().unwrap().review.mode,
+            autopilot_profile::ReviewMode::Off
+        );
+        perform(
+            &options,
+            &Action::Start {
+                title: "T".into(),
+                description: "Show the time".into(),
+                attachments: Vec::new(),
+                workspace: Some(directory.path().to_path_buf()),
+                pipeline: None,
+            },
+        )
+        .unwrap();
+        app.set_snapshot(read(&options));
+        assert!(!options.data_dir.join("review-findings.jsonl").exists());
+        app.mode = Mode::Review;
+        frame(&mut app, &context);
+        let mut edit = app.profile.as_ref().unwrap().review;
+        edit.mode = autopilot_profile::ReviewMode::NotifyOnly;
+        edit.min_hits = 2;
+        app.review_edit = Some(edit);
+        let saved = app.profile.as_ref().unwrap().review;
+        let changes: Vec<_> = vec![
+            (
+                autopilot_engine::ReviewField::Mode(edit.mode),
+                String::new(),
+            ),
+            (
+                autopilot_engine::ReviewField::MinHits(edit.min_hits),
+                String::new(),
+            ),
+        ];
+        assert_ne!(saved, edit);
+        app.save_review_for_test(&changes);
+        let after = autopilot_engine::load_profile(&options.profile)
+            .unwrap()
+            .review;
+        assert_eq!(after.mode, autopilot_profile::ReviewMode::NotifyOnly);
+        assert_eq!(after.min_hits, 2);
+        app.findings = vec![autopilot_engine::Finding {
+            pipeline: "full".into(),
+            step: Step::Plan,
+            rule: autopilot_engine::Rule::PeakContext,
+            evidence: "peak context at or above 80.0% in 3 of the last 3 reported runs".into(),
+            estimated: false,
+        }];
+        for mode in [Mode::Review, Mode::Today, Mode::Health] {
+            app.mode = mode;
+            frame(&mut app, &context);
+        }
+    }
+
+    // Invariant: search finds a ticket by a word in its recorded text, runs a
+    // command through the same action a button uses, narrows by prefix, and
+    // never returns text that lives only in a project's rules.md. The last is
+    // the privacy line: an index that read the rules file would show private
+    // instructions in a result.
+    #[test]
+    fn search_finds_tickets_runs_commands_and_never_reads_rules() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let tickets = app.snapshot.tickets.clone();
+        let stored = app.profile.as_ref().ok().cloned();
+        let profile = stored.as_ref();
+
+        let hits = search::search("recordings", &tickets, profile, None);
+        let found: Vec<&search::Hit> = hits.iter().filter(|hit| hit.kind == "ticket").collect();
+        assert_eq!(found.len(), 1, "{hits:?}");
+        assert_eq!(found[0].label, "Timezone fix");
+        app.open_hit(&found[0].target.clone());
+        assert_eq!(
+            app.current().map(|view| view.title.as_str()),
+            Some("Timezone fix")
+        );
+
+        // Prefixes narrow by kind.
+        assert!(
+            search::search("t: heartbeat", &tickets, profile, None)
+                .iter()
+                .all(|hit| hit.kind == "ticket")
+        );
+        assert!(
+            search::search("pl: bug", &tickets, profile, None)
+                .iter()
+                .all(|hit| hit.kind == "pipeline")
+        );
+        assert!(
+            search::search("> theme", &tickets, profile, None)
+                .iter()
+                .all(|hit| hit.kind == "command")
+        );
+
+        // A command acts through the same path.
+        let before = app.theme;
+        let theme_hit = search::search("> switch theme", &tickets, profile, None).remove(0);
+        app.open_hit(&theme_hit.target);
+        assert_ne!(app.theme, before);
+        let worktree = search::search("> worktree", &tickets, profile, None).remove(0);
+        assert!(worktree.disabled.is_some(), "greyed with its reason");
+
+        // Rules text is private: it is never in the index.
+        autopilot_engine::save_rules(&options.data_dir, "D:/work/app", "zebra-private-rule")
+            .unwrap();
+        assert_eq!(
+            search::search("zebra-private-rule", &tickets, profile, None).len(),
+            0
+        );
+
+        // The overlay opens with Ctrl+K and builds.
+        app.search_open = true;
+        app.search_query = "time".into();
+        frame(&mut app, &context);
+    }
+
     // Invariant: pausing from the window writes the engine's pause flag, the
     // same one the CLI writes.
     #[test]
@@ -244,20 +858,42 @@ mod tests {
             ticket: None,
         };
         backend::AgentChoice::Practice.save(&options.data_dir);
-        let outcome = perform(
-            &options,
-            &Action::Start {
-                title: "Real ticket".into(),
-                description: "Show the time in the right zone".into(),
-                attachments: Vec::new(),
-                workspace: None,
-            },
-        );
-        assert!(outcome.is_ok(), "{outcome:?}");
+        // Go through the New ticket page: type, then press Enter in the box.
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.start_new();
+        assert_eq!(app.mode, Mode::NewTicket);
+        app.home.description = "Show the time in the right zone".into();
+        frame(&mut app, &context);
+        let enter = egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: Some(egui::Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1500.0, 920.0),
+            )),
+            events: vec![enter],
+            ..Default::default()
+        };
+        let _ = context.run(input, |context| app.ui(context));
+        for _ in 0..200 {
+            frame(&mut app, &context);
+            if app.notice.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let outcome = app.notice.clone();
+        assert!(outcome.as_ref().is_some_and(|(ok, _)| *ok), "{outcome:?}");
         let snapshot = read(&options);
         assert_eq!(snapshot.tickets.len(), 1, "{:?}", snapshot.problem);
         let ticket = &snapshot.tickets[0];
-        assert_eq!(ticket.title, "Real ticket");
+        assert_eq!(ticket.title, "Show the time in the right zone");
         let understand = ticket.step(Step::Understand).unwrap();
         assert!(
             matches!(
@@ -291,6 +927,7 @@ mod tests {
                 description: "Words kept for the second run".into(),
                 attachments: Vec::new(),
                 workspace: None,
+                pipeline: None,
             },
         )
         .unwrap();
@@ -344,6 +981,7 @@ mod tests {
                 description: "See the brief".into(),
                 attachments: vec![file.clone()],
                 workspace: None,
+                pipeline: None,
             },
         )
         .unwrap();
@@ -358,6 +996,7 @@ mod tests {
                 description: "x".into(),
                 attachments: vec![directory.path().join("missing.txt")],
                 workspace: None,
+                pipeline: None,
             },
         );
         assert!(refused.is_err());
@@ -385,6 +1024,7 @@ mod tests {
                 attachments: Vec::new(),
                 // A ticket with no project runs ask-only and has no plan.
                 workspace: Some(directory.path().to_path_buf()),
+                pipeline: None,
             },
         )
         .unwrap();
@@ -399,6 +1039,16 @@ mod tests {
             view.step(Step::Plan).unwrap().state,
             autopilot_pipeline::StepState::Asking(_)
         ));
+        // The plan review page reads the recorded plan and builds.
+        let plan = plan_review::plan_of(&view).expect("the plan reads back");
+        assert!(plan.validate().is_ok());
+        assert!(plan_review::awaiting_plan(&view));
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        app.open(&id);
+        app.mode = Mode::PlanReview;
+        frame(&mut app, &context);
         perform(
             &options,
             &Action::Decide {
@@ -439,6 +1089,7 @@ mod tests {
                 description: "Build the offline to-do app from the attached spec.".into(),
                 attachments: vec![spec],
                 workspace: None,
+                pipeline: None,
             },
         );
         assert!(outcome.is_ok(), "{outcome:?}");
@@ -501,6 +1152,7 @@ mod tests {
                 description: "Build the to-do app. Follow the rules in NOTES.md in the project, and put the exact storage key in your summary.".into(),
                 attachments: Vec::new(),
                 workspace: Some(project.clone()),
+                pipeline: None,
             },
         );
         assert!(outcome.is_ok(), "{outcome:?}");
@@ -535,9 +1187,39 @@ mod tests {
         let context = egui::Context::default();
         assert!(!App::new(&context, options.clone(), false).light);
         std::fs::write(directory.path().join("ui-theme.txt"), "light").unwrap();
-        let mut app = App::new(&context, options, false);
-        assert!(app.light);
+        let mut app = App::new(&context, options.clone(), false);
+        assert!(app.light, "an old `light` file still loads");
         frame(&mut app, &context);
+
+        // Each of the three words survives a choose, restart round trip.
+        for (choice, word) in [
+            (theme::ThemeChoice::System, "system"),
+            (theme::ThemeChoice::Light, "light"),
+            (theme::ThemeChoice::Dark, "dark"),
+        ] {
+            app.choose_theme(choice);
+            let saved = std::fs::read_to_string(directory.path().join("ui-theme.txt")).unwrap();
+            assert_eq!(saved, word);
+            let restarted = App::new(&context, options.clone(), false);
+            assert_eq!(restarted.theme, choice);
+        }
+        std::fs::write(directory.path().join("ui-theme.txt"), "dark").unwrap();
+        assert!(
+            !App::new(&context, options, false).light,
+            "an old `dark` file still loads"
+        );
+    }
+
+    // Invariant: `System` follows the operating system and the other two
+    // ignore it. A change that always returned dark would pass the other test.
+    #[test]
+    fn system_follows_the_operating_system() {
+        use theme::ThemeChoice::{Dark, Light, System};
+        assert!(System.is_light(Some(egui::Theme::Light)));
+        assert!(!System.is_light(Some(egui::Theme::Dark)));
+        assert!(!System.is_light(None));
+        assert!(Light.is_light(Some(egui::Theme::Dark)));
+        assert!(!Dark.is_light(Some(egui::Theme::Light)));
     }
 
     // Invariant: a change asked for in words is shown first and only applied
