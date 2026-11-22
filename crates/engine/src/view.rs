@@ -130,6 +130,8 @@ pub struct TicketView {
     /// The recorded result of a step, as readable JSON.
     pub outputs: Vec<(Step, String)>,
     pub attachments: Vec<AttachmentView>,
+    /// The project folder the agent looks at, if the ticket has one.
+    pub workspace: Option<String>,
     /// Understand said the ticket changes a screen, so Design must run.
     pub needs_design: bool,
     /// Plain-words explanations kept in the history, by step.
@@ -201,6 +203,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     let mut costs = Vec::new();
     let mut outputs: Vec<(Step, String)> = Vec::new();
     let mut attachments = Vec::new();
+    let mut workspace = None;
     let mut needs_design = false;
     let mut explained: Vec<(Step, String)> = Vec::new();
     for record in history {
@@ -220,6 +223,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
             Event::DesignResult { design } => {
                 keep_output(&mut outputs, Step::Design, &design.notes);
             }
+            Event::Workspace { path } => workspace = Some(path.clone()),
             Event::Explained { text } => {
                 if let Some(step) = record.event.step {
                     explained.retain(|(kept, _)| *kept != step);
@@ -336,6 +340,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         costs,
         outputs,
         attachments,
+        workspace,
         needs_design,
         explained,
         api,

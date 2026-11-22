@@ -753,7 +753,15 @@ impl App {
             "Describe a change. It reads the code, asks only what it must, and shows every step. Writing code is not switched on yet.",
         ));
         ui.add_space(14.0);
+        // The folder last chosen stays chosen until it is changed.
+        if self.home.workspace.is_none() {
+            self.home.workspace = backend::saved_workspace(&self.options.data_dir);
+        }
+        let before = self.home.workspace.clone();
         let start = composer::show(ui, &mut self.home);
+        if self.home.workspace != before {
+            backend::save_workspace(&self.options.data_dir, self.home.workspace.as_deref());
+        }
         if self.agent == backend::AgentChoice::Practice {
             ui.add_space(6.0);
             ui.label(theme::muted(

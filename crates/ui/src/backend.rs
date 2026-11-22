@@ -62,6 +62,8 @@ pub enum Action {
         description: String,
         /// Files, images and folders to attach, as absolute paths.
         attachments: Vec<PathBuf>,
+        /// The project folder the agent reads, if one was chosen.
+        workspace: Option<PathBuf>,
     },
     /// Attach files, images or folders to a ticket that exists.
     Attach {
@@ -283,7 +285,7 @@ impl AgentChoice {
 /// The agent a window action runs with, built from the saved choice.
 enum Chosen {
     Practice(FixtureAgent),
-    Claude(autopilot_agent_claude::ClaudeAgent),
+    Claude(Box<autopilot_agent_claude::ClaudeAgent>),
 }
 
 impl autopilot_agent::Agent for Chosen {
@@ -372,7 +374,40 @@ fn claude_config(options: &Options, step: Step) -> autopilot_agent_claude::Claud
     }
 }
 
-fn chosen_agent(options: &Options, step: Step) -> Result<Chosen, String> {
+/// The project folder recorded on a ticket, if it still exists.
+fn ticket_folder(options: &Options, ticket: &TicketId) -> Option<PathBuf> {
+    let history = autopilot_engine::watch(&options.data_dir, ticket, 0).ok()?;
+    autopilot_engine::workspace_of(&history)
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+}
+
+const WORKSPACE_FILE: &str = "ui-workspace.txt";
+
+/// The project folder last chosen in the message box.
+#[must_use]
+pub fn saved_workspace(data_dir: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(data_dir.join(WORKSPACE_FILE)).ok()?;
+    let path = PathBuf::from(text.trim());
+    path.is_dir().then_some(path)
+}
+
+pub fn save_workspace(data_dir: &Path, folder: Option<&Path>) {
+    let _ = std::fs::create_dir_all(data_dir);
+    match folder {
+        Some(path) => {
+            let _ = std::fs::write(
+                data_dir.join(WORKSPACE_FILE),
+                path.to_string_lossy().as_bytes(),
+            );
+        }
+        None => {
+            let _ = std::fs::remove_file(data_dir.join(WORKSPACE_FILE));
+        }
+    }
+}
+
+fn chosen_agent(options: &Options, step: Step, workspace: Option<&Path>) -> Result<Chosen, String> {
     match AgentChoice::read(&options.data_dir) {
         AgentChoice::Practice => fixture_agent().map(Chosen::Practice),
         AgentChoice::Claude => {
@@ -385,7 +420,11 @@ fn chosen_agent(options: &Options, step: Step) -> Result<Chosen, String> {
             agent
                 .preflight()
                 .map_err(|error| format!("Claude Code is not ready: {error}"))?;
-            Ok(Chosen::Claude(agent))
+            let agent = match workspace {
+                Some(folder) => agent.in_workspace(folder.to_path_buf()),
+                None => agent,
+            };
+            Ok(Chosen::Claude(Box::new(agent)))
         }
     }
 }
@@ -431,7 +470,14 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             title,
             description,
             attachments,
-        } => start(options, title, description, attachments),
+            workspace,
+        } => start(
+            options,
+            title,
+            description,
+            attachments,
+            workspace.as_deref(),
+        ),
         Action::Attach { ticket, paths } => autopilot_engine::attach(directory, ticket, paths)
             .map(|count| format!("Attached {count}"))
             .map_err(|error| error.to_string()),
@@ -467,7 +513,8 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             Ok("Used the recommended answers".to_owned())
         }
         Action::RerunUnderstand(ticket) => {
-            let agent = chosen_agent(options, Step::Understand)?;
+            let folder = ticket_folder(options, ticket);
+            let agent = chosen_agent(options, Step::Understand, folder.as_deref())?;
             let ask = autopilot_engine::load_profile(&options.profile)
                 .ok()
                 .and_then(|profile| {
@@ -480,13 +527,14 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                 .map_err(|error| error.to_string())
         }
         Action::MakePlan(ticket) => {
-            let agent = chosen_agent(options, Step::Plan)?;
+            let folder = ticket_folder(options, ticket);
+            let agent = chosen_agent(options, Step::Plan, folder.as_deref())?;
             autopilot_engine::plan_ticket(directory, ticket, &agent)
                 .map(|plan| format!("Plan ready: {} criteria", plan.criteria.len()))
                 .map_err(|error| error.to_string())
         }
         Action::Explain { ticket, step } => {
-            let chosen = chosen_agent(options, Step::Understand)?;
+            let chosen = chosen_agent(options, Step::Understand, None)?;
             autopilot_engine::explain_step(directory, ticket, *step, |prompt| match &chosen {
                 Chosen::Claude(agent) => agent.explain(prompt).map_err(|error| error.to_string()),
                 Chosen::Practice(_) => Ok(
@@ -499,7 +547,8 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             .map_err(|error| error.to_string())
         }
         Action::MakeDesign(ticket) => {
-            let agent = chosen_agent(options, Step::Design)?;
+            let folder = ticket_folder(options, ticket);
+            let agent = chosen_agent(options, Step::Design, folder.as_deref())?;
             let history =
                 autopilot_engine::watch(directory, ticket, 0).map_err(|error| error.to_string())?;
             let words = autopilot_engine::ticket_words(ticket, &history)
@@ -512,7 +561,8 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                 .map_err(|error| error.to_string())
         }
         Action::RerunDesign(ticket) => {
-            let agent = chosen_agent(options, Step::Design)?;
+            let folder = ticket_folder(options, ticket);
+            let agent = chosen_agent(options, Step::Design, folder.as_deref())?;
             autopilot_engine::rerun_design(directory, ticket, &agent)
                 .map(|_| "New design ready".to_owned())
                 .map_err(|error| error.to_string())
@@ -527,7 +577,8 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             Ok("Opened the mockups".to_owned())
         }
         Action::RerunPlan(ticket) => {
-            let agent = chosen_agent(options, Step::Plan)?;
+            let folder = ticket_folder(options, ticket);
+            let agent = chosen_agent(options, Step::Plan, folder.as_deref())?;
             autopilot_engine::rerun_plan(directory, ticket, &agent)
                 .map(|plan| format!("New plan ready: {} criteria", plan.criteria.len()))
                 .map_err(|error| error.to_string())
@@ -549,9 +600,15 @@ fn start(
     title: &str,
     description: &str,
     attachments: &[PathBuf],
+    workspace: Option<&Path>,
 ) -> Result<String, String> {
     let directory = options.data_dir.as_path();
-    let agent = chosen_agent(options, Step::Understand)?;
+    if let Some(folder) = workspace
+        && !folder.is_dir()
+    {
+        return Err(format!("{} is not a folder", folder.display()));
+    }
+    let agent = chosen_agent(options, Step::Understand, workspace)?;
     let id = TicketId::from(format!("t-{}", now_ms()));
     let ticket = Ticket {
         id: id.clone(),
@@ -573,6 +630,11 @@ fn start(
         // The ticket was not made, so its copies must not stay behind.
         let _ = std::fs::remove_dir_all(directory.join("attachments").join(id.as_str()));
         return Err(error.to_string());
+    }
+    if let Some(folder) = workspace {
+        // Kept in the history so every later step looks at the same project.
+        autopilot_engine::record_workspace(directory, &id, folder)
+            .map_err(|error| format!("the ticket started, but its folder was not kept: {error}"))?;
     }
     // Clarify is decided right away. Plan and the later steps need a real
     // agent, which the window does not start yet.

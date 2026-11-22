@@ -517,6 +517,11 @@ pub enum Event {
     Explained {
         text: String,
     },
+    /// The project folder the ticket is about. The read-only steps look at its
+    /// files; a later run of any step uses the same folder.
+    Workspace {
+        path: String,
+    },
     /// The owner asked to run a step again. The named step goes back to idle,
     /// and with `and_after` so does every later step that already ran, because
     /// their results came from the old one. What was spent stays spent.
