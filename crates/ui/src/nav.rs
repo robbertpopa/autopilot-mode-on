@@ -167,6 +167,7 @@ impl App {
                 self.new_ticket_button(ui, narrow);
                 self.today_link(ui, narrow);
                 self.board_link(ui, narrow);
+                self.projects_link(ui, narrow);
                 if !narrow {
                     ui.add_space(14.0);
                     self.nav_tickets(ui);
@@ -203,6 +204,21 @@ impl App {
             .min_size(egui::vec2(ui.available_width(), 40.0));
         if theme::named(ui.add(button), "New ticket").clicked() {
             self.start_new();
+        }
+    }
+
+    fn projects_link(&mut self, ui: &mut egui::Ui, narrow: bool) {
+        let fill = if self.mode == Mode::Projects {
+            theme::SELECTED()
+        } else {
+            Color32::TRANSPARENT
+        };
+        let button = egui::Button::new(if narrow { "P" } else { "Projects" })
+            .fill(fill)
+            .stroke(Stroke::NONE)
+            .min_size(egui::vec2(ui.available_width(), 34.0));
+        if theme::named(ui.add(button), "Projects").clicked() {
+            self.mode = Mode::Projects;
         }
     }
 

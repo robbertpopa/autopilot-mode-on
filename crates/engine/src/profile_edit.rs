@@ -94,6 +94,66 @@ pub fn edit_step(path: &Path, step: Step, field: &StepField) -> Result<Profile, 
     Ok(profile)
 }
 
+/// One setting of one project.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectField {
+    Name(String),
+    /// `None` removes the default and the ticket falls back to `full`.
+    DefaultPipeline(Option<String>),
+    GithubRepo(Option<String>),
+}
+
+/// Add a project for a workspace folder, or change one of its settings. The
+/// key is the normalised folder path, so the same folder written two ways is
+/// one project. The file keeps its comments, and nothing is written unless the
+/// result still parses.
+///
+/// # Errors
+/// Returns an error for an unreadable file, or the diagnostic when the result
+/// is invalid (for example a default pipeline that does not exist).
+pub fn edit_project(
+    path: &Path,
+    workspace: &str,
+    field: Option<&ProjectField>,
+) -> Result<Profile, ProfileEditError> {
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
+    let mut document: DocumentMut = source
+        .parse()
+        .map_err(|error: toml_edit::TomlError| ProfileEditError::Syntax(error.to_string()))?;
+    let key = autopilot_profile::normalize_path(workspace);
+    let projects = child_table(document.as_table_mut(), "projects")?;
+    projects.set_implicit(true);
+    let table = child_table(projects, &key)?;
+    match field {
+        Some(ProjectField::Name(name)) => table["name"] = value(name.as_str()),
+        Some(ProjectField::DefaultPipeline(Some(name))) => {
+            table["default_pipeline"] = value(name.as_str());
+        }
+        Some(ProjectField::GithubRepo(Some(repo))) => table["github_repo"] = value(repo.as_str()),
+        Some(ProjectField::DefaultPipeline(None)) => {
+            table.remove("default_pipeline");
+        }
+        Some(ProjectField::GithubRepo(None)) => {
+            table.remove("github_repo");
+        }
+        None => {}
+    }
+    let text = document.to_string();
+    let profile = Profile::parse(path, &text)?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, text)?;
+    Ok(profile)
+}
+
 fn step_table(document: &mut DocumentMut, step: Step) -> Result<&mut Table, ProfileEditError> {
     let steps = child_table(document.as_table_mut(), "steps")?;
     steps.set_implicit(true);
@@ -199,5 +259,47 @@ mod tests {
         let error = edit_step(&path, Step::Plan, &StepField::AskAfter(false)).unwrap_err();
         assert!(matches!(error, ProfileEditError::Syntax(_)));
         assert_eq!(fs::read_to_string(&path).unwrap(), "steps = [");
+    }
+
+    // Invariant: adding a project keeps the owner's comments and other keys,
+    // the same folder written two ways is one entry, and a default pipeline
+    // that does not exist is refused with the file left as it was.
+    #[test]
+    fn a_project_is_added_once_and_a_bad_default_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("profile.toml");
+        fs::write(
+            &path,
+            "# my notes
+protected_paths = [\"infra/**\"]
+",
+        )
+        .unwrap();
+        edit_project(&path, "D:/work/app", None).unwrap();
+        let profile = edit_project(
+            &path,
+            r"D:\work\app\",
+            Some(&ProjectField::DefaultPipeline(Some("bug-fix".into()))),
+        )
+        .unwrap();
+        assert_eq!(profile.projects.len(), 1);
+        assert_eq!(
+            profile
+                .project("D:/work/app")
+                .unwrap()
+                .default_pipeline
+                .as_deref(),
+            Some("bug-fix")
+        );
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.starts_with("# my notes"), "{saved}");
+        let before = saved;
+        let refused = edit_project(
+            &path,
+            "D:/work/app",
+            Some(&ProjectField::DefaultPipeline(Some("nope".into()))),
+        );
+        assert!(refused.is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
     }
 }

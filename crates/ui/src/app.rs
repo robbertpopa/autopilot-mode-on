@@ -19,6 +19,7 @@ const COLUMN: f32 = 900.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
     Today,
+    Projects,
     Board,
     Asking,
     Checks,
@@ -55,6 +56,11 @@ pub struct App {
     pub(crate) screen: Screen,
     pub(crate) selected: Option<TicketId>,
     pub(crate) today_selected: Option<TicketId>,
+    /// The project open on the Projects page, by normalised folder path.
+    pub(crate) project_selected: Option<String>,
+    pub(crate) rules_text: String,
+    pub(crate) rules_saved: String,
+    pub(crate) rules_notice: Option<(bool, String)>,
     /// A snapshot has arrived, so an empty list means no tickets, not no data yet.
     pub(crate) loaded: bool,
     pub(crate) ask_edits: std::collections::BTreeMap<Step, bool>,
@@ -120,6 +126,10 @@ impl App {
             screen: Screen::Run,
             selected: None,
             today_selected: None,
+            project_selected: None,
+            rules_text: String::new(),
+            rules_saved: String::new(),
+            rules_notice: None,
             loaded: false,
             ask_edits: std::collections::BTreeMap::new(),
             design_step: Step::BuildCheck,
@@ -235,6 +245,7 @@ impl App {
             ("checks", _) => self.mode = Mode::Checks,
             ("look", _) => self.mode = Mode::Look,
             ("board", _) => self.mode = Mode::Board,
+            ("projects", _) => self.mode = Mode::Projects,
             ("cost", _) => self.mode = Mode::Cost,
             ("accounts", _) => self.mode = Mode::Accounts,
             ("run", Some(id)) => self.open(&id),
@@ -348,6 +359,7 @@ impl App {
                                 self.notice_bar(ui);
                                 match self.mode {
                                     Mode::Today => self.today_screen(ui),
+                                    Mode::Projects => self.projects_screen(ui),
                                     Mode::Board => self.board_screen(ui),
                                     Mode::NewTicket => self.new_ticket_screen(ui),
                                     Mode::PlanReview => self.plan_review(ui),

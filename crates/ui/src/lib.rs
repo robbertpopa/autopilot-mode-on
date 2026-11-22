@@ -12,6 +12,7 @@ mod nav;
 mod new_ticket;
 mod pipeline;
 mod plan_review;
+mod projects;
 mod run;
 mod settings;
 mod step;
@@ -94,6 +95,7 @@ mod tests {
         for mode in [
             Mode::Today,
             Mode::Board,
+            Mode::Projects,
             Mode::NewTicket,
             Mode::Asking,
             Mode::Checks,
@@ -372,6 +374,48 @@ mod tests {
         }
         assert_eq!(turns(&one), Some(200));
         assert!(backend::raise_turns(&options, &one).is_err());
+    }
+
+    // Invariant: a folder a ticket used shows up as a project the profile does
+    // not know, adding it writes one entry, the rules the owner saves are read
+    // back from the data folder (and not from the project), and a refused
+    // rules file leaves the saved one as it was. Grouping by folder name would
+    // merge two projects that share it.
+    #[test]
+    fn projects_list_register_and_keep_rules_outside_the_folder() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        let project = directory.path().join("work").join("app");
+        std::fs::create_dir_all(&project).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.mode = Mode::Projects;
+        frame(&mut app, &context);
+        app.add_project(&project);
+        let path = app.project_selected.clone().unwrap();
+        assert_eq!(app.profile.as_ref().unwrap().projects.len(), 1);
+        assert!(app.profile.as_ref().unwrap().project(&path).is_some());
+        app.rules_text = "Prefer short functions.".into();
+        app.save_project_rules();
+        assert_eq!(app.rules_notice.as_ref().map(|n| n.0), Some(true));
+        app.rules_text = "x".repeat(autopilot_engine::MAX_RULES_BYTES + 1);
+        app.save_project_rules();
+        assert_eq!(app.rules_notice.as_ref().map(|n| n.0), Some(false));
+        app.revert_rules();
+        assert_eq!(app.rules_text, "Prefer short functions.");
+        assert_eq!(std::fs::read_dir(&project).unwrap().count(), 0);
+        frame(&mut app, &context);
+        // Two folders that share a name are two rows.
+        let other = directory.path().join("elsewhere").join("app");
+        std::fs::create_dir_all(&other).unwrap();
+        app.add_project(&other);
+        assert_eq!(app.profile.as_ref().unwrap().projects.len(), 2);
+        frame(&mut app, &context);
     }
 
     // Invariant: pausing from the window writes the engine's pause flag, the

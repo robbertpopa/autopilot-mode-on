@@ -59,7 +59,9 @@ pub use metrics::{PipelineMetrics, StepMetrics, UsageLine, metrics_of, pipeline_
 pub use overlap::{TicketOverlap, find_overlaps};
 pub use pipelines::{choose_pipeline, chosen as chosen_pipeline};
 pub use plan::{approved_plan, plan_ticket, run_plan};
-pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
+pub use profile_edit::{
+    ProfileEditError, ProjectField, StepField, edit_project, edit_step, load_profile,
+};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use rerun::ticket_words;
 pub use rerun::{rerun_plan, rerun_understand, reset_step};
