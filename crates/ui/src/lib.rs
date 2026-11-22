@@ -799,6 +799,65 @@ mod tests {
         assert_eq!(app.snapshot.tickets[0].badge, autopilot_engine::Badge::Done);
     }
 
+    // Invariant: a finding on a step whose effort the profile sets becomes a
+    // proposal on Health; approving it writes the lower effort to profile.toml
+    // and the proposal goes away. A proposal that wrote nothing, or stayed after
+    // approval, would leave the owner unable to tell whether it took effect.
+    #[test]
+    fn approving_a_proposal_lowers_the_effort_in_the_profile() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        std::fs::write(
+            &options.profile,
+            "[review]
+mode = \"notify_only\"
+
+[steps.plan]
+effort = \"high\"
+",
+        )
+        .unwrap();
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.findings = vec![autopilot_engine::Finding {
+            pipeline: "full".into(),
+            step: Step::Plan,
+            rule: autopilot_engine::Rule::PeakContext,
+            evidence: "e".into(),
+            estimated: false,
+        }];
+        app.refresh_suggestions();
+        assert_eq!(app.suggestions.len(), 1);
+        app.mode = Mode::Health;
+        app.health_selected = Some("full".into());
+        frame(&mut app, &context);
+
+        let proposal = app.suggestions[0].proposal.clone();
+        let latest =
+            autopilot_engine::apply_to_project(&options.profile, std::slice::from_ref(&proposal))
+                .unwrap();
+        assert_eq!(
+            latest
+                .step(Step::Plan)
+                .and_then(|step| step.effort.as_deref()),
+            Some("medium")
+        );
+        app.profile = Ok(latest);
+        app.refresh_suggestions();
+        assert_eq!(
+            app.suggestions.len(),
+            1,
+            "high -> medium; medium can still go to low"
+        );
+        assert_eq!(app.suggestions[0].proposal.after, "low");
+    }
+
     // Invariant: search finds a ticket by a word in its recorded text, runs a
     // command through the same action a button uses, narrows by prefix, and
     // never returns text that lives only in a project's rules.md. The last is

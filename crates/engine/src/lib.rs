@@ -35,6 +35,7 @@ mod overlap;
 mod pipelines;
 mod plan;
 mod profile_edit;
+mod proposals;
 mod publish;
 mod rerun;
 mod review;
@@ -67,6 +68,7 @@ pub use profile_edit::{
     ProfileEditError, ProjectField, ReviewField, StepField, add_pipeline, edit_project,
     edit_review, edit_step, load_profile,
 };
+pub use proposals::{Suggestion, dismiss_proposal, proposals_for};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use rerun::ticket_words;
 pub use rerun::{rerun_plan, rerun_understand, reset_step};

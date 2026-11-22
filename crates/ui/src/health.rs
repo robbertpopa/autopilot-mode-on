@@ -181,7 +181,7 @@ impl App {
         }
     }
 
-    fn health_findings(&self, ui: &mut egui::Ui, name: &str) {
+    fn health_findings(&mut self, ui: &mut egui::Ui, name: &str) {
         let mine: Vec<&autopilot_engine::Finding> = self
             .findings
             .iter()
@@ -192,7 +192,15 @@ impl App {
         }
         ui.add_space(10.0);
         ui.label(RichText::new("Findings").size(14.0).strong());
-        for finding in mine {
+        let mine: Vec<autopilot_engine::Finding> = mine.into_iter().cloned().collect();
+        let mut approve = None;
+        let mut dismiss = None;
+        for finding in &mine {
+            let suggestion = self
+                .suggestions
+                .iter()
+                .find(|each| each.finding == *finding)
+                .cloned();
             theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
                 ui.label(
                     RichText::new(format!(
@@ -204,7 +212,48 @@ impl App {
                     .color(theme::AMBER()),
                 );
                 ui.label(&finding.evidence);
+                if let Some(suggestion) = suggestion {
+                    ui.label(RichText::new("Proposed, needs you").color(theme::AMBER()));
+                    ui.label(format!(
+                        "{} (all pipelines, written to profile.toml)",
+                        suggestion.proposal.describe()
+                    ));
+                    ui.horizontal(|ui| {
+                        if ui.button("Approve").clicked() {
+                            approve = Some(suggestion.proposal.clone());
+                        }
+                        if ui.button("Dismiss").clicked() {
+                            dismiss = Some(suggestion.finding.clone());
+                        }
+                    });
+                }
             });
+        }
+        if let Some(proposal) = approve {
+            self.notice = Some(
+                match autopilot_engine::apply_to_project(
+                    &self.options.profile,
+                    std::slice::from_ref(&proposal),
+                ) {
+                    Ok(profile) => {
+                        self.profile = Ok(profile);
+                        self.refresh_suggestions();
+                        (true, format!("Applied: {}", proposal.describe()))
+                    }
+                    Err(error) => (false, format!("Could not apply: {error}")),
+                },
+            );
+        }
+        if let Some(finding) = dismiss {
+            self.notice = Some(
+                match autopilot_engine::dismiss_proposal(&self.options.data_dir, &finding) {
+                    Ok(()) => {
+                        self.refresh_suggestions();
+                        (true, "Dismissed.".to_owned())
+                    }
+                    Err(error) => (false, format!("Could not dismiss: {error}")),
+                },
+            );
         }
     }
 

@@ -201,7 +201,7 @@ pub fn undo_tuning(directory: &Path, pipeline: &str, step: Step) -> Result<bool,
 
 /// The next lower effort, or `None` when it is already the lowest or is a
 /// value this list does not know.
-fn lower(effort: Option<&str>) -> Option<&'static str> {
+pub(crate) fn lower(effort: Option<&str>) -> Option<&'static str> {
     let Some(effort) = effort else {
         return Some(WHEN_UNSET);
     };

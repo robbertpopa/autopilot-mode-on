@@ -64,6 +64,9 @@ pub struct App {
     pub(crate) findings: Vec<autopilot_engine::Finding>,
     /// Tunings in force, read when the data changes, never per frame.
     pub(crate) tunings: Vec<autopilot_engine::ActiveTuning>,
+    /// Tier 2 changes waiting for the owner, recomputed when findings or the
+    /// profile change, never per frame.
+    pub(crate) suggestions: Vec<autopilot_engine::Suggestion>,
     review_stamp: u64,
     review_running: bool,
     /// Review settings being edited on the Pipeline review page.
@@ -167,6 +170,7 @@ impl App {
             today_selected: None,
             findings: Vec::new(),
             tunings: Vec::new(),
+            suggestions: Vec::new(),
             review_stamp: 0,
             review_running: false,
             review_edit: None,
@@ -277,6 +281,19 @@ impl App {
         }
     }
 
+    pub(crate) fn refresh_suggestions(&mut self) {
+        self.suggestions = match &self.profile {
+            Ok(profile) => autopilot_engine::proposals_for(
+                &self.options.data_dir,
+                &self.findings,
+                profile,
+                &self.tunings,
+            )
+            .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+    }
+
     /// Start a review pass when the data changed and the review is on. A pass
     /// runs off the window thread and never when the review is off.
     fn review_if_changed(&mut self) {
@@ -320,6 +337,7 @@ impl App {
                 autopilot_engine::open_findings(&self.options.data_dir).unwrap_or_default();
         }
         self.tunings = autopilot_engine::active_tunings(&self.options.data_dir).unwrap_or_default();
+        self.refresh_suggestions();
         self.review_if_changed();
         if first {
             self.apply_start_view();
@@ -460,6 +478,7 @@ impl App {
                     self.review_running = false;
                     if let Ok(outcome) = outcome {
                         self.findings.clone_from(&outcome.open);
+                        self.refresh_suggestions();
                         self.announce_findings(&outcome.opened);
                     }
                 }
