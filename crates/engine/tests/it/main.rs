@@ -15,9 +15,9 @@ use autopilot_core::{
     Ambiguity, Clarity, Event, Money, OpenQuestion, Ticket, TicketId, Understanding,
 };
 use autopilot_engine::{
-    ClarifyStart, Error, answer_clarify, approved_plan, effective_overrides, override_settings,
-    recover, rerun_understand, reset_step, run_plan, run_understand, run_understand_with,
-    start_clarify, sync_inbox, watch,
+    ClarifyStart, Error, answer_clarify, approved_plan, effective_overrides, effective_when_unsure,
+    override_settings, recover, rerun_understand, reset_step, run_plan, run_understand,
+    run_understand_with, set_when_unsure, start_clarify, sync_inbox, watch,
 };
 use autopilot_pipeline::{
     clarify::Choice,
@@ -530,6 +530,29 @@ fn overrides_layer_project_then_ticket_and_apply_at_the_next_start() {
             .unwrap()
             .ask_after,
         Some(false)
+    );
+}
+
+// Invariant: a ticket's own `when_unsure` beats the profile for that ticket
+// only; a sibling and a ticket with no choice keep the profile value. Without
+// this, flipping one ticket to "decide" would change every ticket.
+#[test]
+fn a_ticket_when_unsure_beats_the_profile_for_that_ticket_only() {
+    use autopilot_core::UnsureMode;
+    use autopilot_profile::{Profile, WhenUnsure};
+    let data = tempfile::tempdir().unwrap();
+    let one = understood_with(data.path(), "one", None);
+    let two = understood_with(data.path(), "two", None);
+    let profile = Profile::parse("p.toml", "").unwrap();
+    assert_eq!(profile.when_unsure, WhenUnsure::Ask);
+    set_when_unsure(data.path(), &one, UnsureMode::DecideAndTell).unwrap();
+    assert_eq!(
+        effective_when_unsure(data.path(), &one, &profile).unwrap(),
+        WhenUnsure::DecideAndTell
+    );
+    assert_eq!(
+        effective_when_unsure(data.path(), &two, &profile).unwrap(),
+        WhenUnsure::Ask
     );
 }
 

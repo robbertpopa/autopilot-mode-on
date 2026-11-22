@@ -164,6 +164,7 @@ pub fn triage_ticket(
                 Event::SettingsOverridden {
                     scope: SettingsScope::Ticket,
                     changes,
+                    when_unsure: None,
                 },
             ),
         ],

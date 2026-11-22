@@ -119,6 +119,22 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+impl Action {
+    /// What is happening, in words, while the action runs.
+    #[must_use]
+    pub const fn describe(&self) -> &'static str {
+        match self {
+            Self::Start { .. } => "Reading your request",
+            Self::Orchestrate(_) => "The orchestrator is choosing models and effort",
+            Self::MakePlan(_) | Self::RerunPlan(_) => "Making the plan",
+            Self::MakeDesign(_) | Self::RerunDesign(_) => "Making the design",
+            Self::RerunUnderstand(_) => "Reading the request again",
+            Self::Explain { .. } => "Explaining in plain words",
+            _ => "Working",
+        }
+    }
+}
+
 /// The data as it is right now.
 #[must_use]
 pub fn read(options: &Options) -> Snapshot {
@@ -775,7 +791,8 @@ fn start(
     }
     // Clarify is decided right away. Plan and the later steps need a real
     // agent, which the window does not start yet.
-    orchestrated_first(options, &id);
+    // The orchestrator is not run here: it takes a capable model's time, and the
+    // window starts it as its own action so the ticket shows up first.
     match autopilot_engine::start_clarify(directory, &id) {
         Ok(_) => Ok(format!("Started \"{}\"", ticket.title)),
         Err(error) => Ok(format!(
