@@ -36,8 +36,7 @@ pub enum ReviewMode {
     #[default]
     Off,
     NotifyOnly,
-    /// Reserved for automatic tuning, which does not exist yet; it behaves
-    /// as notify only.
+    /// Notify, and apply tier 1 tuning to custom pipelines.
     NotifyAndTune,
 }
 

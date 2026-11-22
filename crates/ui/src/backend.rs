@@ -44,6 +44,8 @@ pub enum Message {
     Snapshot(Snapshot),
     /// A pipeline review pass finished, or why it could not run.
     Review(Result<Box<autopilot_engine::ReviewOutcome>, String>),
+    /// Tier 1 tunings applied or reverted by the guard in a review pass.
+    Tuned(autopilot_engine::TuningOutcome),
     /// What GitHub, Claude, Codex and Azure say about who is signed in.
     Accounts(Box<autopilot_accounts::Accounts>),
     /// The outcome of an action: a short confirmation, or the reason it failed.
@@ -1003,14 +1005,23 @@ pub(crate) fn raise_turns(options: &Options, ticket: &TicketId) -> Result<(), St
 /// only reads histories and appends to its own record.
 pub fn review(
     data_dir: PathBuf,
-    settings: autopilot_profile::ReviewSettings,
+    profile: autopilot_profile::Profile,
     context: egui::Context,
     sender: Sender<Message>,
 ) {
     thread::spawn(move || {
-        let outcome = autopilot_engine::run_review(&data_dir, &settings)
+        let outcome = autopilot_engine::run_review(&data_dir, &profile.review)
             .map(Box::new)
             .map_err(|error| error.to_string());
+        // Tuning follows the review it came from; with the mode below Notify
+        // and tune it returns at once.
+        if let Ok(reviewed) = &outcome
+            && let Ok(tuned) =
+                autopilot_engine::tune_directory(&data_dir, &profile, &reviewed.opened)
+            && (!tuned.applied.is_empty() || !tuned.reverted.is_empty())
+        {
+            let _ = sender.send(Message::Tuned(tuned));
+        }
         let _ = sender.send(Message::Review(outcome));
         context.request_repaint();
     });

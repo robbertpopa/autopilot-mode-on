@@ -62,6 +62,8 @@ pub struct App {
     pub(crate) today_selected: Option<TicketId>,
     /// Open pipeline-review findings, from the record and the latest pass.
     pub(crate) findings: Vec<autopilot_engine::Finding>,
+    /// Tunings in force, read when the data changes, never per frame.
+    pub(crate) tunings: Vec<autopilot_engine::ActiveTuning>,
     review_stamp: u64,
     review_running: bool,
     /// Review settings being edited on the Pipeline review page.
@@ -164,6 +166,7 @@ impl App {
             selected: None,
             today_selected: None,
             findings: Vec::new(),
+            tunings: Vec::new(),
             review_stamp: 0,
             review_running: false,
             review_edit: None,
@@ -281,6 +284,7 @@ impl App {
             return;
         };
         let settings = profile.review;
+        let profile = profile.clone();
         if settings.mode == autopilot_profile::ReviewMode::Off || self.review_running {
             return;
         }
@@ -298,7 +302,7 @@ impl App {
         self.review_running = true;
         backend::review(
             self.options.data_dir.clone(),
-            settings,
+            profile,
             self.context.clone(),
             self.sender.clone(),
         );
@@ -315,6 +319,7 @@ impl App {
             self.findings =
                 autopilot_engine::open_findings(&self.options.data_dir).unwrap_or_default();
         }
+        self.tunings = autopilot_engine::active_tunings(&self.options.data_dir).unwrap_or_default();
         self.review_if_changed();
         if first {
             self.apply_start_view();
@@ -457,6 +462,38 @@ impl App {
                         self.findings.clone_from(&outcome.open);
                         self.announce_findings(&outcome.opened);
                     }
+                }
+                Message::Tuned(tuned) => {
+                    self.tunings = autopilot_engine::active_tunings(&self.options.data_dir)
+                        .unwrap_or_default();
+                    let mut lines: Vec<String> = tuned
+                        .applied
+                        .iter()
+                        .map(|each| {
+                            format!(
+                                "Tuned {} in {}: effort {} to {}. {}",
+                                each.step.as_str(),
+                                each.pipeline,
+                                each.effort_before.as_deref().unwrap_or("unset"),
+                                each.effort_after,
+                                each.why
+                            )
+                        })
+                        .collect();
+                    lines.extend(tuned.reverted.iter().map(|(each, why)| {
+                        format!(
+                            "Reverted the tuning of {} in {}: {why}",
+                            each.step.as_str(),
+                            each.pipeline
+                        )
+                    }));
+                    self.notice = Some((
+                        true,
+                        lines.join(
+                            "
+",
+                        ),
+                    ));
                 }
                 Message::Accounts(accounts) => self.accounts = Some(*accounts),
                 Message::Update(Ok(found)) => self.update = found,

@@ -41,6 +41,7 @@ mod review;
 mod rules;
 mod settings;
 mod triage;
+mod tuning;
 mod view;
 mod workspace;
 pub use allowances::{allow, allowed, list as allowances, revoke};
@@ -79,6 +80,10 @@ pub use settings::{
     set_when_unsure,
 };
 pub use triage::{EFFORTS, MODELS, kept as triage_kept, prompt as triage_prompt, triage_ticket};
+pub use tuning::{
+    ActiveTuning, Tuning, TuningOutcome, active_tunings, run_tuning, tune_directory, tuned_effort,
+    undo_tuning,
+};
 pub use view::{
     AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,
     TimelineLine, dollars, load_ticket, spent_since, step_name, ticket_view, tickets,

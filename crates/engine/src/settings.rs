@@ -45,7 +45,19 @@ pub fn effective_overrides(
     ticket: &TicketId,
     step: Step,
 ) -> Result<StepOverride, Error> {
-    let mut merged = project_overrides(directory, step)?;
+    // Lowest layer: what the review tuned for this ticket's pipeline. The
+    // project and ticket layers merge over it, so the owner's choice wins.
+    let mut merged = StepOverride::default();
+    if let Ok(view) = crate::load_ticket(directory, ticket) {
+        let name = view
+            .pipeline
+            .as_ref()
+            .map_or(autopilot_profile::DEFAULT_PIPELINE, |(name, _)| {
+                name.as_str()
+            });
+        merged.effort = crate::tuned_effort(directory, name, step)?;
+    }
+    merged.merge(&project_overrides(directory, step)?);
     let store = SqliteStore::open_read_only(directory.join(DATABASE))?;
     merged.merge(&overrides::for_next_start(&store.events(ticket, 0)?, step));
     Ok(merged)

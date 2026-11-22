@@ -1,5 +1,5 @@
-//! Settings > Pipeline review: Off, Notify only, and the thresholds. Notify
-//! and tune is shown greyed, because automatic tuning is not built. Edits wait
+//! Settings > Pipeline review: Off, Notify only, Notify and tune, and the
+//! thresholds. Edits wait
 //! for Save and the diff is shown first, like the asking switches.
 
 use autopilot_engine::{ReviewField, edit_review};
@@ -74,10 +74,15 @@ impl App {
                     edit.mode = mode;
                 }
             }
-            ui.add_enabled(false, egui::Button::new("Notify and tune"))
-                .on_disabled_hover_text(
-                    "needs the tuning overlay (R12): nothing tunes a pipeline by itself yet",
-                );
+            if ui
+                .selectable_label(edit.mode == ReviewMode::NotifyAndTune, "Notify and tune")
+                .on_hover_text(
+                    "Lowers effort one notch on Understand or Clarify of a custom pipeline when context or cost stays high. Reverts itself if the next 3 runs do worse; Undo is on the Health page.",
+                )
+                .clicked()
+            {
+                edit.mode = ReviewMode::NotifyAndTune;
+            }
         });
         ui.add_space(8.0);
         for (label, value, range) in [
