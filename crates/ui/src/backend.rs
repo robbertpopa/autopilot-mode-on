@@ -89,6 +89,8 @@ pub enum Action {
     MakePlan(TicketId),
     /// Make the plan again, replacing the one that was made or approved.
     RerunPlan(TicketId),
+    /// Ask the orchestrator to choose models and effort for the later steps.
+    Orchestrate(TicketId),
     /// Make the design (static mockups) for a ticket that changes a screen,
     /// or skip the step when it needs none.
     MakeDesign(TicketId),
@@ -339,7 +341,28 @@ fn beside(name: &str) -> Result<PathBuf, String> {
 
 /// The Claude settings for a step: the profile's model, effort, turn cap,
 /// time limit and auth for it, and the shipped defaults for what it leaves out.
-fn claude_config(options: &Options, step: Step) -> autopilot_agent_claude::ClaudeConfig {
+/// The settings a step runs with: the profile's, then the ticket's own
+/// overrides (the owner's changes and the orchestrator's choices) on top.
+fn claude_config(
+    options: &Options,
+    step: Step,
+    ticket: Option<&TicketId>,
+) -> autopilot_agent_claude::ClaudeConfig {
+    let mut config = profile_config(options, step);
+    if let Some(ticket) = ticket
+        && let Ok(chosen) = autopilot_engine::effective_overrides(&options.data_dir, ticket, step)
+    {
+        if let Some(model) = chosen.model {
+            config.model = model;
+        }
+        if chosen.effort.is_some() {
+            config.effort = chosen.effort;
+        }
+    }
+    config
+}
+
+fn profile_config(options: &Options, step: Step) -> autopilot_agent_claude::ClaudeConfig {
     let settings = autopilot_engine::load_profile(&options.profile)
         .ok()
         .and_then(|profile| profile.step(step).cloned());
@@ -407,25 +430,126 @@ pub fn save_workspace(data_dir: &Path, folder: Option<&Path>) {
     }
 }
 
-fn chosen_agent(options: &Options, step: Step, workspace: Option<&Path>) -> Result<Chosen, String> {
+fn chosen_agent(
+    options: &Options,
+    step: Step,
+    ticket: Option<&TicketId>,
+    workspace: Option<&Path>,
+) -> Result<Chosen, String> {
     match AgentChoice::read(&options.data_dir) {
         AgentChoice::Practice => fixture_agent().map(Chosen::Practice),
         AgentChoice::Claude => {
-            let config = claude_config(options, step);
-            let agent = autopilot_agent_claude::ClaudeAgent::new(
-                config,
-                beside("autopilot-process-guardian")?,
-            )
-            .map_err(|error| error.to_string())?;
-            agent
-                .preflight()
-                .map_err(|error| format!("Claude Code is not ready: {error}"))?;
-            let agent = match workspace {
-                Some(folder) => agent.in_workspace(folder.to_path_buf()),
-                None => agent,
-            };
-            Ok(Chosen::Claude(Box::new(agent)))
+            let config = claude_config(options, step, ticket);
+            claude_agent(config, workspace).map(|agent| Chosen::Claude(Box::new(agent)))
         }
+    }
+}
+
+fn claude_agent(
+    config: autopilot_agent_claude::ClaudeConfig,
+    workspace: Option<&Path>,
+) -> Result<autopilot_agent_claude::ClaudeAgent, String> {
+    let agent =
+        autopilot_agent_claude::ClaudeAgent::new(config, beside("autopilot-process-guardian")?)
+            .map_err(|error| error.to_string())?;
+    agent
+        .preflight()
+        .map_err(|error| format!("Claude Code is not ready: {error}"))?;
+    Ok(match workspace {
+        Some(folder) => agent.in_workspace(folder.to_path_buf()),
+        None => agent,
+    })
+}
+
+/// Whether an orchestrator chooses models and effort for later steps, and
+/// which model it uses. A capable model is the point: its one call is small
+/// next to what a wrong choice for a step would cost.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Orchestrator {
+    Off,
+    Sonnet,
+    Opus,
+}
+
+const ORCHESTRATOR_FILE: &str = "ui-orchestrator.txt";
+
+impl Orchestrator {
+    #[must_use]
+    pub fn read(data_dir: &Path) -> Self {
+        match std::fs::read_to_string(data_dir.join(ORCHESTRATOR_FILE))
+            .unwrap_or_default()
+            .trim()
+        {
+            "off" => Self::Off,
+            "sonnet" => Self::Sonnet,
+            _ => Self::Opus,
+        }
+    }
+
+    pub fn save(self, data_dir: &Path) {
+        let _ = std::fs::create_dir_all(data_dir);
+        let _ = std::fs::write(
+            data_dir.join(ORCHESTRATOR_FILE),
+            self.model().unwrap_or("off"),
+        );
+    }
+
+    #[must_use]
+    pub const fn model(self) -> Option<&'static str> {
+        match self {
+            Self::Off => None,
+            Self::Sonnet => Some("sonnet"),
+            Self::Opus => Some("opus"),
+        }
+    }
+}
+
+/// Ask the orchestrator to choose settings for the ticket's later steps, once.
+fn orchestrate(options: &Options, ticket: &TicketId) -> Result<String, String> {
+    if AgentChoice::read(&options.data_dir) != AgentChoice::Claude {
+        return Err("the orchestrator needs the Claude agent".to_owned());
+    }
+    let model = Orchestrator::read(&options.data_dir)
+        .model()
+        .ok_or_else(|| "the orchestrator is switched off in Settings".to_owned())?;
+    let folder = ticket_folder(options, ticket);
+    let mut config = profile_config(options, Step::Understand);
+    model.clone_into(&mut config.model);
+    let agent = claude_agent(config, folder.as_deref())?;
+    autopilot_engine::triage_ticket(&options.data_dir, ticket, folder.is_some(), |prompt| {
+        agent.orchestrate(prompt).map_err(|error| error.to_string())
+    })
+    .map(|triage| {
+        let chosen: Vec<String> = triage
+            .steps
+            .iter()
+            .map(|advice| {
+                format!(
+                    "{} {}/{}",
+                    autopilot_engine::step_name(advice.step).to_lowercase(),
+                    advice.model,
+                    advice.effort
+                )
+            })
+            .collect();
+        format!(
+            "Orchestrator: {:?} complexity; {}",
+            triage.complexity,
+            chosen.join(", ")
+        )
+    })
+    .map_err(|error| error.to_string())
+}
+
+/// Run the orchestrator before a step when it is on and has not decided yet.
+/// Its failure never stops the step: the profile's settings stay in force.
+fn orchestrated_first(options: &Options, ticket: &TicketId) {
+    let wanted = AgentChoice::read(&options.data_dir) == AgentChoice::Claude
+        && Orchestrator::read(&options.data_dir) != Orchestrator::Off;
+    let decided = autopilot_engine::watch(&options.data_dir, ticket, 0)
+        .is_ok_and(|history| autopilot_engine::triage_kept(&history).is_some());
+    if wanted && !decided {
+        let _ = orchestrate(options, ticket);
     }
 }
 
@@ -514,7 +638,7 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
         }
         Action::RerunUnderstand(ticket) => {
             let folder = ticket_folder(options, ticket);
-            let agent = chosen_agent(options, Step::Understand, folder.as_deref())?;
+            let agent = chosen_agent(options, Step::Understand, Some(ticket), folder.as_deref())?;
             let ask = autopilot_engine::load_profile(&options.profile)
                 .ok()
                 .and_then(|profile| {
@@ -527,14 +651,15 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                 .map_err(|error| error.to_string())
         }
         Action::MakePlan(ticket) => {
+            orchestrated_first(options, ticket);
             let folder = ticket_folder(options, ticket);
-            let agent = chosen_agent(options, Step::Plan, folder.as_deref())?;
+            let agent = chosen_agent(options, Step::Plan, Some(ticket), folder.as_deref())?;
             autopilot_engine::plan_ticket(directory, ticket, &agent)
                 .map(|plan| format!("Plan ready: {} criteria", plan.criteria.len()))
                 .map_err(|error| error.to_string())
         }
         Action::Explain { ticket, step } => {
-            let chosen = chosen_agent(options, Step::Understand, None)?;
+            let chosen = chosen_agent(options, Step::Understand, Some(ticket), None)?;
             autopilot_engine::explain_step(directory, ticket, *step, |prompt| match &chosen {
                 Chosen::Claude(agent) => agent.explain(prompt).map_err(|error| error.to_string()),
                 Chosen::Practice(_) => Ok(
@@ -547,8 +672,9 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             .map_err(|error| error.to_string())
         }
         Action::MakeDesign(ticket) => {
+            orchestrated_first(options, ticket);
             let folder = ticket_folder(options, ticket);
-            let agent = chosen_agent(options, Step::Design, folder.as_deref())?;
+            let agent = chosen_agent(options, Step::Design, Some(ticket), folder.as_deref())?;
             let history =
                 autopilot_engine::watch(directory, ticket, 0).map_err(|error| error.to_string())?;
             let words = autopilot_engine::ticket_words(ticket, &history)
@@ -562,7 +688,7 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
         }
         Action::RerunDesign(ticket) => {
             let folder = ticket_folder(options, ticket);
-            let agent = chosen_agent(options, Step::Design, folder.as_deref())?;
+            let agent = chosen_agent(options, Step::Design, Some(ticket), folder.as_deref())?;
             autopilot_engine::rerun_design(directory, ticket, &agent)
                 .map(|_| "New design ready".to_owned())
                 .map_err(|error| error.to_string())
@@ -576,9 +702,10 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             autopilot_update::open_installer(&guardian, &folder)?;
             Ok("Opened the mockups".to_owned())
         }
+        Action::Orchestrate(ticket) => orchestrate(options, ticket),
         Action::RerunPlan(ticket) => {
             let folder = ticket_folder(options, ticket);
-            let agent = chosen_agent(options, Step::Plan, folder.as_deref())?;
+            let agent = chosen_agent(options, Step::Plan, Some(ticket), folder.as_deref())?;
             autopilot_engine::rerun_plan(directory, ticket, &agent)
                 .map(|plan| format!("New plan ready: {} criteria", plan.criteria.len()))
                 .map_err(|error| error.to_string())
@@ -608,7 +735,7 @@ fn start(
     {
         return Err(format!("{} is not a folder", folder.display()));
     }
-    let agent = chosen_agent(options, Step::Understand, workspace)?;
+    let agent = chosen_agent(options, Step::Understand, None, workspace)?;
     let id = TicketId::from(format!("t-{}", now_ms()));
     let ticket = Ticket {
         id: id.clone(),
@@ -638,6 +765,7 @@ fn start(
     }
     // Clarify is decided right away. Plan and the later steps need a real
     // agent, which the window does not start yet.
+    orchestrated_first(options, &id);
     match autopilot_engine::start_clarify(directory, &id) {
         Ok(_) => Ok(format!("Started \"{}\"", ticket.title)),
         Err(error) => Ok(format!(

@@ -64,6 +64,7 @@ pub struct App {
     new_started: bool,
     pub(crate) light: bool,
     pub(crate) agent: backend::AgentChoice,
+    pub(crate) orchestrator: backend::Orchestrator,
     /// "Do not ask again after this kind of step" on an approval.
     pub(crate) always: bool,
     pub(crate) notify: bool,
@@ -89,6 +90,7 @@ impl App {
     pub fn new(context: &egui::Context, options: Options, watch: bool) -> Self {
         let light = read_theme(&options);
         let agent = backend::AgentChoice::read(&options.data_dir);
+        let orchestrator = backend::Orchestrator::read(&options.data_dir);
         let notify = backend::notifications_on(&options.data_dir);
         theme::apply(context, light);
         let (sender, receiver) = mpsc::channel();
@@ -117,6 +119,7 @@ impl App {
             new_started: false,
             light,
             agent,
+            orchestrator,
             always: false,
             notify,
             announced: false,

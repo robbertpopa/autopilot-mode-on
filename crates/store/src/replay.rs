@@ -226,6 +226,7 @@ impl TicketState {
             | Event::Attached { .. }
             | Event::Explained { .. }
             | Event::Workspace { .. }
+            | Event::Triaged { .. }
             | Event::DesignResult { .. }
             | Event::SettingsOverridden { .. } => {}
         }

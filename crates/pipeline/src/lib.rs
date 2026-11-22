@@ -195,6 +195,7 @@ impl TicketState {
             | Event::Attached { .. }
             | Event::Explained { .. }
             | Event::Workspace { .. }
+            | Event::Triaged { .. }
             | Event::DesignResult { .. } => {}
             Event::Done => {
                 if let Some(active) = self.active() {

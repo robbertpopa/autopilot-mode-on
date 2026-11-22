@@ -408,6 +408,35 @@ impl StepOverride {
     }
 }
 
+/// How hard the orchestrator judged a ticket to be.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Complexity {
+    Low,
+    Medium,
+    High,
+}
+
+/// The orchestrator's choice of model and effort for one later step.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StepAdvice {
+    pub step: Step,
+    pub model: String,
+    pub effort: String,
+    /// One sentence on why this much, and no more, for this step.
+    pub why: String,
+}
+
+/// What the orchestrator decided after reading the ticket and its Understand
+/// result: how complex the work is, and the cheapest settings it believes will
+/// do each later step well.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Triage {
+    pub complexity: Complexity,
+    pub reasoning: String,
+    pub steps: Vec<StepAdvice>,
+}
+
 /// One step's override, as recorded in the log and in the project file.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StepChange {
@@ -521,6 +550,11 @@ pub enum Event {
     /// files; a later run of any step uses the same folder.
     Workspace {
         path: String,
+    },
+    /// The orchestrator's decision for the later steps. The settings it chose
+    /// are recorded next to it as a ticket-scope `SettingsOverridden`.
+    Triaged {
+        triage: Triage,
     },
     /// The owner asked to run a step again. The named step goes back to idle,
     /// and with `and_after` so does every later step that already ran, because

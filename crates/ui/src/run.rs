@@ -113,6 +113,7 @@ impl App {
         }
         ui.add_space(14.0);
         self.next_card(ui, &view);
+        self.orchestrator_card(ui, &view);
         self.step_chips(ui, &view);
         ui.add_space(14.0);
         self.build_panel(ui, &view);
@@ -266,6 +267,49 @@ impl App {
     }
 
     /// The one thing to know or do right now.
+    /// What the orchestrator decided for the later steps, or a way to ask it.
+    fn orchestrator_card(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+        if let Some(triage) = &view.triage {
+            ui.add_space(10.0);
+            theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+                ui.set_width(ui.available_width() - 38.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Orchestrator").strong());
+                    ui.label(theme::muted(format!("{:?} complexity", triage.complexity)));
+                });
+                ui.label(&triage.reasoning);
+                for advice in &triage.steps {
+                    ui.label(theme::muted(format!(
+                        "{}: {} · {} effort. {}",
+                        autopilot_engine::step_name(advice.step),
+                        advice.model,
+                        advice.effort,
+                        advice.why
+                    )));
+                }
+                ui.label(theme::muted(
+                    "Change any of these in Settings > Pipeline steps for this ticket.",
+                ));
+            });
+            return;
+        }
+        let understood = view
+            .step(Step::Understand)
+            .is_some_and(|card| card.state == StepState::Passed);
+        let on = self.orchestrator != crate::backend::Orchestrator::Off
+            && self.agent == crate::backend::AgentChoice::Claude;
+        if understood && on && !self.busy {
+            ui.add_space(8.0);
+            if ui
+                .button("Ask the orchestrator to choose models and effort")
+                .on_hover_text("One call by a capable model; it picks the cheapest settings it trusts for Design and Plan.")
+                .clicked()
+            {
+                self.act(Action::Orchestrate(view.id.clone()));
+            }
+        }
+    }
+
     fn next_card(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         if view.asking.is_some() {
             self.waiting_card(ui, view);

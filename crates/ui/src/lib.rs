@@ -441,6 +441,10 @@ mod tests {
         let shown = read(&options);
         let view = &shown.tickets[0];
         assert!(view.workspace.is_some());
+        // The orchestrator ran after Understand and chose settings for later steps.
+        let triage = view.triage.as_ref().expect("the orchestrator decided");
+        assert!(!triage.steps.is_empty(), "{triage:?}");
+        eprintln!("{triage:#?}");
         let events = autopilot_engine::watch(&options.data_dir, &view.id, 0).unwrap();
         let text = format!("{events:?}");
         assert!(text.contains("quokka-todos-v9"), "{text}");
