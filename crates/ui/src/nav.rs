@@ -169,6 +169,7 @@ impl App {
                 self.board_link(ui, narrow);
                 self.projects_link(ui, narrow);
                 self.pipelines_link(ui, narrow);
+                self.health_link(ui, narrow);
                 if !narrow {
                     ui.add_space(14.0);
                     self.nav_tickets(ui);
@@ -205,6 +206,21 @@ impl App {
             .min_size(egui::vec2(ui.available_width(), 40.0));
         if theme::named(ui.add(button), "New ticket").clicked() {
             self.start_new();
+        }
+    }
+
+    fn health_link(&mut self, ui: &mut egui::Ui, narrow: bool) {
+        let fill = if self.mode == Mode::Health {
+            theme::SELECTED()
+        } else {
+            Color32::TRANSPARENT
+        };
+        let button = egui::Button::new(if narrow { "H" } else { "Health" })
+            .fill(fill)
+            .stroke(Stroke::NONE)
+            .min_size(egui::vec2(ui.available_width(), 34.0));
+        if theme::named(ui.add(button), "Health").clicked() {
+            self.mode = Mode::Health;
         }
     }
 

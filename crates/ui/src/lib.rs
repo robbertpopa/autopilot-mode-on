@@ -8,6 +8,7 @@ mod board;
 mod composer;
 pub mod demo;
 mod first_run;
+mod health;
 mod nav;
 mod new_ticket;
 mod pipeline;
@@ -96,6 +97,7 @@ mod tests {
         for mode in [
             Mode::Today,
             Mode::Board,
+            Mode::Health,
             Mode::Projects,
             Mode::Pipelines,
             Mode::NewTicket,
@@ -644,6 +646,39 @@ mod tests {
         app.mode = Mode::PlanReview;
         frame(&mut app, &context);
         app.mode = Mode::Watch;
+        frame(&mut app, &context);
+    }
+
+    // Invariant: the Health page shows runs of a pipeline from the recorded
+    // histories and says "not reported" for usage no adapter reported. It must
+    // not draw a zero for a missing figure. The demo tickets carry no usage, so
+    // every step's usage is missing.
+    #[test]
+    fn health_counts_runs_and_never_shows_a_missing_figure_as_zero() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let metrics = autopilot_engine::pipeline_metrics(&options.data_dir, "full", 5).unwrap();
+        assert_eq!(
+            metrics.tickets, 3,
+            "demo tickets have no pipeline choice, so they ran full"
+        );
+        let understand = &metrics.steps[0];
+        assert!(understand.runs >= 1);
+        assert_eq!(understand.reported, 0);
+        assert_eq!(understand.peak_context_permille, None);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        app.mode = Mode::Health;
+        frame(&mut app, &context);
+        app.health_selected = Some("ask-only".into());
         frame(&mut app, &context);
     }
 

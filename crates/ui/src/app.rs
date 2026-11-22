@@ -19,6 +19,7 @@ const COLUMN: f32 = 900.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
     Today,
+    Health,
     Pipelines,
     Projects,
     Board,
@@ -57,6 +58,8 @@ pub struct App {
     pub(crate) screen: Screen,
     pub(crate) selected: Option<TicketId>,
     pub(crate) today_selected: Option<TicketId>,
+    pub(crate) health_selected: Option<String>,
+    pub(crate) health_cache: Option<(String, u64, autopilot_engine::PipelineMetrics)>,
     pub(crate) plan_note: String,
     pub(crate) corrections: Vec<String>,
     /// The overlap check of the open ticket, kept until its history changes.
@@ -137,6 +140,8 @@ impl App {
             screen: Screen::Run,
             selected: None,
             today_selected: None,
+            health_selected: None,
+            health_cache: None,
             plan_note: String::new(),
             corrections: Vec::new(),
             overlaps: None,
@@ -266,6 +271,7 @@ impl App {
             ("board", _) => self.mode = Mode::Board,
             ("projects", _) => self.mode = Mode::Projects,
             ("pipelines", _) => self.mode = Mode::Pipelines,
+            ("health", _) => self.mode = Mode::Health,
             ("cost", _) => self.mode = Mode::Cost,
             ("accounts", _) => self.mode = Mode::Accounts,
             ("run", Some(id)) => self.open(&id),
@@ -379,6 +385,7 @@ impl App {
                                 self.notice_bar(ui);
                                 match self.mode {
                                     Mode::Today => self.today_screen(ui),
+                                    Mode::Health => self.health_screen(ui),
                                     Mode::Pipelines => self.pipelines_screen(ui),
                                     Mode::Projects => self.projects_screen(ui),
                                     Mode::Board => self.board_screen(ui),
