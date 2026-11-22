@@ -401,6 +401,9 @@ pub struct StepOverride {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
+    /// The agent turn cap for this step. Absent in older histories.
+    #[serde(default)]
+    pub turns: Option<u32>,
 }
 
 impl StepOverride {
@@ -414,6 +417,9 @@ impl StepOverride {
         }
         if newer.effort.is_some() {
             self.effort.clone_from(&newer.effort);
+        }
+        if newer.turns.is_some() {
+            self.turns = newer.turns;
         }
     }
 }
