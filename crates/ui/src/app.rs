@@ -4,8 +4,9 @@
 
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use autopilot_core::{Step, TicketId};
+use autopilot_core::{RequestId, Step, TicketId};
 use autopilot_engine::{Badge, TicketView, dollars, load_profile};
+use autopilot_pipeline::StepState;
 use autopilot_profile::Profile;
 use eframe::egui::{self, Align, Color32, Frame, Layout, Margin, RichText, Stroke};
 
@@ -64,6 +65,16 @@ pub struct App {
     new_started: bool,
     pub(crate) light: bool,
     pub(crate) agent: backend::AgentChoice,
+    /// What the running action is doing, in words.
+    busy_what: &'static str,
+    /// Texts of what each waiting request asks, read once per snapshot.
+    waiting_cache: std::collections::HashMap<(TicketId, RequestId), String>,
+    /// Whether the data folder holds the sample-data marker, read once per snapshot.
+    sample_data: bool,
+    /// The project folder last chosen, read once.
+    saved_workspace: Option<std::path::PathBuf>,
+    /// Tickets started in this window that the orchestrator has not looked at.
+    fresh: Vec<TicketId>,
     pub(crate) orchestrator: backend::Orchestrator,
     /// "Do not ask again after this kind of step" on an approval.
     pub(crate) always: bool,
@@ -91,6 +102,8 @@ impl App {
         let light = read_theme(&options);
         let agent = backend::AgentChoice::read(&options.data_dir);
         let orchestrator = backend::Orchestrator::read(&options.data_dir);
+        let sample_data = options.data_dir.join(crate::demo::MARKER).exists();
+        let saved_workspace = backend::saved_workspace(&options.data_dir);
         let notify = backend::notifications_on(&options.data_dir);
         theme::apply(context, light);
         let (sender, receiver) = mpsc::channel();
@@ -119,6 +132,11 @@ impl App {
             new_started: false,
             light,
             agent,
+            busy_what: "Working",
+            waiting_cache: std::collections::HashMap::new(),
+            sample_data,
+            saved_workspace,
+            fresh: Vec::new(),
             orchestrator,
             always: false,
             notify,
@@ -169,12 +187,15 @@ impl App {
         let first = self.snapshot.tickets.is_empty() && !snapshot.tickets.is_empty();
         self.announce(&snapshot);
         self.snapshot = snapshot;
+        self.waiting_cache.clear();
+        self.sample_data = self.options.data_dir.join(crate::demo::MARKER).exists();
         if first {
             self.apply_start_view();
         }
         if self.open_newest {
             self.open_newest = false;
             if let Some(newest) = self.snapshot.tickets.first().map(|view| view.id.clone()) {
+                self.fresh.push(newest.clone());
                 self.open(&newest);
             }
         }
@@ -223,9 +244,45 @@ impl App {
         self.selected.as_ref().and_then(|id| self.ticket(id))
     }
 
+    /// What a waiting request asks, read from the inbox once per snapshot.
+    pub(crate) fn waiting_for(&mut self, ticket: &TicketId, request: &RequestId) -> Option<String> {
+        let key = (ticket.clone(), request.clone());
+        if let Some(text) = self.waiting_cache.get(&key) {
+            return Some(text.clone());
+        }
+        let text = backend::waiting_text(&self.options, request)?;
+        self.waiting_cache.insert(key, text.clone());
+        Some(text)
+    }
+
+    /// Start the orchestrator for a ticket started in this window, once its
+    /// Understand step has passed. A ticket from an earlier session is never
+    /// picked up here, so opening the window never spends anything.
+    fn auto_orchestrate(&mut self) {
+        if self.busy
+            || self.agent != backend::AgentChoice::Claude
+            || self.orchestrator == backend::Orchestrator::Off
+        {
+            return;
+        }
+        let ready = self.fresh.iter().position(|id| {
+            self.ticket(id).is_some_and(|view| {
+                view.triage.is_none()
+                    && view
+                        .step(Step::Understand)
+                        .is_some_and(|card| card.state == StepState::Passed)
+            })
+        });
+        if let Some(at) = ready {
+            let id = self.fresh.remove(at);
+            self.act(Action::Orchestrate(id));
+        }
+    }
+
     /// Run an engine action without blocking the window.
     pub(crate) fn act(&mut self, action: Action) {
         self.busy = true;
+        self.busy_what = action.describe();
         self.notice = None;
         backend::run(
             self.options.clone(),
@@ -281,6 +338,7 @@ impl App {
     pub fn ui(&mut self, ctx: &egui::Context) {
         self.drain();
         self.update_clock(ctx);
+        self.auto_orchestrate();
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
             self.start_new();
         }
@@ -488,7 +546,7 @@ impl App {
     }
 
     fn notice_bar(&mut self, ui: &mut egui::Ui) {
-        if self.options.data_dir.join(crate::demo::MARKER).exists() {
+        if self.sample_data {
             banner(ui, "Sample data: these tickets are not real work.", false);
         }
         let problem = self.snapshot.problem.clone();
@@ -504,7 +562,7 @@ impl App {
             });
         }
         if self.busy {
-            ui.label(theme::muted("Working..."));
+            ui.label(theme::muted(format!("{}...", self.busy_what)));
         }
     }
 
@@ -758,12 +816,13 @@ impl App {
         ui.add_space(14.0);
         // The folder last chosen stays chosen until it is changed.
         if self.home.workspace.is_none() {
-            self.home.workspace = backend::saved_workspace(&self.options.data_dir);
+            self.home.workspace.clone_from(&self.saved_workspace);
         }
         let before = self.home.workspace.clone();
         let start = composer::show(ui, &mut self.home);
         if self.home.workspace != before {
             backend::save_workspace(&self.options.data_dir, self.home.workspace.as_deref());
+            self.saved_workspace.clone_from(&self.home.workspace);
         }
         if self.agent == backend::AgentChoice::Practice {
             ui.add_space(6.0);
@@ -832,4 +891,32 @@ fn home_row(ui: &mut egui::Ui, view: &TicketView, action: &str) -> bool {
         });
     });
     clicked
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Invariant: opening the window never starts the orchestrator on tickets
+    // from an earlier session, so launching the app spends nothing. Only a
+    // ticket started in this window (in `fresh`) is picked up.
+    #[test]
+    fn old_tickets_are_never_sent_to_the_orchestrator() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        crate::demo::seed(&options.data_dir, crate::now_ms()).unwrap();
+        backend::AgentChoice::Claude.save(&options.data_dir);
+        backend::Orchestrator::Opus.save(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(backend::read(&options));
+        assert_eq!(app.fresh.len(), 0);
+        app.auto_orchestrate();
+        assert!(!app.busy, "an old ticket must not start an action");
+    }
 }

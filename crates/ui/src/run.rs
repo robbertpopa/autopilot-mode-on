@@ -7,7 +7,7 @@ use autopilot_pipeline::StepState;
 use eframe::egui::{self, Color32, Frame, Margin, RichText, Stroke};
 
 use crate::app::{App, Screen, badge_colors};
-use crate::backend::{Action, waiting_text};
+use crate::backend::Action;
 use crate::theme;
 
 /// Understand and Clarify are settled, the ticket changes a screen and the
@@ -448,7 +448,8 @@ impl App {
         let Some((step, request)) = &view.asking else {
             return;
         };
-        let text = waiting_text(&self.options, request)
+        let text = self
+            .waiting_for(&view.id, request)
             .unwrap_or_else(|| "This step is waiting for you.".into());
         let question = text.contains('?');
         Frame::new()
