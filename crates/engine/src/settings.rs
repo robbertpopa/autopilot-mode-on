@@ -2,8 +2,11 @@
 
 use std::{fs, io, path::Path};
 
-use autopilot_core::{Event, NewEvent, SettingsScope, Step, StepChange, StepOverride, TicketId};
+use autopilot_core::{
+    Event, NewEvent, SettingsScope, Step, StepChange, StepOverride, TicketId, UnsureMode,
+};
 use autopilot_pipeline::{fold, overrides};
+use autopilot_profile::WhenUnsure;
 use autopilot_store::{SqliteStore, Store, StoreError};
 
 use crate::{DATABASE, Error, timestamp};
@@ -60,6 +63,44 @@ pub fn override_settings(
     scope: SettingsScope,
     changes: &[StepChange],
 ) -> Result<(), Error> {
+    append_override(directory, ticket, scope, changes, None)
+}
+
+/// Record what one ticket does when it is unsure. It applies to the steps
+/// that start after it and never to the project.
+///
+/// # Errors
+/// Returns an error for an unknown ticket, an invalid history or a store failure.
+pub fn set_when_unsure(directory: &Path, ticket: &TicketId, mode: UnsureMode) -> Result<(), Error> {
+    append_override(directory, ticket, SettingsScope::Ticket, &[], Some(mode))
+}
+
+/// The `when_unsure` a ticket runs with: its own choice, else the profile's.
+///
+/// # Errors
+/// Returns an error for an unreadable history.
+pub fn effective_when_unsure(
+    directory: &Path,
+    ticket: &TicketId,
+    profile: &autopilot_profile::Profile,
+) -> Result<WhenUnsure, Error> {
+    let store = SqliteStore::open_read_only(directory.join(DATABASE))?;
+    Ok(
+        match overrides::when_unsure_for_ticket(&store.events(ticket, 0)?) {
+            Some(UnsureMode::Ask) => WhenUnsure::Ask,
+            Some(UnsureMode::DecideAndTell) => WhenUnsure::DecideAndTell,
+            None => profile.when_unsure,
+        },
+    )
+}
+
+fn append_override(
+    directory: &Path,
+    ticket: &TicketId,
+    scope: SettingsScope,
+    changes: &[StepChange],
+    when_unsure: Option<UnsureMode>,
+) -> Result<(), Error> {
     fs::create_dir_all(directory)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     // No run lock: a change may arrive while a step runs, and the sequence
@@ -71,6 +112,7 @@ pub fn override_settings(
         let kind = Event::SettingsOverridden {
             scope,
             changes: changes.to_vec(),
+            when_unsure,
         };
         let new = NewEvent {
             at_ms: timestamp()?,

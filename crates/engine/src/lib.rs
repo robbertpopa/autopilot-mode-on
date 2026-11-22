@@ -55,7 +55,10 @@ pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use rerun::ticket_words;
 pub use rerun::{rerun_plan, rerun_understand, reset_step};
-pub use settings::{effective_overrides, override_settings, project_overrides};
+pub use settings::{
+    effective_overrides, effective_when_unsure, override_settings, project_overrides,
+    set_when_unsure,
+};
 pub use triage::{EFFORTS, MODELS, kept as triage_kept, prompt as triage_prompt, triage_ticket};
 pub use view::{
     AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,
