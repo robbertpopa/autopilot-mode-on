@@ -141,6 +141,8 @@ pub struct TicketView {
     /// The pipeline chosen for the ticket and the steps it turns off. `None`
     /// is an older ticket, which ran `full`.
     pub pipeline: Option<(String, Vec<Step>)>,
+    /// Assumptions the owner corrected when approving, latest last.
+    pub corrections: Vec<autopilot_core::AssumptionCorrection>,
     /// Exact spend through an API key.
     pub api: Money,
     /// Estimated spend on a subscription. Never added to `api`.
@@ -213,6 +215,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     let mut needs_design = false;
     let mut explained: Vec<(Step, String)> = Vec::new();
     let mut pipeline = None;
+    let mut corrections = Vec::new();
     for record in history {
         let at_ms = record.event.at_ms;
         let step = record.event.step;
@@ -234,6 +237,9 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
             Event::Triaged { triage: made } => triage = Some(made.clone()),
             Event::PipelineChosen { name, off, .. } => {
                 pipeline = Some((name.clone(), off.clone()));
+            }
+            Event::AssumptionsCorrected { corrections: made } => {
+                corrections.extend(made.iter().cloned());
             }
             Event::Explained { text } => {
                 if let Some(step) = record.event.step {
@@ -356,6 +362,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         needs_design,
         explained,
         pipeline,
+        corrections,
         api,
         subscription,
         started_ms: first.event.at_ms,

@@ -241,6 +241,7 @@ pub fn apply_to_ticket(
             StepField::Model(model) => change.model = Some(model.clone()),
             StepField::Effort(effort) => change.effort = Some(effort.clone()),
             StepField::AskAfter(ask) => change.ask_after = Some(*ask),
+            StepField::Turns(turns) => change.turns = Some(*turns),
             _ => {
                 return Err(Error::NotReady(format!(
                     "{} can only change for all future tickets",

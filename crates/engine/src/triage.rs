@@ -142,6 +142,7 @@ pub fn triage_ticket(
                 ask_after: None,
                 model: Some(advice.model.clone()),
                 effort: Some(advice.effort.clone()),
+                turns: None,
             },
         })
         .collect();
@@ -163,6 +164,7 @@ pub fn triage_ticket(
                 Event::SettingsOverridden {
                     scope: SettingsScope::Ticket,
                     changes,
+                    when_unsure: None,
                 },
             ),
         ],

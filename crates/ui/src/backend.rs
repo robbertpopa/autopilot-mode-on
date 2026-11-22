@@ -84,6 +84,8 @@ pub enum Action {
     },
     /// Run Understand again for a ticket, with the words it started with.
     RerunUnderstand(TicketId),
+    /// Run Understand again for this ticket only, with a higher turn cap.
+    RerunUnderstandWithMoreTurns(TicketId),
     /// Make the plan once Understand and Clarify are settled. The plan then
     /// waits for the owner's approval.
     MakePlan(TicketId),
@@ -115,6 +117,22 @@ pub fn now_ms() -> u64 {
         .ok()
         .and_then(|duration| u64::try_from(duration.as_millis()).ok())
         .unwrap_or(0)
+}
+
+impl Action {
+    /// What is happening, in words, while the action runs.
+    #[must_use]
+    pub const fn describe(&self) -> &'static str {
+        match self {
+            Self::Start { .. } => "Reading your request",
+            Self::Orchestrate(_) => "The orchestrator is choosing models and effort",
+            Self::MakePlan(_) | Self::RerunPlan(_) => "Making the plan",
+            Self::MakeDesign(_) | Self::RerunDesign(_) => "Making the design",
+            Self::RerunUnderstand(_) => "Reading the request again",
+            Self::Explain { .. } => "Explaining in plain words",
+            _ => "Working",
+        }
+    }
 }
 
 /// The data as it is right now.
@@ -357,6 +375,10 @@ fn claude_config(
         }
         if chosen.effort.is_some() {
             config.effort = chosen.effort;
+        }
+        if let Some(turns) = chosen.turns {
+            // Structured output needs a turn after the answer.
+            config.max_turns = turns.max(2);
         }
     }
     config
@@ -636,6 +658,10 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             })?;
             Ok("Used the recommended answers".to_owned())
         }
+        Action::RerunUnderstandWithMoreTurns(ticket) => {
+            raise_turns(options, ticket)?;
+            perform(options, &Action::RerunUnderstand(ticket.clone()))
+        }
         Action::RerunUnderstand(ticket) => {
             let folder = ticket_folder(options, ticket);
             let agent = chosen_agent(options, Step::Understand, Some(ticket), folder.as_deref())?;
@@ -773,7 +799,8 @@ fn start(
     }
     // Clarify is decided right away. Plan and the later steps need a real
     // agent, which the window does not start yet.
-    orchestrated_first(options, &id);
+    // The orchestrator is not run here: it takes a capable model's time, and the
+    // window starts it as its own action so the ticket shows up first.
     match autopilot_engine::start_clarify(directory, &id) {
         Ok(_) => Ok(format!("Started \"{}\"", ticket.title)),
         Err(error) => Ok(format!(
@@ -834,4 +861,35 @@ pub fn waiting_text(options: &Options, request: &RequestId) -> Option<String> {
             .collect::<Vec<_>>()
             .join("\n"),
     })
+}
+
+/// The most turns a retry may ask for, the same top value the settings offer.
+const MAX_RETRY_TURNS: u32 = 200;
+
+/// Double this ticket's turn cap for Understand, up to the limit, and record
+/// it on the ticket alone. The project setting is left as it is.
+pub(crate) fn raise_turns(options: &Options, ticket: &TicketId) -> Result<(), String> {
+    let profile = autopilot_engine::load_profile(&options.profile).map_err(|e| e.to_string())?;
+    let configured = profile
+        .step(Step::Understand)
+        .map_or(4, |settings| settings.limits.turns);
+    let current =
+        autopilot_engine::effective_overrides(&options.data_dir, ticket, Step::Understand)
+            .map_err(|error| error.to_string())?
+            .turns
+            .unwrap_or(configured);
+    let raised = current.saturating_mul(2).min(MAX_RETRY_TURNS);
+    if raised <= current {
+        return Err(format!(
+            "the turn cap is already {current}, the most allowed"
+        ));
+    }
+    let proposal = autopilot_engine::Proposal {
+        step: Step::Understand,
+        field: autopilot_engine::StepField::Turns(raised),
+        before: current.to_string(),
+        after: raised.to_string(),
+    };
+    autopilot_engine::apply_to_ticket(&options.data_dir, ticket, &[proposal])
+        .map_err(|error| error.to_string())
 }
