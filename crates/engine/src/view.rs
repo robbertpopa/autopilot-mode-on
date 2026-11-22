@@ -138,6 +138,10 @@ pub struct TicketView {
     pub needs_design: bool,
     /// Plain-words explanations kept in the history, by step.
     pub explained: Vec<(Step, String)>,
+    /// Each step's result as text that is safe to search: key-shaped words
+    /// are replaced and the length is capped. Search reads this, never the
+    /// raw output.
+    pub searchable: Vec<(Step, String)>,
     /// The pipeline chosen for the ticket and the steps it turns off. `None`
     /// is an older ticket, which ran `full`.
     pub pipeline: Option<(String, Vec<Step>)>,
@@ -341,6 +345,10 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         })
         .collect::<Vec<_>>();
 
+    let searchable = outputs
+        .iter()
+        .map(|(step, text)| (*step, searchable_text(text)))
+        .collect();
     let asking = steps.iter().find_map(|view| match &view.state {
         StepState::Asking(request) => Some((view.step, request.clone())),
         _ => None,
@@ -361,6 +369,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         triage,
         needs_design,
         explained,
+        searchable,
         pipeline,
         corrections,
         api,
@@ -370,6 +379,18 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         asking,
         last_seq: history.last().map_or(0, |record| record.seq),
     })
+}
+
+/// The most of a result that search keeps: enough to find a word, not a copy.
+const SEARCH_CHARS: usize = 4_000;
+
+/// A result as search text: credential-shaped words replaced first, then cut
+/// on a character boundary.
+fn searchable_text(text: &str) -> String {
+    autopilot_tracker::redact(text)
+        .chars()
+        .take(SEARCH_CHARS)
+        .collect()
 }
 
 fn keep_output(outputs: &mut Vec<(Step, String)>, step: Step, value: &impl serde::Serialize) {
@@ -685,5 +706,25 @@ mod tests {
     fn a_missing_data_directory_has_no_tickets() {
         let directory = tempfile::tempdir().unwrap();
         assert_eq!(tickets(&directory.path().join("nothing")).unwrap(), vec![]);
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    // Invariant: search text never holds a key-shaped word and is bounded, so
+    // an index built from it cannot leak a credential an agent printed or grow
+    // without limit.
+    #[test]
+    fn search_text_is_redacted_and_bounded() {
+        let token = format!("ghp_{}", "a".repeat(36));
+        let text = searchable_text(&format!("export the {token} rows"));
+        assert!(!text.contains(&token), "{text}");
+        assert!(text.contains("export the"));
+        assert_eq!(
+            searchable_text(&"é".repeat(10_000)).chars().count(),
+            SEARCH_CHARS
+        );
     }
 }
