@@ -461,6 +461,14 @@ pub struct StepChange {
     pub change: StepOverride,
 }
 
+/// The owner's correction of one assumption Understand made, given when the
+/// owner approves. Later steps treat it as data to take into account.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AssumptionCorrection {
+    pub assumption: String,
+    pub correction: String,
+}
+
 /// What an attachment is, which decides how the window shows it.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -582,6 +590,11 @@ pub enum Event {
     StepReset {
         #[serde(default)]
         and_after: bool,
+    },
+    /// The owner approved a step and corrected assumptions on the way. Kept
+    /// with the plan so a review sees what was changed and why.
+    AssumptionsCorrected {
+        corrections: Vec<AssumptionCorrection>,
     },
     Paused,
     Resumed,
