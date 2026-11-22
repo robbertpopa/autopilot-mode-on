@@ -33,6 +33,7 @@ mod profile_edit;
 mod publish;
 mod rerun;
 mod settings;
+mod triage;
 mod view;
 mod workspace;
 pub use allowances::{allow, allowed, list as allowances, revoke};
@@ -55,6 +56,7 @@ pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use rerun::ticket_words;
 pub use rerun::{rerun_plan, rerun_understand, reset_step};
 pub use settings::{effective_overrides, override_settings, project_overrides};
+pub use triage::{EFFORTS, MODELS, kept as triage_kept, prompt as triage_prompt, triage_ticket};
 pub use view::{
     AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,
     TimelineLine, dollars, load_ticket, spent_since, step_name, ticket_view, tickets,
@@ -80,6 +82,8 @@ pub enum Error {
     Inbox(#[from] InboxError),
     #[error("cannot explain: {0}")]
     Explain(String),
+    #[error("the orchestrator could not decide: {0}")]
+    Triage(String),
     #[error("cannot attach: {0}")]
     Attachment(String),
     #[error("the recorded history is invalid: {0}")]

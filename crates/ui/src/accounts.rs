@@ -191,6 +191,26 @@ impl App {
         ui.label(theme::muted(
             "Claude uses your Claude Code sign-in. The offline demo gives fixed sample answers, spends nothing and needs no sign-in; it is for trying the app.",
         ));
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label("Orchestrator");
+            let before = self.orchestrator;
+            theme::segmented(
+                ui,
+                &mut self.orchestrator,
+                &[
+                    (crate::backend::Orchestrator::Off, "Off"),
+                    (crate::backend::Orchestrator::Sonnet, "Sonnet"),
+                    (crate::backend::Orchestrator::Opus, "Opus"),
+                ],
+            );
+            if self.orchestrator != before {
+                self.orchestrator.save(&self.options.data_dir);
+            }
+        });
+        ui.label(theme::muted(
+            "After Understand, one call by this model judges how complex the ticket is against what each step costs, and picks the cheapest model and effort for Design and Plan. You can change any of its choices.",
+        ));
         ui.add_space(10.0);
         let Some(accounts) = self.accounts.clone() else {
             ui.label(theme::muted("Checking GitHub, Claude, Codex and Azure..."));

@@ -122,11 +122,34 @@ impl ClaudeAgent {
     /// Returns an error if Claude Code cannot start, fails, or answers with
     /// something that is not the expected JSON.
     pub fn explain(&self, prompt: &str) -> Result<String, AgentError> {
+        self.one_call(command::explain_args(&self.config), None, prompt)
+    }
+
+    /// The orchestrator's single call: it reads the ticket and findings (and
+    /// the project, read-only, when one was given) and answers in text.
+    ///
+    /// # Errors
+    /// Returns an error if Claude Code cannot start or fails.
+    pub fn orchestrate(&self, prompt: &str) -> Result<String, AgentError> {
+        let reading = self.workspace.is_some();
+        self.one_call(
+            command::orchestrator_args(&self.config, reading),
+            self.workspace.clone(),
+            prompt,
+        )
+    }
+
+    fn one_call(
+        &self,
+        args: Vec<std::ffi::OsString>,
+        cwd: Option<PathBuf>,
+        prompt: &str,
+    ) -> Result<String, AgentError> {
         let spec = CommandSpec {
             program: self.executable.clone(),
-            args: command::explain_args(&self.config),
+            args,
             env: child_env(self.config.auth, process_env::vars_os())?,
-            cwd: None,
+            cwd,
         };
         let limits = Limits {
             timeout: self.config.timeout,
@@ -136,7 +159,7 @@ impl ClaudeAgent {
         let output =
             Runner::new(self.guardian.clone()).run(&spec, prompt.as_bytes(), limits, &cancel)?;
         if !matches!(&output.outcome, Outcome::Exited(status) if status.success()) {
-            return Err(io::Error::other("Claude Code did not finish the explanation").into());
+            return Err(io::Error::other("Claude Code did not finish the call").into());
         }
         let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
         value

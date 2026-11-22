@@ -132,6 +132,8 @@ pub struct TicketView {
     pub attachments: Vec<AttachmentView>,
     /// The project folder the agent looks at, if the ticket has one.
     pub workspace: Option<String>,
+    /// The orchestrator's decision for the later steps, if it made one.
+    pub triage: Option<autopilot_core::Triage>,
     /// Understand said the ticket changes a screen, so Design must run.
     pub needs_design: bool,
     /// Plain-words explanations kept in the history, by step.
@@ -204,6 +206,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     let mut outputs: Vec<(Step, String)> = Vec::new();
     let mut attachments = Vec::new();
     let mut workspace = None;
+    let mut triage = None;
     let mut needs_design = false;
     let mut explained: Vec<(Step, String)> = Vec::new();
     for record in history {
@@ -224,6 +227,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
                 keep_output(&mut outputs, Step::Design, &design.notes);
             }
             Event::Workspace { path } => workspace = Some(path.clone()),
+            Event::Triaged { triage: made } => triage = Some(made.clone()),
             Event::Explained { text } => {
                 if let Some(step) = record.event.step {
                     explained.retain(|(kept, _)| *kept != step);
@@ -341,6 +345,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         outputs,
         attachments,
         workspace,
+        triage,
         needs_design,
         explained,
         api,

@@ -236,3 +236,55 @@ fn the_project_folder_is_recorded_once_and_a_file_is_refused() {
     fs::write(&file, b"x").unwrap();
     assert!(autopilot_engine::record_workspace(data.path(), &ticket.id, &file).is_err());
 }
+
+const TRIAGE_ANSWER: &str = r#"{"complexity":"high","reasoning":"Touches storage.",
+    "steps":[{"step":"design","model":"sonnet","effort":"medium","why":"Two screens."},
+             {"step":"plan","model":"opus","effort":"high","why":"Risky migration."}]}"#;
+
+// Invariant: the orchestrator's choice is kept once, shows in the view, and
+// becomes ordinary ticket settings the next start of each step reads; asking
+// again costs nothing; a refused answer leaves no decision and no settings.
+#[test]
+fn the_orchestrator_sets_later_steps_once_and_a_bad_answer_changes_nothing() {
+    use autopilot_core::Step;
+    use autopilot_engine::{effective_overrides, triage_ticket};
+
+    let data = tempfile::tempdir().unwrap();
+    let agent = Synthetic {
+        data_dir: data.path().into(),
+    };
+    let ticket = ticket("tri-1");
+    run_understand(data.path(), &ticket, &agent).unwrap();
+    let made = triage_ticket(data.path(), &ticket.id, false, |prompt| {
+        assert!(prompt.contains("orchestrator"));
+        Ok(TRIAGE_ANSWER.to_owned())
+    })
+    .unwrap();
+    assert_eq!(made.steps.len(), 2);
+    let plan = effective_overrides(data.path(), &ticket.id, Step::Plan).unwrap();
+    assert_eq!(plan.model.as_deref(), Some("opus"));
+    assert_eq!(plan.effort.as_deref(), Some("high"));
+    let design = effective_overrides(data.path(), &ticket.id, Step::Design).unwrap();
+    assert_eq!(design.effort.as_deref(), Some("medium"));
+    let again = triage_ticket(data.path(), &ticket.id, false, |_| {
+        panic!("a kept decision must not ask again")
+    })
+    .unwrap();
+    assert_eq!(again, made);
+    let history = watch(data.path(), &ticket.id, 0).unwrap();
+    assert_eq!(
+        autopilot_engine::ticket_view(&history).unwrap().triage,
+        Some(made)
+    );
+
+    let other = self::ticket("tri-2");
+    run_understand(data.path(), &other, &agent).unwrap();
+    let refused = triage_ticket(data.path(), &other.id, false, |_| {
+        Ok(TRIAGE_ANSWER.replace("opus", "gpt"))
+    });
+    assert!(refused.is_err());
+    let history = watch(data.path(), &other.id, 0).unwrap();
+    assert!(autopilot_engine::triage_kept(&history).is_none());
+    let plan = effective_overrides(data.path(), &other.id, Step::Plan).unwrap();
+    assert_eq!(plan.model, None);
+}
