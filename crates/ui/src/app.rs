@@ -57,6 +57,9 @@ pub struct App {
     pub(crate) screen: Screen,
     pub(crate) selected: Option<TicketId>,
     pub(crate) today_selected: Option<TicketId>,
+    pub(crate) search_open: bool,
+    pub(crate) search_query: String,
+    pub(crate) search_selected: usize,
     pub(crate) pipeline_selected: Option<String>,
     pub(crate) pipeline_notice: Option<(bool, String)>,
     /// The owner picked the pipeline on New ticket, so the suggestion stops.
@@ -131,6 +134,9 @@ impl App {
             screen: Screen::Run,
             selected: None,
             today_selected: None,
+            search_open: false,
+            search_query: String::new(),
+            search_selected: 0,
             pipeline_selected: None,
             pipeline_notice: None,
             pipeline_chosen: false,
@@ -336,6 +342,7 @@ impl App {
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
             self.start_new();
         }
+        self.search_keys(ctx);
         self.today_keys(ctx);
         if matches!(self.screen, Screen::Step(_))
             && !ctx.wants_keyboard_input()
@@ -386,6 +393,7 @@ impl App {
                     });
             });
         self.dialogs(ctx);
+        self.search_overlay(ctx);
     }
 
     /// Files dropped on the window go to the open form, or to the ticket on
