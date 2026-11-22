@@ -53,21 +53,57 @@ impl App {
             return;
         };
         let analysis = analyze(&plan);
-        Self::criteria_table(ui, &plan, &analysis);
-        ui.add_space(10.0);
-        list(ui, "Files", &plan.files, "The plan lists no files.");
-        ui.add_space(6.0);
-        list(
-            ui,
-            "Test plan",
-            &plan.test_plan,
-            "The plan has no test plan.",
-        );
-        ui.add_space(10.0);
-        ui.add_space(10.0);
-        self.assumptions_box(ui, &view);
-        ui.add_space(8.0);
-        self.plan_actions(ui, &view, &analysis);
+        let aside = 280.0_f32.min(ui.available_width() * 0.3);
+        let main = ui.available_width() - aside - 24.0;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 16.0;
+            ui.allocate_ui_with_layout(
+                egui::vec2(main, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(main);
+                    Self::criteria_table(ui, &plan, &analysis);
+                    ui.add_space(10.0);
+                    list(ui, "Files", &plan.files, "The plan lists no files.");
+                    ui.add_space(6.0);
+                    list(
+                        ui,
+                        "Test plan",
+                        &plan.test_plan,
+                        "The plan has no test plan.",
+                    );
+                    ui.add_space(10.0);
+                    self.assumptions_box(ui, &view);
+                },
+            );
+            ui.allocate_ui_with_layout(
+                egui::vec2(aside, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(aside);
+                    theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.spacing_mut().item_spacing.y = 6.0;
+                        ui.label(
+                            RichText::new("ON APPROVE")
+                                .monospace()
+                                .size(11.0)
+                                .strong()
+                                .color(theme::TEXT_MUTED()),
+                        );
+                        for line in [
+                            "1. build in worktree",
+                            "2. checks cheapest first",
+                            "3. ask before pr",
+                        ] {
+                            ui.label(theme::mono(line).size(12.0));
+                        }
+                        ui.add_space(4.0);
+                        self.plan_actions(ui, &view, &analysis);
+                    });
+                },
+            );
+        });
     }
 
     fn criteria_table(ui: &mut egui::Ui, plan: &Plan, analysis: &Analysis) {
@@ -78,22 +114,28 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.label(theme::mono(&criterion.id));
                     ui.label(&criterion.text);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let unknown = criterion.verify == Verify::Unknown;
+                        let (fill, color) = if unknown {
+                            (theme::RED_FILL(), theme::RED())
+                        } else {
+                            (theme::GREY_FILL(), theme::GREY_TEXT())
+                        };
+                        let text = if criterion.verification_id.is_empty() {
+                            verify_label(criterion.verify).to_owned()
+                        } else {
+                            format!(
+                                "{} {}",
+                                verify_label(criterion.verify),
+                                criterion.verification_id
+                            )
+                        };
+                        theme::pill(ui, &text, fill, color);
+                    });
                 });
-                ui.horizontal(|ui| {
-                    let unknown = criterion.verify == Verify::Unknown;
-                    let color = if unknown {
-                        theme::RED()
-                    } else {
-                        theme::TEXT_SOFT()
-                    };
-                    ui.label(RichText::new(verify_label(criterion.verify)).color(color));
-                    if !criterion.verification_id.is_empty() {
-                        ui.label(theme::mono(&criterion.verification_id));
-                    }
-                    if !unknown && !covered {
-                        ui.label(theme::muted("not named in the test plan"));
-                    }
-                });
+                if criterion.verify != Verify::Unknown && !covered {
+                    ui.label(theme::muted("not named in the test plan"));
+                }
                 for finding in analysis
                     .findings
                     .iter()
@@ -127,7 +169,7 @@ impl App {
             ui.add(
                 egui::TextEdit::singleline(correction)
                     .hint_text("Correct it, or leave empty to keep it")
-                    .desired_width(f32::INFINITY),
+                    .desired_width(ui.available_width()),
             );
         }
         for fix in &view.corrections {
@@ -141,7 +183,7 @@ impl App {
         ui.add(
             egui::TextEdit::multiline(&mut self.plan_note)
                 .desired_rows(2)
-                .desired_width(f32::INFINITY)
+                .desired_width(ui.available_width())
                 .hint_text("What should the plan do differently?"),
         );
     }
@@ -187,7 +229,7 @@ impl App {
                 .color(theme::AMBER()),
             );
         }
-        ui.horizontal(|ui| {
+        ui.vertical(|ui| {
             let label = if analysis.blocking() {
                 "Approve anyway"
             } else {
