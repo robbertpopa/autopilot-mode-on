@@ -194,6 +194,8 @@ impl TicketState {
             | Event::Described { .. }
             | Event::Attached { .. }
             | Event::Explained { .. }
+            | Event::PipelineChosen { .. }
+            | Event::AssumptionsCorrected { .. }
             | Event::Workspace { .. }
             | Event::Triaged { .. }
             | Event::DesignResult { .. } => {}

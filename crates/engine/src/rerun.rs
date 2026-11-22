@@ -73,7 +73,14 @@ pub fn reset_step(
     state
         .apply(&reset)
         .map_err(|error| Error::NotReady(error.to_string()))?;
-    store.append(ticket, last, &[reset])?;
+    let mut events = vec![reset];
+    // Steps the pipeline turned off go back to skipped, not to idle.
+    events.extend(crate::pipelines::reapply_off(
+        &history,
+        &state,
+        timestamp()?,
+    ));
+    store.append(ticket, last, &events)?;
     Ok(())
 }
 
@@ -160,6 +167,7 @@ pub fn rerun_understand(
             .apply(&reset)
             .map_err(|error| Error::NotReady(error.to_string()))?;
         opening.push(reset);
+        opening.extend(crate::pipelines::reapply_off(&history, &state, now));
     }
     let start = event(
         now,
@@ -176,6 +184,7 @@ pub fn rerun_understand(
     let recorded = store.append(ticket, last, &opening)?;
     last = recorded.last().map_or(last, |record| record.seq);
 
+    let description = crate::notes::with_owner_notes(&description, &history, Step::Understand);
     let ticket = Ticket {
         id: ticket.clone(),
         title,

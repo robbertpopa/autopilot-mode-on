@@ -28,6 +28,8 @@ mod change;
 mod control;
 mod design;
 mod explain;
+mod notes;
+mod pipelines;
 mod plan;
 mod profile_edit;
 mod publish;
@@ -50,12 +52,16 @@ pub use design::{
     run_design,
 };
 pub use explain::{explain_step, kept as explanation_kept, prompt as explain_prompt};
+pub use pipelines::{choose_pipeline, chosen as chosen_pipeline};
 pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use rerun::ticket_words;
 pub use rerun::{rerun_plan, rerun_understand, reset_step};
-pub use settings::{effective_overrides, override_settings, project_overrides};
+pub use settings::{
+    effective_overrides, effective_when_unsure, override_settings, project_overrides,
+    set_when_unsure,
+};
 pub use triage::{EFFORTS, MODELS, kept as triage_kept, prompt as triage_prompt, triage_ticket};
 pub use view::{
     AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,
@@ -233,11 +239,13 @@ pub(crate) fn run_attempt(
         (Pumped::Failed(error), last) => (Err(Outcome::Failed(error)), last),
     };
     let asked = response.is_ok() && ask_after;
-    let result = conclude(store, &ticket.id, last, response, ask_after)?;
+    let history = store.events(&ticket.id, 0)?;
+    let approval = approval_id(&history, Step::Understand);
+    let result = conclude(store, &ticket.id, last, response, ask_after, &approval)?;
     if asked {
         Inbox::in_data_dir(directory).write_request(&approval_request(
             &ticket.id,
-            &approval_id(Step::Understand),
+            &approval,
             Step::Understand,
             false,
         ))?;
@@ -294,14 +302,29 @@ fn pump(
     Ok((pumped, last))
 }
 
-fn approval_id(step: Step) -> RequestId {
-    RequestId::from(format!("{}-approval", step.as_str()))
+/// The id of the approval a step asks for. Answers are kept once per request
+/// id, so a step that is sent back, rejected or run again asks under a new id
+/// each time: the first is `plan-approval`, then `plan-approval-2`, and so on.
+pub(crate) fn approval_id(history: &[RecordedEvent], step: Step) -> RequestId {
+    let base = format!("{}-approval", step.as_str());
+    let used = history
+        .iter()
+        .filter(|record| {
+            matches!(&record.event.kind, Event::Answered { request, .. }
+                if request.as_str().starts_with(&base))
+        })
+        .count();
+    if used == 0 {
+        RequestId::from(base)
+    } else {
+        RequestId::from(format!("{base}-{}", used + 1))
+    }
 }
 
-fn plan_request(ticket: &TicketId, plan: &Plan) -> Request {
+fn plan_request(ticket: &TicketId, plan: &Plan, id: RequestId) -> Request {
     let analysis = autopilot_pipeline::analyze::analyze(plan);
     Request {
-        id: approval_id(Step::Plan),
+        id,
         ticket: ticket.clone(),
         body: RequestBody::Approval {
             action: format!("approve the plan ({})", analysis.describe()),
@@ -329,13 +352,14 @@ fn conclude(
     last: u64,
     response: Result<Understanding, Outcome>,
     ask_after: bool,
+    approval: &RequestId,
 ) -> Result<Understanding, Error> {
     let finished_at = timestamp()?;
     match response {
         Ok(result) => {
             let closing = if ask_after {
                 Event::Asked {
-                    request: approval_id(Step::Understand),
+                    request: approval.clone(),
                 }
             } else {
                 Event::StepFinished
@@ -416,6 +440,11 @@ pub fn start_clarify(directory: &Path, ticket: &TicketId) -> Result<ClarifyStart
     let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
     if state.step(Step::Understand) != &StepState::Passed {
         return Err(Error::NotReady("Understand has not passed".into()));
+    }
+    if matches!(state.step(Step::Clarify), StepState::Skipped(reason) if reason.starts_with(pipelines::OFF_PREFIX))
+    {
+        // The pipeline turned it off; there is nothing to ask.
+        return Ok(ClarifyStart::Skipped("off in this pipeline"));
     }
     if state.step(Step::Clarify) != &StepState::Idle {
         return Err(Error::NotReady("Clarify already started".into()));
@@ -660,7 +689,7 @@ fn waiting_request(
     if step == Step::Plan {
         let plan =
             plan::latest_plan(history).ok_or_else(|| Error::History("no Plan result".into()))?;
-        return Ok(plan_request(ticket, plan));
+        return Ok(plan_request(ticket, plan, request.clone()));
     }
     Ok(approval_request(ticket, request, step, true))
 }
@@ -677,10 +706,28 @@ fn commit_approval(
     decision: &Decision,
 ) -> Result<(), Error> {
     let last = history.last().ok_or(Error::UnknownTicket)?.seq;
+    let tidy = match decision {
+        Decision::SendBack(note) => match notes::clean_note(note) {
+            text if text.is_empty() => Decision::Reject,
+            text => Decision::SendBack(text),
+        },
+        Decision::ApproveCorrected(fixes) => Decision::ApproveCorrected(
+            fixes
+                .iter()
+                .map(|fix| autopilot_core::AssumptionCorrection {
+                    assumption: notes::clean_note(&fix.assumption),
+                    correction: notes::clean_note(&fix.correction),
+                })
+                .filter(|fix| !fix.correction.is_empty())
+                .collect(),
+        ),
+        other => other.clone(),
+    };
+    let decision = &tidy;
     let answer =
         serde_json::to_string(decision).map_err(|error| Error::History(error.to_string()))?;
     let at = timestamp()?;
-    let rejected = matches!(decision, Decision::Reject);
+    let rejected = matches!(decision, Decision::Reject | Decision::SendBack(_));
     let mut events = vec![event(
         at,
         Some(step),
@@ -690,9 +737,23 @@ fn commit_approval(
         },
     )];
     if rejected {
-        let reason = "rejected by the owner".into();
+        let reason = if matches!(decision, Decision::SendBack(_)) {
+            "sent back with notes"
+        } else {
+            "rejected by the owner"
+        };
+        let reason = reason.into();
         events.push(event(at, Some(step), Event::Interrupted { reason }));
     } else {
+        if let Decision::ApproveCorrected(corrections) = decision {
+            events.push(event(
+                at,
+                Some(step),
+                Event::AssumptionsCorrected {
+                    corrections: corrections.clone(),
+                },
+            ));
+        }
         if step == Step::Plan {
             let sha256 = plan::store_approved(directory, ticket, history)?;
             events.push(event(at, Some(step), Event::PlanApproved { sha256 }));

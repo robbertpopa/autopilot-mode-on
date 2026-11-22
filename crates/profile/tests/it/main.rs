@@ -36,3 +36,121 @@ fn nested_type_errors_keep_the_profile_key() {
     assert_eq!(error.line, 2);
     assert_eq!(error.key, "steps.build_check.limits.turns");
 }
+
+// Invariant: a profile saved before projects and pipelines existed still
+// loads, and a ticket with no choice runs `full`. This is a literal old file,
+// not a freshly written one, so a new required field would fail here.
+#[test]
+fn an_old_profile_has_no_projects_and_only_the_built_in_pipelines() {
+    let old = "protected_paths = [\"infra/**\"]\nwhen_unsure = \"ask\"\n\n[steps.plan]\nmodel = \"planner\"\n\n[budgets]\nper_ticket_microusd = 500000\n";
+    let profile = Profile::parse("old.toml", old).unwrap();
+    assert!(profile.projects.is_empty());
+    let names: Vec<String> = profile.pipelines().into_iter().map(|p| p.name).collect();
+    assert_eq!(
+        names,
+        ["full", "bug-fix", "quick-change", "ui-change", "ask-only"]
+    );
+    assert_eq!(profile.pipeline("full").unwrap().off().len(), 0);
+}
+
+// Invariant: a project can add protected paths and lower budgets, and
+// nothing it says can empty the global list or raise a cap. An empty project
+// list or a larger project budget must leave the global rule as it was.
+#[test]
+fn a_project_never_loosens_protected_paths_or_budgets() {
+    let source = r#"
+protected_paths = ["infra/**"]
+[budgets]
+per_ticket_microusd = 500000
+
+[projects.'D:\work\app']
+protected_paths = []
+[projects.'D:\work\app'.budgets]
+per_ticket_microusd = 9000000
+daily_microusd = 100000
+
+[projects."D:/work/tight"]
+protected_paths = ["secrets/**"]
+[projects."D:/work/tight".budgets]
+per_ticket_microusd = 100000
+"#;
+    let profile = Profile::parse("p.toml", source).unwrap();
+    let loose = profile.for_project(Some("D:/work/app/"));
+    assert_eq!(loose.protected_paths, ["infra/**"]);
+    assert_eq!(loose.budgets.per_ticket_microusd.unwrap().get(), 500_000);
+    // A cap beats no cap for a budget the profile left unset.
+    assert_eq!(loose.budgets.daily_microusd.unwrap().get(), 100_000);
+    let tight = profile.for_project(Some(r"D:\work\tight"));
+    assert_eq!(tight.protected_paths, ["infra/**", "secrets/**"]);
+    assert_eq!(tight.budgets.per_ticket_microusd.unwrap().get(), 100_000);
+    let none = profile.for_project(None);
+    assert_eq!(none, profile);
+}
+
+// Invariant: the same folder written two ways is one project, and two
+// folders that share a last name are two. Grouping by the last name would
+// merge unrelated projects.
+#[test]
+fn projects_are_keyed_by_the_full_path() {
+    let source = "[projects.\"D:/a/app\"]\n[projects.\"D:/b/app\"]\n";
+    let profile = Profile::parse("p.toml", source).unwrap();
+    assert_eq!(profile.projects.len(), 2);
+    assert_eq!(profile.project(r"D:\a\app\").unwrap().path, "D:/a/app");
+    assert_eq!(profile.project("D:/b/app").unwrap().name, "app");
+    assert!(profile.project("D:/c/app").is_none());
+    let twice = "[projects.\"D:/a/app\"]\n[projects.'D:\\a\\app\\']\n";
+    assert!(Profile::parse("p.toml", twice).is_err());
+}
+
+// Invariant: a custom pipeline can switch steps off but only into an order
+// the engine can run, cannot replace a built-in, and cannot loop. A pipeline
+// that kept build without plan would start work with no criteria.
+#[test]
+fn custom_pipelines_are_validated() {
+    let ok = "[pipelines.mine]\nbased_on = \"bug-fix\"\noff = [\"clarify\"]\nrounds = 2\n\n[pipelines.next]\nbased_on = \"mine\"\nif_needed = [\"design\"]\n";
+    let profile = Profile::parse("p.toml", ok).unwrap();
+    let mine = profile.pipeline("mine").unwrap();
+    assert!(!mine.builtin);
+    assert_eq!(mine.off(), [Step::Clarify, Step::Design]);
+    assert_eq!(mine.rounds, Some(2));
+    assert_eq!(
+        profile.pipeline("next").unwrap().mode(Step::Design),
+        autopilot_profile::StepMode::IfNeeded
+    );
+    for bad in [
+        "[pipelines.full]\noff = [\"clarify\"]\n",
+        "[pipelines.a]\noff = [\"plan\"]\n",
+        "[pipelines.a]\noff = [\"understand\"]\n",
+        "[pipelines.a]\noff = [\"build_check\"]\n",
+        "[pipelines.a]\nbased_on = \"b\"\n[pipelines.b]\nbased_on = \"a\"\n",
+        "[pipelines.a]\nbased_on = \"nothing\"\n",
+        "[pipelines.\"Bad Name\"]\n",
+        "[pipelines.a]\nrounds = 0\n",
+        "[projects.\"D:/x\"]\ndefault_pipeline = \"nope\"\n",
+    ] {
+        assert!(Profile::parse("p.toml", bad).is_err(), "{bad}");
+    }
+}
+
+// Invariant: ask-only runs Understand and nothing that writes, and the
+// built-in presets are the ones the docs name.
+#[test]
+fn ask_only_runs_only_understand_and_clarify() {
+    let profile = Profile::parse("p.toml", "").unwrap();
+    let ask = profile.pipeline("ask-only").unwrap();
+    assert!(ask.builtin);
+    assert_eq!(
+        ask.off(),
+        [
+            Step::Design,
+            Step::Plan,
+            Step::BuildCheck,
+            Step::PullRequest
+        ]
+    );
+    assert_eq!(profile.pipeline("quick-change").unwrap().rounds, Some(2));
+    assert_eq!(
+        profile.pipeline("ui-change").unwrap().mode(Step::Design),
+        autopilot_profile::StepMode::On
+    );
+}

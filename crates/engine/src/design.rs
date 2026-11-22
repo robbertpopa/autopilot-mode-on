@@ -89,6 +89,10 @@ pub fn run_design(
     ) {
         return Err(Error::NotReady("Clarify has not finished".into()));
     }
+    if matches!(state.step(Step::Design), StepState::Skipped(reason) if reason.starts_with(crate::pipelines::OFF_PREFIX))
+    {
+        return Ok(None);
+    }
     if state.step(Step::Design) != &StepState::Idle
         && !matches!(
             state.step(Step::Design),

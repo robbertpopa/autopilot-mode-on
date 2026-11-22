@@ -142,6 +142,11 @@ pub struct TicketView {
     /// are replaced and the length is capped. Search reads this, never the
     /// raw output.
     pub searchable: Vec<(Step, String)>,
+    /// The pipeline chosen for the ticket and the steps it turns off. `None`
+    /// is an older ticket, which ran `full`.
+    pub pipeline: Option<(String, Vec<Step>)>,
+    /// Assumptions the owner corrected when approving, latest last.
+    pub corrections: Vec<autopilot_core::AssumptionCorrection>,
     /// Exact spend through an API key.
     pub api: Money,
     /// Estimated spend on a subscription. Never added to `api`.
@@ -213,6 +218,8 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     let mut triage = None;
     let mut needs_design = false;
     let mut explained: Vec<(Step, String)> = Vec::new();
+    let mut pipeline = None;
+    let mut corrections = Vec::new();
     for record in history {
         let at_ms = record.event.at_ms;
         let step = record.event.step;
@@ -232,6 +239,12 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
             }
             Event::Workspace { path } => workspace = Some(path.clone()),
             Event::Triaged { triage: made } => triage = Some(made.clone()),
+            Event::PipelineChosen { name, off, .. } => {
+                pipeline = Some((name.clone(), off.clone()));
+            }
+            Event::AssumptionsCorrected { corrections: made } => {
+                corrections.extend(made.iter().cloned());
+            }
             Event::Explained { text } => {
                 if let Some(step) = record.event.step {
                     explained.retain(|(kept, _)| *kept != step);
@@ -357,6 +370,8 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         needs_design,
         explained,
         searchable,
+        pipeline,
+        corrections,
         api,
         subscription,
         started_ms: first.event.at_ms,
@@ -430,6 +445,11 @@ fn badge(steps: &[StepView], done: bool) -> Badge {
         return Badge::Done;
     }
     let states = || steps.iter().map(|view| &view.state);
+    let settled = states().all(|s| matches!(s, StepState::Passed | StepState::Skipped(_)));
+    if settled && states().any(|s| matches!(s, StepState::Passed)) {
+        // A short pipeline ends when its last step does; nothing else will run.
+        return Badge::Done;
+    }
     if states().any(|s| matches!(s, StepState::Asking(_))) {
         Badge::NeedsYou
     } else if states().any(|s| matches!(s, StepState::Paused)) {

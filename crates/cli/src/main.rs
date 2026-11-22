@@ -404,6 +404,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 ask_after,
                 model,
                 effort,
+                turns: None,
             };
             run_override(&mut out, &cli.data_dir, &ticket, scope, step, change)?;
         }
