@@ -7,7 +7,7 @@
 use std::{
     env,
     ffi::{OsStr, OsString},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::AtomicBool,
     thread,
     time::Duration,
@@ -330,6 +330,55 @@ fn run_change(guardian: PathBuf, launch: Option<Launch>) -> Result<(), String> {
     }
 }
 
+/// Who commits are signed as: Git's own global `user.name` and `user.email`.
+/// Pull requests go through GitHub or Azure, but a commit is signed by this.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct GitIdentity {
+    pub name: String,
+    pub email: String,
+}
+
+/// Read the global Git identity. A missing Git or an unset key is an empty
+/// string, which the window shows as "not set".
+#[must_use]
+pub fn git_identity(guardian: PathBuf) -> GitIdentity {
+    let runner = Runner::new(guardian);
+    let path = env::var_os("PATH").unwrap_or_default();
+    let parent: Vec<(OsString, OsString)> = env::vars_os().collect();
+    let read = |key: &str| {
+        let args = ["config", "--global", "--get", key];
+        match lookup(&runner, &parent, on_path(&path, &["git.exe", "git"], &args)) {
+            Lookup::Output(text) => clean(&text),
+            _ => String::new(),
+        }
+    };
+    GitIdentity {
+        name: read("user.name"),
+        email: read("user.email"),
+    }
+}
+
+/// Save the global Git identity.
+///
+/// # Errors
+/// Returns a short reason when Git is missing, refuses, or a value is empty
+/// or looks like an option.
+pub fn set_git_identity(guardian: &Path, name: &str, email: &str) -> Result<(), String> {
+    let (name, email) = (name.trim(), email.trim());
+    if !plain_argument(name) || !plain_argument(email) {
+        return Err("name and email must be plain text".into());
+    }
+    let path = env::var_os("PATH").unwrap_or_default();
+    for (key, value) in [("user.name", name), ("user.email", email)] {
+        let args = ["config", "--global", key, value];
+        run_change(
+            guardian.to_path_buf(),
+            on_path(&path, &["git.exe", "git"], &args),
+        )?;
+    }
+    Ok(())
+}
+
 /// Whether a variable is saved in the Windows user environment. `setx` writes
 /// there, and a program that is already running never sees it, so the window
 /// uses this to say "restart the app" instead of "not set". Only presence is
@@ -515,6 +564,12 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert!(all[0].active && !all[1].active);
         assert_eq!(parse_azure_list("nope").len(), 0);
+    }
+
+    #[test]
+    fn a_git_identity_refuses_empty_or_option_like_values() {
+        assert!(set_git_identity(Path::new(""), "", "a@example.test").is_err());
+        assert!(set_git_identity(Path::new(""), "Me", "--global").is_err());
     }
 
     #[test]

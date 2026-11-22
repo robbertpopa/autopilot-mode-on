@@ -51,6 +51,8 @@ pub enum Message {
     /// Whether the API key is saved in the user environment, even if this
     /// running app was started before it was.
     KeySaved(bool),
+    /// Who Git signs commits as.
+    GitIdentity(autopilot_accounts::GitIdentity),
     /// The outcome of an action: a short confirmation, or the reason it failed.
     Done(Result<String, String>),
     /// The answer of the release check: a newer version, nothing, or why not.
@@ -226,8 +228,30 @@ pub fn fetch_accounts(context: egui::Context, sender: Sender<Message>) {
             autopilot_agent_claude::API_KEY_SOURCE,
         );
         let _ = sender.send(Message::KeySaved(saved));
+        let _ = sender.send(Message::GitIdentity(autopilot_accounts::git_identity(
+            guardian.clone(),
+        )));
         let accounts = autopilot_accounts::collect(guardian);
         let _ = sender.send(Message::Accounts(Box::new(accounts)));
+        context.request_repaint();
+    });
+}
+
+/// Save who Git signs commits as, then read it back. A refusal shows as the
+/// owner's notice.
+pub fn save_git_identity(
+    context: egui::Context,
+    sender: Sender<Message>,
+    name: String,
+    email: String,
+) {
+    thread::spawn(move || {
+        if let Err(reason) = autopilot_accounts::set_git_identity(&guardian(), &name, &email) {
+            let _ = sender.send(Message::Done(Err(format!("Could not save: {reason}"))));
+        }
+        let _ = sender.send(Message::GitIdentity(autopilot_accounts::git_identity(
+            guardian(),
+        )));
         context.request_repaint();
     });
 }

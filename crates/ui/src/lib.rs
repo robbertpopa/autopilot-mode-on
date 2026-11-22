@@ -359,9 +359,9 @@ mod tests {
         let mut app = App::new(&context, options.clone(), false);
         app.set_snapshot(read(&options));
         for (step, wanted) in [
-            (0, "How should Claude run?"),
-            (1, "Other tools"),
-            (2, "Where does your code live?"),
+            (0, "Pick your agent"),
+            (1, "Connect your tools"),
+            (2, "Set up your environment"),
             (3, "Pick a look"),
         ] {
             app.welcome_step = step;

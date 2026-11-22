@@ -138,6 +138,12 @@ pub struct App {
     pub(crate) accounts: Option<autopilot_accounts::Accounts>,
     /// The API key is saved in the user environment (maybe after this start).
     pub(crate) key_saved: bool,
+    /// Who Git signs commits as, read from the global Git settings.
+    pub(crate) git_identity: Option<autopilot_accounts::GitIdentity>,
+    /// The name and email being typed on the welcome Tools step.
+    pub(crate) git_edit: Option<(String, String)>,
+    /// The service logos of the welcome screens, loaded on first use.
+    pub(crate) welcome_logos: Vec<egui::TextureHandle>,
     open_newest: bool,
     pub(crate) icon: Option<egui::TextureHandle>,
     pub(crate) group_by_status: bool,
@@ -235,6 +241,9 @@ impl App {
             next_update_check: None,
             accounts: None,
             key_saved: false,
+            git_identity: None,
+            git_edit: None,
+            welcome_logos: Vec::new(),
             open_newest: false,
             icon: theme::icon_texture(context),
             group_by_status: false,
@@ -527,6 +536,7 @@ impl App {
                 }
                 Message::Accounts(accounts) => self.accounts = Some(*accounts),
                 Message::KeySaved(saved) => self.key_saved = saved,
+                Message::GitIdentity(identity) => self.git_identity = Some(identity),
                 Message::Update(Ok(found)) => self.update = found,
                 // A failed check is not worth a banner: the next check retries.
                 Message::Update(Err(_)) => {}
