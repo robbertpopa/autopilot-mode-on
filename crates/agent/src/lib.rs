@@ -62,6 +62,9 @@ pub enum AgentEvent {
     Message {
         summary: String,
     },
+    /// What the run used, when the provider says. Adapters that report
+    /// nothing never send this, so a missing figure stays missing.
+    Usage(autopilot_core::UsageReport),
     /// Cost reported for the run. `estimated` is true when the provider's own
     /// figure is not a bill, as with a subscription.
     Cost {
@@ -140,6 +143,10 @@ impl AgentContext {
     /// Report the opaque reference of the session this run uses.
     pub fn session(&self, reference: SessionId) {
         let _ = self.events.send(AgentEvent::Session(reference));
+    }
+
+    pub fn usage(&self, usage: autopilot_core::UsageReport) {
+        let _ = self.events.send(AgentEvent::Usage(usage));
     }
 
     pub fn cost(&self, amount: Money, estimated: bool) {
@@ -257,6 +264,7 @@ impl Iterator for AgentRun {
                     | AgentEvent::Message { .. }
                     | AgentEvent::Session(_)
                     | AgentEvent::Cost { .. }
+                    | AgentEvent::Usage(_)
             )
         ) {
             self.events = None;
@@ -315,5 +323,30 @@ mod tests {
         assert!(matches!(run.next(), Some(AgentEvent::Started)));
         drop(run);
         assert_eq!(cleaned.try_recv(), Ok(()));
+    }
+
+    // Invariant: a usage report is an in-run event like cost, so the result
+    // that follows it is still delivered. Without it the iterator stops after
+    // the report and the step ends with "stream ended without a result".
+    #[test]
+    fn a_usage_report_does_not_end_the_stream() {
+        let mut run = AgentRun::spawn(|context| {
+            context.usage(autopilot_core::UsageReport::default());
+            context.cost(Money::from_microusd(5), false);
+            Ok(autopilot_core::Understanding {
+                summary: "s".into(),
+                ambiguity: autopilot_core::Ambiguity::all(autopilot_core::Clarity::Clear),
+                open_questions: vec![],
+                assumptions: vec![],
+                needs_design: false,
+                ui_files: vec![],
+                files_touched: vec![],
+            })
+        })
+        .unwrap();
+        assert!(matches!(run.next(), Some(AgentEvent::Started)));
+        assert!(matches!(run.next(), Some(AgentEvent::Usage(_))));
+        assert!(matches!(run.next(), Some(AgentEvent::Cost { .. })));
+        assert!(matches!(run.next(), Some(AgentEvent::Result(_))));
     }
 }

@@ -141,6 +141,9 @@ pub struct TicketView {
     /// The pipeline chosen for the ticket and the steps it turns off. `None`
     /// is an older ticket, which ran `full`.
     pub pipeline: Option<(String, Vec<Step>)>,
+    /// What the agent reported using, one line per run. Empty where an
+    /// adapter reports nothing.
+    pub usage: Vec<crate::metrics::UsageLine>,
     /// Exact spend through an API key.
     pub api: Money,
     /// Estimated spend on a subscription. Never added to `api`.
@@ -213,6 +216,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     let mut needs_design = false;
     let mut explained: Vec<(Step, String)> = Vec::new();
     let mut pipeline = None;
+    let mut usage = Vec::new();
     for record in history {
         let at_ms = record.event.at_ms;
         let step = record.event.step;
@@ -232,6 +236,11 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
             }
             Event::Workspace { path } => workspace = Some(path.clone()),
             Event::Triaged { triage: made } => triage = Some(made.clone()),
+            Event::UsageReported { usage: reported } => usage.push(crate::metrics::UsageLine {
+                step,
+                at_ms,
+                usage: *reported,
+            }),
             Event::PipelineChosen { name, off, .. } => {
                 pipeline = Some((name.clone(), off.clone()));
             }
@@ -356,6 +365,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         needs_design,
         explained,
         pipeline,
+        usage,
         api,
         subscription,
         started_ms: first.event.at_ms,

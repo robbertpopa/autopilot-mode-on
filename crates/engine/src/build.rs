@@ -192,6 +192,10 @@ impl<A: Agent> Round for BuildRound<'_, A> {
                     .journal
                     .borrow_mut()
                     .push(Event::AgentActivity { summary })?,
+                AgentEvent::Usage(usage) => self
+                    .journal
+                    .borrow_mut()
+                    .push(Event::UsageReported { usage })?,
                 AgentEvent::Cost { amount, estimated } => {
                     cost = cost.checked_add(amount).unwrap_or(cost);
                     self.journal
