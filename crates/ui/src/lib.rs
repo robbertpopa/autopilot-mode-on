@@ -7,6 +7,7 @@ mod backend;
 mod composer;
 pub mod demo;
 mod nav;
+mod new_ticket;
 mod pipeline;
 mod plan_review;
 mod run;
@@ -89,6 +90,7 @@ mod tests {
         let mut app = App::new(&context, options.clone(), false);
         for mode in [
             Mode::Today,
+            Mode::NewTicket,
             Mode::Design,
             Mode::Watch,
             Mode::Cost,
@@ -273,20 +275,42 @@ mod tests {
             ticket: None,
         };
         backend::AgentChoice::Practice.save(&options.data_dir);
-        let outcome = perform(
-            &options,
-            &Action::Start {
-                title: "Real ticket".into(),
-                description: "Show the time in the right zone".into(),
-                attachments: Vec::new(),
-                workspace: None,
-            },
-        );
-        assert!(outcome.is_ok(), "{outcome:?}");
+        // Go through the New ticket page: type, then press Enter in the box.
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.start_new();
+        assert_eq!(app.mode, Mode::NewTicket);
+        app.home.description = "Show the time in the right zone".into();
+        frame(&mut app, &context);
+        let enter = egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: Some(egui::Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1500.0, 920.0),
+            )),
+            events: vec![enter],
+            ..Default::default()
+        };
+        let _ = context.run(input, |context| app.ui(context));
+        for _ in 0..200 {
+            frame(&mut app, &context);
+            if app.notice.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let outcome = app.notice.clone();
+        assert!(outcome.as_ref().is_some_and(|(ok, _)| *ok), "{outcome:?}");
         let snapshot = read(&options);
         assert_eq!(snapshot.tickets.len(), 1, "{:?}", snapshot.problem);
         let ticket = &snapshot.tickets[0];
-        assert_eq!(ticket.title, "Real ticket");
+        assert_eq!(ticket.title, "Show the time in the right zone");
         let understand = ticket.step(Step::Understand).unwrap();
         assert!(
             matches!(

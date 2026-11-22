@@ -10,7 +10,7 @@ use autopilot_profile::Profile;
 use eframe::egui::{self, Align, Color32, Frame, Layout, Margin, RichText, Stroke};
 
 use crate::backend::{self, Action, Message, Options, Snapshot};
-use crate::composer::{self, NewTicket};
+use crate::composer::NewTicket;
 use crate::theme;
 
 /// The width of the one column the screens are laid out in.
@@ -19,6 +19,7 @@ const COLUMN: f32 = 900.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
     Today,
+    NewTicket,
     PlanReview,
     Design,
     Watch,
@@ -60,7 +61,7 @@ pub struct App {
     pub(crate) profile_problem: Option<(Step, String)>,
     pub(crate) help_open: bool,
     pub(crate) busy: bool,
-    new_started: bool,
+    pub(crate) new_started: bool,
     /// The palette in use, resolved from `theme`.
     pub(crate) light: bool,
     pub(crate) theme: theme::ThemeChoice,
@@ -73,7 +74,8 @@ pub struct App {
     last_badges: std::collections::HashMap<TicketId, Badge>,
     update: Option<autopilot_update::Update>,
     installing: bool,
-    home: NewTicket,
+    pub(crate) home: NewTicket,
+    pub(crate) kind: crate::new_ticket::Kind,
     watching: bool,
     next_update_check: Option<std::time::Instant>,
     pub(crate) accounts: Option<autopilot_accounts::Accounts>,
@@ -133,6 +135,7 @@ impl App {
             update: None,
             installing: false,
             home: NewTicket::default(),
+            kind: crate::new_ticket::Kind::default(),
             watching: watch,
             next_update_check: None,
             accounts: None,
@@ -217,6 +220,7 @@ impl App {
                 self.open(&id);
                 self.mode = Mode::PlanReview;
             }
+            ("new", _) => self.mode = Mode::NewTicket,
             ("cost", _) => self.mode = Mode::Cost,
             ("accounts", _) => self.mode = Mode::Accounts,
             ("run", Some(id)) => self.open(&id),
@@ -252,7 +256,7 @@ impl App {
     /// "New ticket": go to the home screen with an empty message box.
     pub(crate) fn start_new(&mut self) {
         self.selected = None;
-        self.mode = Mode::Watch;
+        self.mode = Mode::NewTicket;
         self.home = NewTicket::default();
     }
 
@@ -330,6 +334,7 @@ impl App {
                                 self.notice_bar(ui);
                                 match self.mode {
                                     Mode::Today => self.today_screen(ui),
+                                    Mode::NewTicket => self.new_ticket_screen(ui),
                                     Mode::PlanReview => self.plan_review(ui),
                                     Mode::Design => self.pipeline_screen(ui),
                                     Mode::Watch => self.watch_screen(ui),
@@ -357,11 +362,12 @@ impl App {
         if paths.is_empty() {
             return;
         }
-        if self.mode == Mode::Watch {
-            match self.current().map(|view| view.id.clone()) {
-                Some(ticket) => self.act(Action::Attach { ticket, paths }),
-                None => self.home.add(paths),
-            }
+        if self.mode == Mode::NewTicket {
+            self.home.add(paths);
+        } else if self.mode == Mode::Watch
+            && let Some(ticket) = self.current().map(|view| view.id.clone())
+        {
+            self.act(Action::Attach { ticket, paths });
         }
     }
 
@@ -527,7 +533,7 @@ impl App {
         self.mode_tabs(ui);
         ui.add_space(14.0);
         match self.current().map(|view| view.id.clone()) {
-            None => self.home_screen(ui),
+            None => self.today_screen(ui),
             Some(id) => self.ticket_page(ui, &id),
         }
     }
@@ -701,90 +707,4 @@ impl App {
         }
         ctx.request_repaint_after(UPDATE_EVERY);
     }
-}
-
-impl App {
-    /// The first screen: one box to start work, then what waits for you.
-    fn home_screen(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("What should it work on?").size(32.0).strong());
-        ui.label(theme::muted(
-            "Describe a change. It reads the code, asks only what it must, and shows every step. Writing code is not switched on yet.",
-        ));
-        ui.add_space(14.0);
-        // The folder last chosen stays chosen until it is changed.
-        if self.home.workspace.is_none() {
-            self.home.workspace = backend::saved_workspace(&self.options.data_dir);
-        }
-        let before = self.home.workspace.clone();
-        let start = composer::show(ui, &mut self.home);
-        if self.home.workspace != before {
-            backend::save_workspace(&self.options.data_dir, self.home.workspace.as_deref());
-        }
-        if self.agent == backend::AgentChoice::Practice {
-            ui.add_space(6.0);
-            ui.label(theme::muted(
-                "Offline demo agent: the answers are fixed samples. Switch to Claude in Settings > Accounts.",
-            ));
-        }
-        if let Some(action) = start {
-            self.home = NewTicket::default();
-            self.new_started = true;
-            self.act(action);
-        }
-        ui.add_space(18.0);
-        let mut open = None;
-        let waiting: Vec<&TicketView> = self
-            .snapshot
-            .tickets
-            .iter()
-            .filter(|view| view.badge == Badge::NeedsYou)
-            .collect();
-        if !waiting.is_empty() {
-            ui.label(
-                RichText::new("Waiting for you")
-                    .size(18.0)
-                    .strong()
-                    .color(theme::AMBER()),
-            );
-            for view in waiting {
-                if home_row(ui, view, "Answer") {
-                    open = Some(view.id.clone());
-                }
-            }
-            ui.add_space(14.0);
-        }
-        let rest: Vec<&TicketView> = self
-            .snapshot
-            .tickets
-            .iter()
-            .filter(|view| view.badge != Badge::NeedsYou)
-            .collect();
-        if !rest.is_empty() {
-            ui.label(RichText::new("Tickets").size(18.0).strong());
-            for view in rest {
-                if home_row(ui, view, "Open") {
-                    open = Some(view.id.clone());
-                }
-            }
-        }
-        if let Some(id) = open {
-            self.open(&id);
-        }
-    }
-}
-
-fn home_row(ui: &mut egui::Ui, view: &TicketView, action: &str) -> bool {
-    let mut clicked = false;
-    theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-        ui.set_width(ui.available_width() - 38.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(&view.title).size(16.0).strong());
-            let (text, fill, color) = badge_colors(view.badge, view);
-            theme::pill(ui, &text, fill, color);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                clicked = ui.button(action).clicked();
-            });
-        });
-    });
-    clicked
 }
