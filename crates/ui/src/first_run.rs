@@ -219,10 +219,11 @@ impl App {
         let last = self.welcome_step + 1 == STEPS.len();
         let ready = self.step_ready();
         ui.horizontal(|ui| {
-            if self.welcome_step > 0 && ui.button("Back").clicked() {
+            let tall = |text: &str| egui::Button::new(text).min_size(vec2(0.0, 34.0));
+            if self.welcome_step > 0 && ui.add(tall("Back")).clicked() {
                 self.welcome_step -= 1;
             }
-            if self.welcome_step < 2 && ui.button("Check again").clicked() {
+            if self.welcome_step < 2 && ui.add(tall("Check again")).clicked() {
                 self.accounts = None;
                 backend::fetch_accounts(self.context.clone(), self.sender.clone());
             }
@@ -235,7 +236,11 @@ impl App {
                 // The environment can be set up later, on Projects.
                 let skip = self.welcome_step == 2
                     && ui
-                        .add(egui::Button::new(RichText::new("Skip for now").strong()).frame(false))
+                        .add(
+                            egui::Button::new(RichText::new("Skip for now").strong())
+                                .frame(false)
+                                .min_size(vec2(0.0, 34.0)),
+                        )
                         .clicked();
                 if last && next {
                     self.finish_welcome();
@@ -290,17 +295,9 @@ impl App {
 
     fn welcome_header(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let (mark, _) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::hover());
-            ui.painter().rect_filled(
-                mark,
-                CornerRadius::same(9),
-                Color32::from_rgb(0xF5, 0xA6, 0x23),
-            );
-            ui.painter().rect_filled(
-                egui::Rect::from_center_size(mark.center(), vec2(16.0, 9.0)),
-                CornerRadius::same(5),
-                Color32::from_rgb(0x14, 0x18, 0x1F),
-            );
+            if let Some(icon) = &self.icon {
+                ui.add(egui::Image::new(icon).fit_to_exact_size(vec2(36.0, 36.0)));
+            }
             ui.label(
                 RichText::new("autopilot-mode-on")
                     .monospace()
@@ -504,7 +501,7 @@ impl App {
                 let (logo, line) = if name == "GitHub" {
                     (Logo::Github, "Opens pull requests · needed to ship")
                 } else {
-                    (Logo::Azure, "Azure DevOps · optional")
+                    (Logo::Azure, "Tickets and pipelines · optional")
                 };
                 let row = rows(&accounts).into_iter().find(|row| row.name == name);
                 ui.horizontal(|ui| {
@@ -684,7 +681,8 @@ impl App {
         let before = self.theme;
         let mut chosen = self.theme;
         let width = (ui.available_width() - 32.0) / 3.0;
-        ui.horizontal(|ui| {
+        // Top-aligned so tiles of different content height start on one line.
+        ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
             ui.spacing_mut().item_spacing.x = 16.0;
             for (value, label) in [
                 (theme::ThemeChoice::System, "System"),
