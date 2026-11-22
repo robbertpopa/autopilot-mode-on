@@ -469,9 +469,39 @@ mod tests {
         let context = egui::Context::default();
         assert!(!App::new(&context, options.clone(), false).light);
         std::fs::write(directory.path().join("ui-theme.txt"), "light").unwrap();
-        let mut app = App::new(&context, options, false);
-        assert!(app.light);
+        let mut app = App::new(&context, options.clone(), false);
+        assert!(app.light, "an old `light` file still loads");
         frame(&mut app, &context);
+
+        // Each of the three words survives a choose, restart round trip.
+        for (choice, word) in [
+            (theme::ThemeChoice::System, "system"),
+            (theme::ThemeChoice::Light, "light"),
+            (theme::ThemeChoice::Dark, "dark"),
+        ] {
+            app.choose_theme(choice);
+            let saved = std::fs::read_to_string(directory.path().join("ui-theme.txt")).unwrap();
+            assert_eq!(saved, word);
+            let restarted = App::new(&context, options.clone(), false);
+            assert_eq!(restarted.theme, choice);
+        }
+        std::fs::write(directory.path().join("ui-theme.txt"), "dark").unwrap();
+        assert!(
+            !App::new(&context, options, false).light,
+            "an old `dark` file still loads"
+        );
+    }
+
+    // Invariant: `System` follows the operating system and the other two
+    // ignore it. A change that always returned dark would pass the other test.
+    #[test]
+    fn system_follows_the_operating_system() {
+        use theme::ThemeChoice::{Dark, Light, System};
+        assert!(System.is_light(Some(egui::Theme::Light)));
+        assert!(!System.is_light(Some(egui::Theme::Dark)));
+        assert!(!System.is_light(None));
+        assert!(Light.is_light(Some(egui::Theme::Dark)));
+        assert!(!Dark.is_light(Some(egui::Theme::Light)));
     }
 
     // Invariant: a change asked for in words is shown first and only applied

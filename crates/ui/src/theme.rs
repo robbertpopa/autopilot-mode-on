@@ -31,33 +31,96 @@ macro_rules! colors {
     };
 }
 
+// The tokens of the "Autopilot Redesign" canvas. `AMBER`, `GREEN` and `RED`
+// are text shades: in the light palette they are darker than the canvas fills,
+// because a bright fill colour on white fails 4.5:1 as text.
 colors! {
-    BACKGROUND: Color32::from_rgb(0x0E, 0x0F, 0x11), Color32::from_rgb(0xF6, 0xF7, 0xF9);
-    TITLE_BAR: Color32::from_rgb(0x0A, 0x0B, 0x0D), Color32::from_rgb(0xFF, 0xFF, 0xFF);
-    SIDEBAR: Color32::from_rgb(0x12, 0x13, 0x16), Color32::from_rgb(0xEE, 0xF0, 0xF3);
-    CARD: Color32::from_rgb(0x17, 0x19, 0x1C), Color32::from_rgb(0xFF, 0xFF, 0xFF);
-    NODE: Color32::from_rgb(0x1D, 0x20, 0x24), Color32::from_rgb(0xF2, 0xF4, 0xF7);
-    FIELD: Color32::from_rgb(0x14, 0x16, 0x1A), Color32::from_rgb(0xFF, 0xFF, 0xFF);
-    SELECTED: Color32::from_rgb(0x22, 0x25, 0x2A), Color32::from_rgb(0xE3, 0xE7, 0xED);
-    BORDER: Color32::from_rgb(0x2A, 0x2D, 0x33), Color32::from_rgb(0xD9, 0xDD, 0xE3);
-    BORDER_STRONG: Color32::from_rgb(0x3A, 0x3F, 0x47), Color32::from_rgb(0xC3, 0xC9, 0xD2);
-    TEXT: Color32::from_rgb(0xE8, 0xEA, 0xED), Color32::from_rgb(0x15, 0x18, 0x1D);
-    TEXT_SOFT: Color32::from_rgb(0xC9, 0xCE, 0xD6), Color32::from_rgb(0x3A, 0x41, 0x4B);
-    TEXT_MUTED: Color32::from_rgb(0x9A, 0xA1, 0xAB), Color32::from_rgb(0x6A, 0x72, 0x7D);
-    ARROW: Color32::from_rgb(0x6C, 0x74, 0x80), Color32::from_rgb(0x8A, 0x92, 0x9D);
-    BLUE: Color32::from_rgb(0x5B, 0x9B, 0xFF), Color32::from_rgb(0x2F, 0x6F, 0xE4);
+    BACKGROUND: Color32::from_rgb(0x0F, 0x10, 0x12), Color32::from_rgb(0xF4, 0xF5, 0xF7);
+    TITLE_BAR: Color32::from_rgb(0x13, 0x14, 0x17), Color32::from_rgb(0xFF, 0xFF, 0xFF);
+    SIDEBAR: Color32::from_rgb(0x13, 0x14, 0x17), Color32::from_rgb(0xEC, 0xEE, 0xF2);
+    CARD: Color32::from_rgb(0x17, 0x18, 0x1B), Color32::from_rgb(0xFF, 0xFF, 0xFF);
+    NODE: Color32::from_rgb(0x1E, 0x20, 0x24), Color32::from_rgb(0xEE, 0xF0, 0xF3);
+    FIELD: Color32::from_rgb(0x0F, 0x10, 0x12), Color32::from_rgb(0xFF, 0xFF, 0xFF);
+    SELECTED: Color32::from_rgb(0x26, 0x28, 0x2D), Color32::from_rgb(0xE3, 0xE6, 0xEB);
+    BORDER: Color32::from_rgb(0x2A, 0x2C, 0x31), Color32::from_rgb(0xDC, 0xDF, 0xE5);
+    BORDER_STRONG: Color32::from_rgb(0x33, 0x36, 0x3C), Color32::from_rgb(0xC9, 0xCE, 0xD6);
+    TEXT: Color32::from_rgb(0xEC, 0xED, 0xEF), Color32::from_rgb(0x15, 0x18, 0x1D);
+    TEXT_SOFT: Color32::from_rgb(0xC4, 0xC7, 0xCD), Color32::from_rgb(0x3A, 0x41, 0x4B);
+    TEXT_MUTED: Color32::from_rgb(0x93, 0x99, 0xA3), Color32::from_rgb(0x5F, 0x67, 0x73);
+    ARROW: Color32::from_rgb(0x6B, 0x70, 0x79), Color32::from_rgb(0x8A, 0x92, 0x9D);
+    BLUE: Color32::from_rgb(0x6E, 0xA2, 0xFF), Color32::from_rgb(0x2F, 0x6F, 0xE4);
     BLUE_TEXT: Color32::from_rgb(0xA9, 0xC9, 0xFF), Color32::from_rgb(0x1D, 0x4F, 0xA8);
     BLUE_FILL: Color32::from_rgb(0x13, 0x23, 0x3D), Color32::from_rgb(0xE2, 0xEC, 0xFF);
-    GREEN: Color32::from_rgb(0x4C, 0xC3, 0x8A), Color32::from_rgb(0x1E, 0x8F, 0x5C);
-    GREEN_FILL: Color32::from_rgb(0x14, 0x29, 0x1F), Color32::from_rgb(0xDD, 0xF3, 0xE8);
-    AMBER: Color32::from_rgb(0xF0, 0xB9, 0x4D), Color32::from_rgb(0xA8, 0x6A, 0x00);
-    AMBER_FILL: Color32::from_rgb(0x2A, 0x21, 0x10), Color32::from_rgb(0xFF, 0xF1, 0xD6);
-    RED: Color32::from_rgb(0xF0, 0x77, 0x7A), Color32::from_rgb(0xC9, 0x3A, 0x3E);
+    ON_ACCENT: Color32::from_rgb(0x0B, 0x12, 0x20), Color32::from_rgb(0xFF, 0xFF, 0xFF);
+    GREEN: Color32::from_rgb(0x4C, 0xC3, 0x8A), Color32::from_rgb(0x1E, 0x7A, 0x4E);
+    GREEN_FILL: Color32::from_rgb(0x14, 0x2A, 0x1F), Color32::from_rgb(0xDD, 0xF3, 0xE8);
+    AMBER: Color32::from_rgb(0xF0, 0xB9, 0x4D), Color32::from_rgb(0x8A, 0x56, 0x00);
+    AMBER_FILL: Color32::from_rgb(0x2B, 0x21, 0x10), Color32::from_rgb(0xFF, 0xF1, 0xD6);
+    RED: Color32::from_rgb(0xF5, 0x9A, 0x9C), Color32::from_rgb(0xB4, 0x2F, 0x33);
     RED_FILL: Color32::from_rgb(0x2E, 0x16, 0x18), Color32::from_rgb(0xFD, 0xE3, 0xE3);
-    GREY_FILL: Color32::from_rgb(0x26, 0x2A, 0x30), Color32::from_rgb(0xE6, 0xE9, 0xEE);
-    GREY_TEXT: Color32::from_rgb(0xAE, 0xB4, 0xBE), Color32::from_rgb(0x52, 0x5A, 0x66);
-    LIGHT_BUTTON: Color32::from_rgb(0xF3, 0xF4, 0xF6), Color32::from_rgb(0x15, 0x18, 0x1D);
-    DARK_ON_LIGHT: Color32::from_rgb(0x11, 0x13, 0x18), Color32::from_rgb(0xFF, 0xFF, 0xFF);
+    GREY_FILL: Color32::from_rgb(0x26, 0x28, 0x2D), Color32::from_rgb(0xE3, 0xE6, 0xEB);
+    GREY_TEXT: Color32::from_rgb(0xB5, 0xBA, 0xC2), Color32::from_rgb(0x4A, 0x52, 0x5D);
+}
+
+/// The owner's choice. `System` follows the operating system and is checked
+/// again every frame, because the colour functions read one stored flag.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ThemeChoice {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemeChoice {
+    /// Read the saved word. Unknown text falls back to `System` so a damaged
+    /// file never stops the window from opening.
+    #[must_use]
+    pub fn parse(text: &str) -> Self {
+        match text.trim() {
+            "light" => Self::Light,
+            "dark" => Self::Dark,
+            _ => Self::System,
+        }
+    }
+
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::System => Self::Light,
+            Self::Light => Self::Dark,
+            Self::Dark => Self::System,
+        }
+    }
+
+    /// True for the light palette. With no answer from the system the window
+    /// stays dark, the palette it had before there was a choice.
+    #[must_use]
+    pub fn is_light(self, system: Option<egui::Theme>) -> bool {
+        match self {
+            Self::Light => true,
+            Self::Dark => false,
+            Self::System => system == Some(egui::Theme::Light),
+        }
+    }
 }
 
 /// The product icon, shared by the window and the title bar.
@@ -203,7 +266,7 @@ pub fn cost_tag(ui: &mut Ui, estimated: bool) {
                     RichText::new("API $")
                         .size(10.5)
                         .strong()
-                        .color(Color32::from_rgb(0x0B, 0x12, 0x20)),
+                        .color(ON_ACCENT()),
                 );
             });
     }
@@ -230,14 +293,9 @@ pub fn named(response: egui::Response, name: impl Into<String>) -> egui::Respons
 
 /// A button for the one main action of a screen.
 pub fn primary(text: &str) -> egui::Button<'static> {
-    egui::Button::new(
-        RichText::new(text)
-            .strong()
-            .size(16.0)
-            .color(DARK_ON_LIGHT()),
-    )
-    .fill(LIGHT_BUTTON())
-    .min_size(egui::vec2(0.0, 38.0))
+    egui::Button::new(RichText::new(text).strong().size(16.0).color(ON_ACCENT()))
+        .fill(BLUE())
+        .min_size(egui::vec2(0.0, 38.0))
 }
 
 /// A segmented switch. Returns true if the choice changed.

@@ -62,7 +62,9 @@ pub struct App {
     pub(crate) help_open: bool,
     pub(crate) busy: bool,
     new_started: bool,
+    /// The palette in use, resolved from `theme`.
     pub(crate) light: bool,
+    pub(crate) theme: theme::ThemeChoice,
     pub(crate) agent: backend::AgentChoice,
     pub(crate) orchestrator: backend::Orchestrator,
     /// "Do not ask again after this kind of step" on an approval.
@@ -88,7 +90,8 @@ impl App {
     /// directory; tests leave it off and feed snapshots themselves.
     #[must_use]
     pub fn new(context: &egui::Context, options: Options, watch: bool) -> Self {
-        let light = read_theme(&options);
+        let choice = read_theme(&options);
+        let light = choice.is_light(context.system_theme());
         let agent = backend::AgentChoice::read(&options.data_dir);
         let orchestrator = backend::Orchestrator::read(&options.data_dir);
         let notify = backend::notifications_on(&options.data_dir);
@@ -118,6 +121,7 @@ impl App {
             busy: false,
             new_started: false,
             light,
+            theme: choice,
             agent,
             orchestrator,
             always: false,
@@ -281,6 +285,7 @@ impl App {
     pub fn ui(&mut self, ctx: &egui::Context) {
         self.drain();
         self.update_clock(ctx);
+        self.follow_system_theme(ctx);
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
             self.start_new();
         }
@@ -366,11 +371,13 @@ impl App {
                         if theme::named(ui.button("?").on_hover_text("Help"), "Help").clicked() {
                             self.help_open = !self.help_open;
                         }
-                        let label = if self.light { "Dark" } else { "Light" };
-                        if ui.button(label).on_hover_text("Switch theme").clicked() {
-                            self.light = !self.light;
-                            theme::apply(&self.context, self.light);
-                            save_theme(&self.options, self.light);
+                        let label = format!("Theme: {}", self.theme.label());
+                        if ui
+                            .button(label)
+                            .on_hover_text("System, Light or Dark")
+                            .clicked()
+                        {
+                            self.choose_theme(self.theme.next());
                         }
                         self.spend_chip(ui);
                         self.update_button(ui);
@@ -678,17 +685,33 @@ pub fn banner(ui: &mut egui::Ui, text: &str, ok: bool) {
 
 const THEME_FILE: &str = "ui-theme.txt";
 
-fn read_theme(options: &Options) -> bool {
+fn read_theme(options: &Options) -> theme::ThemeChoice {
     std::fs::read_to_string(options.data_dir.join(THEME_FILE))
-        .is_ok_and(|text| text.trim() == "light")
+        .map(|text| theme::ThemeChoice::parse(&text))
+        .unwrap_or_default()
 }
 
-fn save_theme(options: &Options, light: bool) {
+fn save_theme(options: &Options, choice: theme::ThemeChoice) {
     let _ = std::fs::create_dir_all(&options.data_dir);
-    let _ = std::fs::write(
-        options.data_dir.join(THEME_FILE),
-        if light { "light" } else { "dark" },
-    );
+    let _ = std::fs::write(options.data_dir.join(THEME_FILE), choice.word());
+}
+
+impl App {
+    pub(crate) fn choose_theme(&mut self, choice: theme::ThemeChoice) {
+        self.theme = choice;
+        save_theme(&self.options, choice);
+        self.light = choice.is_light(self.context.system_theme());
+        theme::apply(&self.context, self.light);
+    }
+
+    /// Re-apply the palette when the system switches while `System` is chosen.
+    fn follow_system_theme(&mut self, ctx: &egui::Context) {
+        let light = self.theme.is_light(ctx.system_theme());
+        if light != self.light {
+            self.light = light;
+            theme::apply(ctx, light);
+        }
+    }
 }
 
 impl App {}
