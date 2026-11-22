@@ -125,6 +125,8 @@ pub struct App {
     pub(crate) notify: bool,
     /// Whether the first screen has been dealt with, kept in the data folder.
     pub(crate) welcomed: bool,
+    /// Which step of the full-screen welcome the owner is on.
+    pub(crate) welcome_step: usize,
     announced: bool,
     last_badges: std::collections::HashMap<TicketId, Badge>,
     update: Option<autopilot_update::Update>,
@@ -155,7 +157,8 @@ impl App {
         let sample_data = options.data_dir.join(crate::demo::MARKER).exists();
         let saved_workspace = backend::saved_workspace(&options.data_dir);
         let notify = backend::notifications_on(&options.data_dir);
-        let welcomed = backend::welcomed(&options.data_dir);
+        // An install that already chose a folder predates the welcome.
+        let welcomed = backend::welcomed(&options.data_dir) || saved_workspace.is_some();
         theme::apply(context, light);
         let (sender, receiver) = mpsc::channel();
         if watch {
@@ -219,6 +222,7 @@ impl App {
             always: false,
             notify,
             welcomed,
+            welcome_step: 0,
             announced: false,
             last_badges: std::collections::HashMap::new(),
             update: None,
@@ -548,6 +552,10 @@ impl App {
         self.update_clock(ctx);
         self.auto_orchestrate();
         self.follow_system_theme(ctx);
+        if self.is_first_run() {
+            self.welcome(ctx);
+            return;
+        }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
             self.start_new();
         }

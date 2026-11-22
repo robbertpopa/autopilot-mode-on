@@ -314,9 +314,64 @@ mod tests {
         assert!(app.is_first_run());
         app.mode = Mode::Today;
         frame(&mut app, &context);
+        // Choosing the folder is a step of the welcome, not its end.
         backend::save_workspace(&options.data_dir, Some(directory.path()));
         app.saved_workspace = backend::saved_workspace(&options.data_dir);
-        assert!(!app.is_first_run());
+        assert!(app.is_first_run());
+        // An install that already has a folder predates the welcome.
+        let mut older = App::new(&context, options.clone(), false);
+        older.set_snapshot(read(&options));
+        assert!(!older.is_first_run());
+    }
+
+    fn drawn_text(app: &mut App, context: &egui::Context) -> String {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1500.0, 920.0),
+            )),
+            ..Default::default()
+        };
+        let output = context.run(input, |context| app.ui(context));
+        let mut text = String::new();
+        for clipped in output.shapes {
+            if let egui::Shape::Text(shape) = clipped.shape {
+                text.push_str(shape.galley.text());
+                text.push('\n');
+            }
+        }
+        text
+    }
+
+    // Invariant: while the welcome is open it is the whole window: every step
+    // shows its own content and none of the navigation. A change that draws
+    // the navigation or skips a step would show a ticket screen first.
+    #[test]
+    fn the_welcome_is_full_screen_with_four_steps() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        for (step, wanted) in [
+            (0, "How should Claude run?"),
+            (1, "Other tools"),
+            (2, "Where does your code live?"),
+            (3, "Pick a look"),
+        ] {
+            app.welcome_step = step;
+            let text = drawn_text(&mut app, &context);
+            assert!(text.contains(wanted), "step {step} shows {wanted}: {text}");
+            assert!(!text.contains("Inbox"), "no navigation in the welcome");
+        }
+        app.welcome_step = 0;
+        let text = drawn_text(&mut app, &context);
+        assert!(text.contains("API key"), "the API key is explained");
     }
 
     // Invariant: the first screen is remembered once dealt with; a fresh
