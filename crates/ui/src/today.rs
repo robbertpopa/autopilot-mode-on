@@ -6,7 +6,7 @@ use autopilot_engine::{Badge, TicketView, step_name};
 use autopilot_pipeline::StepState;
 use eframe::egui::{self, Frame, Margin, RichText, Stroke};
 
-use crate::app::{App, Mode, badge_colors};
+use crate::app::{App, Mode};
 use crate::backend::{self, Action};
 use crate::run::state_text;
 use crate::theme;
@@ -52,10 +52,56 @@ fn row(ui: &mut egui::Ui, key: &str, value: &str) {
     ui.horizontal_top(|ui| {
         ui.add_sized(
             [120.0, 18.0],
-            egui::Label::new(theme::muted(key)).halign(egui::Align::LEFT),
+            egui::Label::new(
+                RichText::new(key.to_uppercase())
+                    .monospace()
+                    .size(11.0)
+                    .strong()
+                    .color(theme::TEXT_MUTED()),
+            )
+            .halign(egui::Align::LEFT),
         );
         ui.label(value);
     });
+}
+
+/// A small mono caption, like the canvas `lbl`.
+fn caption(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        RichText::new(text.to_uppercase())
+            .monospace()
+            .size(11.0)
+            .strong()
+            .color(theme::TEXT_MUTED()),
+    );
+}
+
+/// What a waiting ticket is called in the queue and in what colours.
+fn kind_chip(view: &TicketView, question: bool) -> (&'static str, egui::Color32, egui::Color32) {
+    match view.badge {
+        Badge::NeedsYou if question => ("question", theme::AMBER_FILL(), theme::AMBER()),
+        Badge::NeedsYou => ("approve", theme::AMBER_FILL(), theme::AMBER()),
+        Badge::Interrupted => ("interrupted", theme::RED_FILL(), theme::RED()),
+        _ => ("failed", theme::RED_FILL(), theme::RED()),
+    }
+}
+
+fn age_text(last_ms: u64) -> String {
+    let minutes = crate::now_ms().saturating_sub(last_ms) / 60_000;
+    match minutes {
+        0 => "now".to_owned(),
+        1..=59 => format!("{minutes}m"),
+        60..=1439 => format!("{}h", minutes / 60),
+        _ => format!("{}d", minutes / 1440),
+    }
+}
+
+fn project_of(view: &TicketView) -> String {
+    crate::nav::project_name(view).unwrap_or_else(|| "no project".to_owned())
+}
+
+fn chip(ui: &mut egui::Ui, text: &str, fill: egui::Color32, color: egui::Color32) {
+    theme::pill(ui, text, fill, color);
 }
 
 fn round_strip(view: &TicketView) -> String {
@@ -162,38 +208,143 @@ impl App {
             self.first_run_screen(ui);
             return;
         }
-        ui.label(RichText::new("Today").size(30.0).strong());
         let waiting: Vec<TicketView> = queue(&self.snapshot.tickets).into_iter().cloned().collect();
+        let running = self
+            .snapshot
+            .tickets
+            .iter()
+            .filter(|view| view.badge == Badge::Running)
+            .count();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Inbox").size(18.0).strong());
+            chip(
+                ui,
+                &format!("{} waiting", waiting.len()),
+                theme::AMBER_FILL(),
+                theme::AMBER(),
+            );
+            chip(
+                ui,
+                &format!("{running} running"),
+                theme::BLUE_FILL(),
+                theme::BLUE_TEXT(),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new("j k nav   a approve   e note   r reject")
+                        .monospace()
+                        .size(11.0)
+                        .color(theme::TEXT_MUTED()),
+                );
+            });
+        });
         if waiting.is_empty() {
             ui.label(theme::muted("Nothing waits for you."));
-        } else {
-            ui.label(theme::muted("J/K move   A approve   R reject   E open"));
         }
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         let picked = self.today_pick();
         let mut select = None;
-        for view in &waiting {
-            let chosen = picked.as_ref() == Some(&view.id);
-            let button = egui::Button::new(RichText::new(&view.title).size(15.0))
-                .fill(if chosen {
-                    theme::SELECTED()
-                } else {
-                    egui::Color32::TRANSPARENT
-                })
-                .min_size(egui::vec2(ui.available_width(), 38.0));
-            if theme::named(ui.add(button), &view.title).clicked() {
-                select = Some(view.id.clone());
-            }
-        }
+        let total = ui.available_width();
+        let queue_width = (total * 0.34).clamp(260.0, 380.0);
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 16.0;
+            ui.allocate_ui_with_layout(
+                egui::vec2(queue_width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(queue_width);
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    for view in &waiting {
+                        let chosen = picked.as_ref() == Some(&view.id);
+                        if self.queue_card(ui, view, chosen) {
+                            select = Some(view.id.clone());
+                        }
+                    }
+                    self.working_list(ui);
+                },
+            );
+            ui.vertical(|ui| {
+                if let Some(view) = picked.as_ref().and_then(|id| self.ticket(id).cloned()) {
+                    self.today_detail(ui, &view);
+                }
+            });
+        });
         if select.is_some() {
             self.today_selected = select;
         }
-        if let Some(view) = picked.and_then(|id| self.ticket(&id).cloned()) {
-            ui.add_space(12.0);
-            self.today_detail(ui, &view);
-        }
-        self.working_list(ui);
         self.health_items(ui);
+    }
+
+    /// One waiting ticket in the queue. Returns true when it was clicked.
+    fn queue_card(&self, ui: &mut egui::Ui, view: &TicketView, chosen: bool) -> bool {
+        let question = view
+            .asking
+            .as_ref()
+            .and_then(|(_, request)| backend::waiting_request(&self.options, request))
+            .is_some_and(|waiting| waiting.question);
+        let (kind, fill, color) = kind_chip(view, question);
+        let step = view
+            .asking
+            .as_ref()
+            .map(|(step, _)| step_name(*step))
+            .or_else(|| {
+                view.steps
+                    .iter()
+                    .find(|card| {
+                        matches!(card.state, StepState::Failed(_) | StepState::Interrupted(_))
+                    })
+                    .map(|card| step_name(card.step))
+            })
+            .unwrap_or("");
+        let shown = Frame::new()
+            .fill(if chosen {
+                theme::CARD()
+            } else {
+                egui::Color32::TRANSPARENT
+            })
+            .stroke(Stroke::new(
+                1.0_f32,
+                if chosen {
+                    theme::AMBER()
+                } else {
+                    theme::BORDER()
+                },
+            ))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.horizontal(|ui| {
+                    chip(ui, kind, fill, color);
+                    ui.label(theme::mono(step).size(11.0).color(theme::TEXT_MUTED()));
+                    ui.label(
+                        theme::mono(format!("· {}", project_of(view)))
+                            .size(11.0)
+                            .color(theme::TEXT_MUTED()),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            theme::mono(age_text(view.last_ms))
+                                .size(11.0)
+                                .color(theme::TEXT_MUTED()),
+                        );
+                    });
+                });
+                ui.label(
+                    RichText::new(&view.title)
+                        .monospace()
+                        .size(13.0)
+                        .strong()
+                        .color(theme::TEXT()),
+                );
+            });
+        let click = ui.interact(
+            shown.response.rect,
+            ui.id().with(("queue", view.id.as_str())),
+            egui::Sense::click(),
+        );
+        theme::named(click, &view.title).clicked()
     }
 
     /// Open review findings, each linking to Health. Nothing shows when the
@@ -203,7 +354,7 @@ impl App {
             return;
         }
         ui.add_space(18.0);
-        ui.label(RichText::new("Pipeline health").size(18.0).strong());
+        ui.label(RichText::new("Pipeline health").size(14.0).strong());
         let mut open = None;
         let mut undo = None;
         for each in &self.tunings {
@@ -264,17 +415,37 @@ impl App {
         let waiting = view.asking.as_ref().and_then(|(step, request)| {
             backend::waiting_request(&self.options, request).map(|waiting| (*step, waiting))
         });
+        let question = waiting
+            .as_ref()
+            .is_some_and(|(_, waiting)| waiting.question);
+        let (kind, fill, color) = kind_chip(view, question);
+        let border = if view.badge == Badge::NeedsYou {
+            theme::AMBER()
+        } else {
+            theme::RED()
+        };
         Frame::new()
             .fill(theme::CARD())
-            .stroke(Stroke::new(1.0_f32, theme::BORDER()))
+            .stroke(Stroke::new(1.0_f32, border))
             .corner_radius(egui::CornerRadius::same(10))
-            .inner_margin(Margin::same(16))
+            .inner_margin(Margin::symmetric(18, 16))
             .show(ui, |ui| {
-                ui.set_width(ui.available_width() - 34.0);
-                ui.label(RichText::new(&view.title).size(18.0).strong());
-                let (text, fill, color) = badge_colors(view.badge, view);
-                theme::pill(ui, &text, fill, color);
-                ui.add_space(8.0);
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    chip(ui, kind, fill, color);
+                    ui.label(RichText::new(&view.title).monospace().size(14.0).strong());
+                    if let Some((step, _)) = &waiting {
+                        ui.label(theme::mono(step_name(*step)).color(theme::TEXT_MUTED()));
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.link("open →").clicked() {
+                            self.open(&view.id);
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(4.0);
                 match waiting {
                     Some((step, waiting)) => self.approval_rows(ui, view, step, &waiting),
                     None => self.stopped_rows(ui, view),
@@ -385,17 +556,63 @@ impl App {
         if running.is_empty() {
             return;
         }
-        ui.add_space(18.0);
-        ui.label(RichText::new("Working on its own").size(18.0).strong());
+        ui.add_space(8.0);
+        caption(ui, "Running");
         for view in running {
-            ui.horizontal(|ui| {
-                if ui.link(&view.title).clicked() {
-                    self.open(&view.id);
-                }
-                let step = view.active().map_or("", step_name);
-                ui.label(theme::muted(step));
-                ui.label(theme::mono(round_strip(&view)));
-            });
+            let shown = Frame::new()
+                .fill(theme::CARD())
+                .stroke(Stroke::new(1.0_f32, theme::BORDER()))
+                .corner_radius(egui::CornerRadius::same(8))
+                .inner_margin(Margin::symmetric(12, 10))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = 8.0;
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&view.title).monospace().strong());
+                        let step = view.active().map_or("", step_name);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(theme::mono(step).size(11.0).color(theme::BLUE_TEXT()));
+                        });
+                    });
+                    let steps = u16::try_from(view.steps.len()).unwrap_or(6).max(1);
+                    let done = view
+                        .steps
+                        .iter()
+                        .filter(|card| {
+                            matches!(card.state, StepState::Passed | StepState::Skipped(_))
+                        })
+                        .count();
+                    let count = f32::from(steps);
+                    let width = (ui.available_width() - 3.0 * (count - 1.0)) / count;
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 3.0;
+                        for index in 0..steps {
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(width.max(4.0), 4.0),
+                                egui::Sense::hover(),
+                            );
+                            let color = match usize::from(index).cmp(&done) {
+                                std::cmp::Ordering::Less => theme::GREEN(),
+                                std::cmp::Ordering::Equal => theme::BLUE(),
+                                std::cmp::Ordering::Greater => theme::BORDER(),
+                            };
+                            ui.painter()
+                                .rect_filled(rect, egui::CornerRadius::same(2), color);
+                        }
+                    });
+                    let rounds = round_strip(&view);
+                    if !rounds.is_empty() {
+                        ui.label(theme::mono(rounds).size(11.0).color(theme::TEXT_MUTED()));
+                    }
+                });
+            let click = ui.interact(
+                shown.response.rect,
+                ui.id().with(("running", view.id.as_str())),
+                egui::Sense::click(),
+            );
+            if theme::named(click, &view.title).clicked() {
+                self.open(&view.id);
+            }
         }
     }
 }

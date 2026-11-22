@@ -54,7 +54,7 @@ fn dots(ui: &mut egui::Ui, pipeline: &Pipeline) {
 
 impl App {
     pub(crate) fn pipelines_screen(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Pipelines").size(30.0).strong());
+        ui.label(RichText::new("Pipelines").size(18.0).strong());
         let Ok(profile) = &self.profile else {
             ui.label(theme::muted("The profile could not be read."));
             return;
@@ -110,7 +110,7 @@ impl App {
     /// saves it, and an agent cannot unlock Design or the pull request, drop a
     /// forced ask or change a budget.
     fn build_with_agent(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Build with agent").size(18.0).strong());
+        ui.label(RichText::new("Build with agent").size(14.0).strong());
         ui.add(
             egui::TextEdit::multiline(&mut self.draft_text)
                 .desired_rows(2)
@@ -199,7 +199,7 @@ impl App {
     }
 
     fn pipeline_detail(&mut self, ui: &mut egui::Ui, pipeline: &Pipeline) {
-        ui.label(RichText::new(&pipeline.name).size(20.0).strong());
+        ui.label(RichText::new(&pipeline.name).size(15.0).strong());
         if pipeline.builtin {
             ui.label(theme::muted(
                 "built-in, read-only. Duplicate it to change it.",

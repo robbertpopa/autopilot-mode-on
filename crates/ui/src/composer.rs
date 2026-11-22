@@ -211,7 +211,7 @@ pub fn show(ui: &mut egui::Ui, form: &mut NewTicket) -> Option<Action> {
                 attach_menu(ui, form);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let ready = form.ready();
-                    let send = egui::Button::new(RichText::new("↑").size(18.0).strong())
+                    let send = egui::Button::new(RichText::new("↑").size(14.0).strong())
                         .fill(if ready { theme::BLUE() } else { theme::NODE() })
                         .corner_radius(egui::CornerRadius::same(99))
                         .min_size(egui::vec2(36.0, 36.0));
@@ -279,7 +279,7 @@ fn attach_menu(ui: &mut egui::Ui, form: &mut NewTicket) {
         ));
         return;
     }
-    let button = egui::Button::new(RichText::new("+").size(20.0))
+    let button = egui::Button::new(RichText::new("+").size(15.0))
         .fill(theme::NODE())
         .corner_radius(egui::CornerRadius::same(99))
         .min_size(egui::vec2(36.0, 36.0));

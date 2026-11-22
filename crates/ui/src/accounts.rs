@@ -136,7 +136,7 @@ impl App {
     pub(crate) fn accounts_screen(&mut self, ui: &mut egui::Ui) {
         self.mode_tabs(ui);
         ui.add_space(14.0);
-        ui.label(RichText::new("Who is signed in?").size(30.0).strong());
+        ui.label(RichText::new("Who is signed in?").size(18.0).strong());
         ui.label(theme::muted(
             "Read from the tools on this computer. No password or token is shown or kept.",
         ));
@@ -193,7 +193,7 @@ impl App {
                         ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
                     ui.painter()
                         .circle_filled(rect.center(), 6.0, color(row.level));
-                    ui.label(RichText::new(row.name).size(18.0).strong());
+                    ui.label(RichText::new(row.name).size(14.0).strong());
                 });
                 for line in &row.lines {
                     ui.label(line);

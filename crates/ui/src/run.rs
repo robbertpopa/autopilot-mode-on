@@ -314,7 +314,7 @@ impl App {
             .inner_margin(Margin::symmetric(16, 12))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width() - 38.0);
-                ui.label(RichText::new(text).size(16.0).strong().color(color));
+                ui.label(RichText::new(text).size(14.0).strong().color(color));
                 if problem.is_none() && ready_to_design(view) {
                     let busy = self.busy;
                     if ui
@@ -373,7 +373,7 @@ impl App {
                 ui.set_width(ui.available_width() - 38.0);
                 ui.label(
                     RichText::new(format!("{} needs you", step_name(*step)))
-                        .size(16.0)
+                        .size(14.0)
                         .strong()
                         .color(theme::AMBER()),
                 );

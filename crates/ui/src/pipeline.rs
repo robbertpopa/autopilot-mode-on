@@ -51,7 +51,7 @@ impl App {
         ui.add_space(14.0);
         ui.label(
             RichText::new("How does a ticket become a pull request?")
-                .size(30.0)
+                .size(18.0)
                 .strong(),
         );
         ui.label(theme::muted(

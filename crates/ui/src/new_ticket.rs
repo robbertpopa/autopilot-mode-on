@@ -36,7 +36,7 @@ impl App {
             self.mode = Mode::Watch;
             return;
         }
-        ui.label(RichText::new("New ticket").size(30.0).strong());
+        ui.label(RichText::new("New ticket").size(18.0).strong());
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.label(theme::muted("kind"));
@@ -168,7 +168,7 @@ impl App {
 
     /// The steps and which of them will ask, read from the profile.
     fn what_will_happen(&self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("What will happen").size(18.0).strong());
+        ui.label(RichText::new("What will happen").size(14.0).strong());
         let Ok(profile) = &self.profile else {
             ui.label(theme::muted("The profile could not be read."));
             return;

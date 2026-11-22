@@ -8,14 +8,14 @@ use autopilot_core::{RequestId, Step, TicketId};
 use autopilot_engine::{Badge, TicketView, dollars, load_profile};
 use autopilot_pipeline::StepState;
 use autopilot_profile::Profile;
-use eframe::egui::{self, Align, Color32, Frame, Layout, Margin, RichText, Stroke};
+use eframe::egui::{self, Color32, Frame, Margin, RichText};
 
 use crate::backend::{self, Action, Message, Options, Snapshot};
 use crate::composer::NewTicket;
 use crate::theme;
 
 /// The width of the one column the screens are laid out in.
-const COLUMN: f32 = 900.0;
+const COLUMN: f32 = 1180.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
@@ -537,7 +537,6 @@ impl App {
             self.screen = Screen::Run;
         }
         self.take_drops(ctx);
-        self.title_bar(ctx);
         self.nav(ctx);
         if self.mode == Mode::Watch && self.current().is_some() {
             self.side_panel(ctx);
@@ -546,7 +545,7 @@ impl App {
             .frame(
                 Frame::new()
                     .fill(theme::BACKGROUND())
-                    .inner_margin(Margin::symmetric(40, 26)),
+                    .inner_margin(Margin::symmetric(32, 20)),
             )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
@@ -607,63 +606,10 @@ impl App {
         }
     }
 
-    fn title_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("title")
-            .exact_height(54.0)
-            .frame(
-                Frame::new()
-                    .fill(theme::TITLE_BAR())
-                    .stroke(Stroke::new(1.0_f32, theme::BORDER()))
-                    .inner_margin(Margin::symmetric(20, 9)),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
-                    if let Some(icon) = &self.icon {
-                        ui.add(egui::Image::new(icon).fit_to_exact_size(egui::vec2(30.0, 30.0)));
-                    }
-                    ui.label(RichText::new("Autopilot Mode On").size(16.0).strong());
-                    ui.separator();
-                    self.crumbs(ui);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if theme::named(ui.button("?").on_hover_text("Help"), "Help").clicked() {
-                            self.help_open = !self.help_open;
-                        }
-                        self.update_button(ui);
-                    });
-                });
-            });
-    }
-
-    fn crumbs(&self, ui: &mut egui::Ui) {
-        if let (Mode::Watch, Screen::Step(_), Some(view)) = (self.mode, self.screen, self.current())
-        {
-            {
-                ui.label(RichText::new(&view.title).color(theme::TEXT_SOFT()));
-                if let Screen::Step(step) = self.screen {
-                    ui.label(theme::muted(">"));
-                    ui.label(autopilot_engine::step_name(step));
-                } else {
-                    let (text, fill, color) = badge_colors(view.badge, view);
-                    theme::pill(ui, &text, fill, color);
-                }
-            }
-        } else {
-            {
-                let name = self
-                    .options
-                    .profile
-                    .parent()
-                    .and_then(|folder| folder.file_name())
-                    .map_or_else(
-                        || "project".to_owned(),
-                        |n| n.to_string_lossy().into_owned(),
-                    );
-                ui.label(theme::mono(name));
-            }
-        }
-    }
-
     fn notice_bar(&mut self, ui: &mut egui::Ui) {
+        if self.update_offered().is_some() || self.update_installing() {
+            ui.horizontal(|ui| self.update_button(ui));
+        }
         if self.sample_data {
             banner(ui, "Sample data: these tickets are not real work.", false);
         }
@@ -703,7 +649,7 @@ impl App {
         ui.add_space(14.0);
         ui.label(
             RichText::new("What did the tickets cost?")
-                .size(30.0)
+                .size(18.0)
                 .strong(),
         );
         ui.label(theme::muted(
@@ -793,45 +739,49 @@ pub fn badge_colors(badge: Badge, view: &TicketView) -> (String, Color32, Color3
 }
 
 pub(crate) fn ticket_row(ui: &mut egui::Ui, view: &TicketView, selected: bool) -> bool {
-    let fill = if selected {
-        theme::SELECTED()
-    } else {
-        Color32::TRANSPARENT
-    };
-    let width = ui.available_width();
-    let response = ui.add(
-        egui::Button::new("")
-            .fill(fill)
-            .stroke(Stroke::NONE)
-            .min_size(egui::vec2(width, 48.0)),
-    );
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::click());
     let painter = ui.painter();
-    let rect = response.rect;
-    painter.text(
-        rect.left_center() + egui::vec2(16.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        &view.title,
-        egui::FontId::proportional(16.0),
+    if selected || response.hovered() {
+        painter.rect_filled(
+            rect,
+            egui::CornerRadius::same(7),
+            if selected {
+                theme::NODE()
+            } else {
+                theme::SELECTED()
+            },
+        );
+    }
+    let dot = match view.badge {
+        Badge::NeedsYou => theme::AMBER_SOLID(),
+        Badge::Running => theme::BLUE(),
+        Badge::Failed | Badge::Interrupted => theme::RED_SOLID(),
+        Badge::Done => theme::GREEN_SOLID(),
+        Badge::Paused | Badge::Idle => theme::TEXT_MUTED(),
+    };
+    painter.circle_filled(rect.right_center() - egui::vec2(14.0, 0.0), 4.0, dot);
+    // One line, cut at the dot: a long title must not run under it.
+    let mut job = egui::text::LayoutJob::single_section(
+        view.title.clone(),
+        egui::TextFormat::simple(
+            egui::FontId::monospace(12.0),
+            if selected {
+                theme::TEXT()
+            } else {
+                theme::TEXT_SOFT()
+            },
+        ),
+    );
+    job.wrap.max_width = rect.width() - 44.0;
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let galley = painter.layout_job(job);
+    painter.galley(
+        egui::pos2(rect.left() + 26.0, rect.center().y - galley.size().y / 2.0),
+        galley,
         theme::TEXT(),
     );
-    let (label, bg, fg) = badge_colors(view.badge, view);
-    if view.badge == Badge::Running {
-        painter.circle_filled(
-            rect.right_center() - egui::vec2(18.0, 0.0),
-            4.5,
-            theme::GREEN(),
-        );
-    } else {
-        let short = label.split(" · ").next().unwrap_or(&label).to_owned();
-        let galley = painter.layout_no_wrap(short, egui::FontId::proportional(12.0), fg);
-        let size = galley.size() + egui::vec2(18.0, 6.0);
-        let chip = egui::Rect::from_min_size(
-            egui::pos2(rect.right() - 12.0 - size.x, rect.center().y - size.y / 2.0),
-            size,
-        );
-        painter.rect_filled(chip, egui::CornerRadius::same(99), bg);
-        painter.galley(chip.min + egui::vec2(9.0, 3.0), galley, fg);
-    }
     response
         .on_hover_text(format!("{}: {}", view.title, view.badge.label()))
         .clicked()

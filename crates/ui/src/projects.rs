@@ -75,7 +75,7 @@ pub fn rows(
 
 impl App {
     pub(crate) fn projects_screen(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Projects").size(30.0).strong());
+        ui.label(RichText::new("Projects").size(18.0).strong());
         ui.add_space(8.0);
         let (list, without) = rows(self.profile.as_ref().ok(), &self.snapshot.tickets);
         ui.horizontal(|ui| {
@@ -182,7 +182,7 @@ impl App {
     }
 
     fn project_detail(&mut self, ui: &mut egui::Ui, row: &Row) {
-        ui.label(RichText::new(&row.name).size(20.0).strong());
+        ui.label(RichText::new(&row.name).size(15.0).strong());
         ui.label(theme::mono(&row.path));
         if !row.registered && ui.button("Add to profile").clicked() {
             let folder = std::path::PathBuf::from(&row.path);

@@ -32,7 +32,7 @@ fn peak(row: &StepMetrics) -> String {
 
 impl App {
     pub(crate) fn health_screen(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Pipeline health").size(30.0).strong());
+        ui.label(RichText::new("Pipeline health").size(18.0).strong());
         ui.label(theme::muted(format!(
             "last {LAST_RUNS} runs of each pipeline. Reported by the agent; nothing is estimated."
         )));
@@ -118,7 +118,7 @@ impl App {
             return;
         }
         ui.add_space(10.0);
-        ui.label(RichText::new("Tuned").size(18.0).strong());
+        ui.label(RichText::new("Tuned").size(14.0).strong());
         for each in mine {
             let tuning = &each.tuning;
             theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
@@ -168,7 +168,7 @@ impl App {
             return;
         }
         ui.add_space(10.0);
-        ui.label(RichText::new("Findings").size(18.0).strong());
+        ui.label(RichText::new("Findings").size(14.0).strong());
         for finding in mine {
             theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
                 ui.label(
@@ -232,12 +232,12 @@ fn tile(ui: &mut egui::Ui, label: &str, value: &str) {
     theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
         ui.set_width(150.0);
         ui.label(theme::muted(label));
-        ui.label(RichText::new(value).size(18.0).strong());
+        ui.label(RichText::new(value).size(14.0).strong());
     });
 }
 
 fn health_table(ui: &mut egui::Ui, metrics: &PipelineMetrics, watch_permille: u32) {
-    ui.label(RichText::new("Tokens by step").size(18.0).strong());
+    ui.label(RichText::new("Tokens by step").size(14.0).strong());
     step_rows(ui, metrics, watch_permille);
 }
 

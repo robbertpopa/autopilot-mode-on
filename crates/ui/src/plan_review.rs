@@ -45,7 +45,7 @@ impl App {
         if ui.link("< Back to the ticket").clicked() {
             self.mode = Mode::Watch;
         }
-        ui.label(RichText::new("Plan review").size(30.0).strong());
+        ui.label(RichText::new("Plan review").size(18.0).strong());
         ui.label(theme::muted(&view.title));
         ui.add_space(10.0);
         let Some(plan) = plan_of(&view) else {
@@ -71,7 +71,7 @@ impl App {
     }
 
     fn criteria_table(ui: &mut egui::Ui, plan: &Plan, analysis: &Analysis) {
-        ui.label(RichText::new("Criteria").size(18.0).strong());
+        ui.label(RichText::new("Criteria").size(14.0).strong());
         for (criterion, (_, covered)) in plan.criteria.iter().zip(&analysis.coverage) {
             theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
                 ui.set_width(ui.available_width() - 38.0);
@@ -115,7 +115,7 @@ impl App {
     /// what was corrected before.
     fn assumptions_box(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         let assumptions = assumptions_of(view);
-        ui.label(RichText::new("Assumptions").size(18.0).strong());
+        ui.label(RichText::new("Assumptions").size(14.0).strong());
         if assumptions.is_empty() {
             ui.label(theme::muted("Understand recorded no assumptions."));
         }
@@ -222,7 +222,7 @@ impl App {
 }
 
 fn list(ui: &mut egui::Ui, title: &str, items: &[String], empty: &str) {
-    ui.label(RichText::new(title).size(18.0).strong());
+    ui.label(RichText::new(title).size(14.0).strong());
     if items.is_empty() {
         ui.label(theme::muted(empty));
     }
