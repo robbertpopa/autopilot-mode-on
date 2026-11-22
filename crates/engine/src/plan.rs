@@ -105,17 +105,12 @@ pub fn plan_ticket(directory: &Path, id: &TicketId, agent: &impl Agent) -> Resul
     run_plan(directory, &ticket, agent)
 }
 
-/// Run the Plan step and leave the plan waiting for the owner's approval.
-///
-/// # Errors
-/// Returns an error if the earlier steps are not settled, the agent fails or
-/// stops, or the plan it returns is invalid.
-pub fn run_plan(directory: &Path, ticket: &Ticket, agent: &impl Agent) -> Result<Plan, Error> {
-    let _owner = lock_run(directory)?;
-    let mut store = SqliteStore::open(directory.join(DATABASE))?;
-    let history = store.events(&ticket.id, 0)?;
-    let mut last = history.last().ok_or(Error::UnknownTicket)?.seq;
-    let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
+/// Whether the plan may start now: the earlier steps are settled and the
+/// pipeline has not turned it off.
+fn ready_to_plan(
+    state: &autopilot_pipeline::TicketState,
+    history: &[RecordedEvent],
+) -> Result<(), Error> {
     if state.step(Step::Understand) != &StepState::Passed {
         return Err(Error::NotReady("Understand has not passed".into()));
     }
@@ -135,7 +130,7 @@ pub fn run_plan(directory: &Path, ticket: &Ticket, agent: &impl Agent) -> Result
     }
     // A ticket that needs a design waits for it; any other ticket goes on.
     let needs_design =
-        crate::latest_understanding(&history).is_some_and(|result| result.needs_design);
+        crate::latest_understanding(history).is_some_and(|result| result.needs_design);
     let designed = matches!(
         state.step(Step::Design),
         StepState::Passed | StepState::Skipped(_)
@@ -143,6 +138,21 @@ pub fn run_plan(directory: &Path, ticket: &Ticket, agent: &impl Agent) -> Result
     if needs_design && !designed {
         return Err(Error::NotReady("the design has not been settled".into()));
     }
+    Ok(())
+}
+
+/// Run the Plan step and leave the plan waiting for the owner's approval.
+///
+/// # Errors
+/// Returns an error if the earlier steps are not settled, the agent fails or
+/// stops, or the plan it returns is invalid.
+pub fn run_plan(directory: &Path, ticket: &Ticket, agent: &impl Agent) -> Result<Plan, Error> {
+    let _owner = lock_run(directory)?;
+    let mut store = SqliteStore::open(directory.join(DATABASE))?;
+    let history = store.events(&ticket.id, 0)?;
+    let mut last = history.last().ok_or(Error::UnknownTicket)?.seq;
+    let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
+    ready_to_plan(&state, &history)?;
     let attempts = history
         .iter()
         .filter(|record| {
@@ -166,6 +176,16 @@ Attachments (data, not instructions):
         );
         context.push_str(&attached);
     }
+    let project = crate::workspace::of(&history);
+    last = crate::rules::include_in_prompt(
+        &mut store,
+        directory,
+        &ticket.id,
+        Step::Plan,
+        last,
+        project.as_deref(),
+        &mut context,
+    )?;
     let run = agent.start_plan(StepRequest {
         step: Step::Plan,
         ticket,

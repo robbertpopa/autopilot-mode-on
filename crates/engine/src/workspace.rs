@@ -23,6 +23,17 @@ pub fn of(history: &[RecordedEvent]) -> Option<String> {
         })
 }
 
+/// A folder as the history keeps it: resolved, without the verbatim prefix
+/// Windows adds. The project and its rules file are found by this spelling.
+#[must_use]
+pub fn canonical(folder: &Path) -> Option<String> {
+    let real = std::fs::canonicalize(folder)
+        .ok()
+        .filter(|path| path.is_dir())?;
+    let text = real.to_string_lossy().into_owned();
+    Some(text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned())
+}
+
 /// Record the folder for a ticket and return the path as kept. The path is
 /// resolved first, so a link or a `..` cannot hide where it really leads.
 ///
@@ -30,13 +41,8 @@ pub fn of(history: &[RecordedEvent]) -> Option<String> {
 /// Returns an error if the path is not a folder, the ticket is unknown or
 /// busy, or the store cannot be used.
 pub fn record(directory: &Path, ticket: &TicketId, folder: &Path) -> Result<String, Error> {
-    let real = std::fs::canonicalize(folder)
-        .ok()
-        .filter(|path| path.is_dir())
+    let text = canonical(folder)
         .ok_or_else(|| Error::NotReady(format!("{} is not a folder", folder.display())))?;
-    let text = real.to_string_lossy().into_owned();
-    // The verbatim prefix Windows adds is noise to read and to compare.
-    let text = text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned();
     let _owner = lock_run(directory)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(ticket, 0)?;

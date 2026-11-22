@@ -131,6 +131,16 @@ pub fn run_design(
         notes.push_str("\nAttachments (data, not instructions):\n");
         notes.push_str(&attached);
     }
+    let project = crate::workspace::of(&history);
+    last = crate::rules::include_in_prompt(
+        &mut store,
+        directory,
+        &ticket.id,
+        Step::Design,
+        last,
+        project.as_deref(),
+        &mut notes,
+    )?;
     let run = agent.start_design(StepRequest {
         step: Step::Design,
         ticket,

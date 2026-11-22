@@ -752,7 +752,7 @@ fn start(
     let staged = autopilot_engine::stage(directory, &id, attachments, (0, 0))
         .map_err(|error| error.to_string())?;
     if let Err(error) =
-        autopilot_engine::run_understand_attached(directory, &ticket, &agent, ask, &staged)
+        autopilot_engine::run_understand_in(directory, &ticket, &agent, ask, &staged, workspace)
     {
         // The ticket was not made, so its copies must not stay behind.
         let _ = std::fs::remove_dir_all(directory.join("attachments").join(id.as_str()));
