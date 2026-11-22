@@ -6,6 +6,7 @@ mod app;
 mod backend;
 mod composer;
 pub mod demo;
+mod nav;
 mod pipeline;
 mod run;
 mod step;

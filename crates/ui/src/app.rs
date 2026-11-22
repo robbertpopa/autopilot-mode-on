@@ -79,7 +79,9 @@ pub struct App {
     next_update_check: Option<std::time::Instant>,
     pub(crate) accounts: Option<autopilot_accounts::Accounts>,
     open_newest: bool,
-    icon: Option<egui::TextureHandle>,
+    pub(crate) icon: Option<egui::TextureHandle>,
+    pub(crate) group_by_status: bool,
+    pub(crate) closed_groups: std::collections::HashSet<String>,
     pub(crate) context: egui::Context,
     pub(crate) sender: Sender<Message>,
     receiver: Receiver<Message>,
@@ -136,6 +138,8 @@ impl App {
             accounts: None,
             open_newest: false,
             icon: theme::icon_texture(context),
+            group_by_status: false,
+            closed_groups: std::collections::HashSet::new(),
             context: context.clone(),
             sender,
             receiver,
@@ -291,7 +295,7 @@ impl App {
         }
         self.take_drops(ctx);
         self.title_bar(ctx);
-        self.sidebar(ctx);
+        self.nav(ctx);
         if self.mode == Mode::Watch
             && matches!(self.screen, Screen::Step(_))
             && self.current().is_some()
@@ -379,7 +383,6 @@ impl App {
                         {
                             self.choose_theme(self.theme.next());
                         }
-                        self.spend_chip(ui);
                         self.update_button(ui);
                     });
                 });
@@ -413,85 +416,6 @@ impl App {
                 ui.label(theme::mono(name));
             }
         }
-    }
-
-    fn spend_chip(&self, ui: &mut egui::Ui) {
-        let budget = self
-            .profile
-            .as_ref()
-            .ok()
-            .and_then(|profile| profile.budgets.daily_microusd);
-        let mut text = format!("today {}", dollars(self.snapshot.today_api));
-        if let Some(limit) = budget {
-            text = format!(
-                "{text} of {}",
-                dollars(autopilot_core::Money::from_microusd(limit.get()))
-            );
-        }
-        Frame::new()
-            .stroke(Stroke::new(1.0_f32, theme::BORDER()))
-            .corner_radius(egui::CornerRadius::same(8))
-            .inner_margin(Margin::symmetric(12, 6))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    theme::cost_tag(ui, false);
-                    ui.label(RichText::new(text).color(theme::TEXT_SOFT()));
-                });
-            });
-    }
-
-    fn sidebar(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("sidebar")
-            .exact_width(270.0)
-            .resizable(false)
-            .frame(
-                Frame::new()
-                    .fill(theme::SIDEBAR())
-                    .stroke(Stroke::new(1.0_f32, theme::BORDER()))
-                    .inner_margin(Margin::same(12)),
-            )
-            .show(ctx, |ui| {
-                ui.add_space(40.0);
-                let new = egui::Button::new(RichText::new("+  New ticket").size(16.0))
-                    .fill(theme::SELECTED())
-                    .min_size(egui::vec2(ui.available_width(), 46.0));
-                if ui.add(new).clicked() {
-                    self.start_new();
-                }
-                ui.add_space(24.0);
-                ui.label(RichText::new("   Tickets").color(theme::TEXT_MUTED()));
-                if self.snapshot.tickets.is_empty() {
-                    ui.label(theme::muted("   No tickets yet."));
-                }
-                let mut open = None;
-                let mut ordered: Vec<&TicketView> = self.snapshot.tickets.iter().collect();
-                ordered.sort_by_key(|view| view.badge != Badge::NeedsYou);
-                for view in ordered {
-                    if ticket_row(ui, view, self.selected.as_ref() == Some(&view.id)) {
-                        open = Some(view.id.clone());
-                    }
-                }
-                if let Some(id) = open {
-                    self.open(&id);
-                }
-                ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                    if self.account_dots(ui) {
-                        self.mode = Mode::Accounts;
-                    }
-                    ui.add_space(6.0);
-                    let settings = egui::Button::new(RichText::new("Settings").size(16.0))
-                        .fill(Color32::TRANSPARENT)
-                        .stroke(Stroke::NONE)
-                        .min_size(egui::vec2(ui.available_width(), 44.0));
-                    if ui
-                        .add(settings)
-                        .on_hover_text("Pipeline steps, cost and accounts")
-                        .clicked()
-                    {
-                        self.mode = Mode::Design;
-                    }
-                });
-            });
     }
 
     fn notice_bar(&mut self, ui: &mut egui::Ui) {
@@ -622,7 +546,7 @@ pub fn badge_colors(badge: Badge, view: &TicketView) -> (String, Color32, Color3
     }
 }
 
-fn ticket_row(ui: &mut egui::Ui, view: &TicketView, selected: bool) -> bool {
+pub(crate) fn ticket_row(ui: &mut egui::Ui, view: &TicketView, selected: bool) -> bool {
     let fill = if selected {
         theme::SELECTED()
     } else {
