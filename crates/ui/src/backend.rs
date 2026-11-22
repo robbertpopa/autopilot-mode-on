@@ -84,6 +84,8 @@ pub enum Action {
     },
     /// Run Understand again for a ticket, with the words it started with.
     RerunUnderstand(TicketId),
+    /// Run Understand again for this ticket only, with a higher turn cap.
+    RerunUnderstandWithMoreTurns(TicketId),
     /// Make the plan once Understand and Clarify are settled. The plan then
     /// waits for the owner's approval.
     MakePlan(TicketId),
@@ -357,6 +359,10 @@ fn claude_config(
         }
         if chosen.effort.is_some() {
             config.effort = chosen.effort;
+        }
+        if let Some(turns) = chosen.turns {
+            // Structured output needs a turn after the answer.
+            config.max_turns = turns.max(2);
         }
     }
     config
@@ -636,6 +642,10 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             })?;
             Ok("Used the recommended answers".to_owned())
         }
+        Action::RerunUnderstandWithMoreTurns(ticket) => {
+            raise_turns(options, ticket)?;
+            perform(options, &Action::RerunUnderstand(ticket.clone()))
+        }
         Action::RerunUnderstand(ticket) => {
             let folder = ticket_folder(options, ticket);
             let agent = chosen_agent(options, Step::Understand, Some(ticket), folder.as_deref())?;
@@ -859,4 +869,35 @@ pub fn waiting_request(options: &Options, request: &RequestId) -> Option<Waiting
         question,
         forced,
     })
+}
+
+/// The most turns a retry may ask for, the same top value the settings offer.
+const MAX_RETRY_TURNS: u32 = 200;
+
+/// Double this ticket's turn cap for Understand, up to the limit, and record
+/// it on the ticket alone. The project setting is left as it is.
+pub(crate) fn raise_turns(options: &Options, ticket: &TicketId) -> Result<(), String> {
+    let profile = autopilot_engine::load_profile(&options.profile).map_err(|e| e.to_string())?;
+    let configured = profile
+        .step(Step::Understand)
+        .map_or(4, |settings| settings.limits.turns);
+    let current =
+        autopilot_engine::effective_overrides(&options.data_dir, ticket, Step::Understand)
+            .map_err(|error| error.to_string())?
+            .turns
+            .unwrap_or(configured);
+    let raised = current.saturating_mul(2).min(MAX_RETRY_TURNS);
+    if raised <= current {
+        return Err(format!(
+            "the turn cap is already {current}, the most allowed"
+        ));
+    }
+    let proposal = autopilot_engine::Proposal {
+        step: Step::Understand,
+        field: autopilot_engine::StepField::Turns(raised),
+        before: current.to_string(),
+        after: raised.to_string(),
+    };
+    autopilot_engine::apply_to_ticket(&options.data_dir, ticket, &[proposal])
+        .map_err(|error| error.to_string())
 }
