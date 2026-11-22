@@ -29,6 +29,7 @@ mod control;
 mod design;
 mod explain;
 mod notes;
+mod pipelines;
 mod plan;
 mod profile_edit;
 mod publish;
@@ -51,6 +52,7 @@ pub use design::{
     run_design,
 };
 pub use explain::{explain_step, kept as explanation_kept, prompt as explain_prompt};
+pub use pipelines::{choose_pipeline, chosen as chosen_pipeline};
 pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use profile_edit::{ProfileEditError, StepField, edit_step, load_profile};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
@@ -438,6 +440,11 @@ pub fn start_clarify(directory: &Path, ticket: &TicketId) -> Result<ClarifyStart
     let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
     if state.step(Step::Understand) != &StepState::Passed {
         return Err(Error::NotReady("Understand has not passed".into()));
+    }
+    if matches!(state.step(Step::Clarify), StepState::Skipped(reason) if reason.starts_with(pipelines::OFF_PREFIX))
+    {
+        // The pipeline turned it off; there is nothing to ask.
+        return Ok(ClarifyStart::Skipped("off in this pipeline"));
     }
     if state.step(Step::Clarify) != &StepState::Idle {
         return Err(Error::NotReady("Clarify already started".into()));
