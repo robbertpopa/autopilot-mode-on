@@ -164,6 +164,7 @@ impl App {
             .show(ctx, |ui| {
                 self.nav_head(ui, narrow);
                 ui.add_space(14.0);
+                self.search_button(ui, narrow);
                 self.new_ticket_button(ui, narrow);
                 self.today_link(ui, narrow);
                 self.board_link(ui, narrow);
@@ -193,6 +194,17 @@ impl App {
                 ui.label(RichText::new("Autopilot").size(16.0).strong());
             }
         });
+    }
+
+    fn search_button(&mut self, ui: &mut egui::Ui, narrow: bool) {
+        let button = egui::Button::new(if narrow { "?" } else { "Search     Ctrl+K" })
+            .fill(Color32::TRANSPARENT)
+            .min_size(egui::vec2(ui.available_width(), 30.0));
+        if theme::named(ui.add(button), "Search").clicked() {
+            self.search_open = true;
+            self.search_query.clear();
+            self.search_selected = 0;
+        }
     }
 
     fn new_ticket_button(&mut self, ui: &mut egui::Ui, narrow: bool) {

@@ -17,6 +17,7 @@ mod plan_review;
 mod projects;
 mod review_page;
 mod run;
+mod search;
 mod settings;
 mod step;
 mod theme;
@@ -752,6 +753,78 @@ mod tests {
             app.mode = mode;
             frame(&mut app, &context);
         }
+    }
+
+    // Invariant: search finds a ticket by a word in its recorded text, runs a
+    // command through the same action a button uses, narrows by prefix, and
+    // never returns text that lives only in a project's rules.md. The last is
+    // the privacy line: an index that read the rules file would show private
+    // instructions in a result.
+    #[test]
+    fn search_finds_tickets_runs_commands_and_never_reads_rules() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let tickets = app.snapshot.tickets.clone();
+        let stored = app.profile.as_ref().ok().cloned();
+        let profile = stored.as_ref();
+
+        let hits = search::search("recordings", &tickets, profile, None);
+        let found: Vec<&search::Hit> = hits.iter().filter(|hit| hit.kind == "ticket").collect();
+        assert_eq!(found.len(), 1, "{hits:?}");
+        assert_eq!(found[0].label, "Timezone fix");
+        app.open_hit(&found[0].target.clone());
+        assert_eq!(
+            app.current().map(|view| view.title.as_str()),
+            Some("Timezone fix")
+        );
+
+        // Prefixes narrow by kind.
+        assert!(
+            search::search("t: heartbeat", &tickets, profile, None)
+                .iter()
+                .all(|hit| hit.kind == "ticket")
+        );
+        assert!(
+            search::search("pl: bug", &tickets, profile, None)
+                .iter()
+                .all(|hit| hit.kind == "pipeline")
+        );
+        assert!(
+            search::search("> theme", &tickets, profile, None)
+                .iter()
+                .all(|hit| hit.kind == "command")
+        );
+
+        // A command acts through the same path.
+        let before = app.theme;
+        let theme_hit = search::search("> switch theme", &tickets, profile, None).remove(0);
+        app.open_hit(&theme_hit.target);
+        assert_ne!(app.theme, before);
+        let worktree = search::search("> worktree", &tickets, profile, None).remove(0);
+        assert!(worktree.disabled.is_some(), "greyed with its reason");
+
+        // Rules text is private: it is never in the index.
+        autopilot_engine::save_rules(&options.data_dir, "D:/work/app", "zebra-private-rule")
+            .unwrap();
+        assert_eq!(
+            search::search("zebra-private-rule", &tickets, profile, None).len(),
+            0
+        );
+
+        // The overlay opens with Ctrl+K and builds.
+        app.search_open = true;
+        app.search_query = "time".into();
+        frame(&mut app, &context);
     }
 
     // Invariant: pausing from the window writes the engine's pause flag, the

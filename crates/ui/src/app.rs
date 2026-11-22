@@ -71,6 +71,9 @@ pub struct App {
     pub(crate) corrections: Vec<String>,
     /// The overlap check of the open ticket, kept until its history changes.
     pub(crate) overlaps: Option<(TicketId, u64, Vec<autopilot_engine::TicketOverlap>)>,
+    pub(crate) search_open: bool,
+    pub(crate) search_query: String,
+    pub(crate) search_selected: usize,
     pub(crate) pipeline_selected: Option<String>,
     pub(crate) pipeline_notice: Option<(bool, String)>,
     pub(crate) draft_text: String,
@@ -156,6 +159,9 @@ impl App {
             plan_note: String::new(),
             corrections: Vec::new(),
             overlaps: None,
+            search_open: false,
+            search_query: String::new(),
+            search_selected: 0,
             pipeline_selected: None,
             pipeline_notice: None,
             draft_text: String::new(),
@@ -427,6 +433,7 @@ impl App {
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
             self.start_new();
         }
+        self.search_keys(ctx);
         self.today_keys(ctx);
         if matches!(self.screen, Screen::Step(_))
             && !ctx.wants_keyboard_input()
@@ -479,6 +486,7 @@ impl App {
                     });
             });
         self.dialogs(ctx);
+        self.search_overlay(ctx);
     }
 
     /// Files dropped on the window go to the open form, or to the ticket on
