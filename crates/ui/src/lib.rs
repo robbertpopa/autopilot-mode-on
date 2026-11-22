@@ -579,6 +579,74 @@ mod tests {
         assert!(reread.pipeline("practice-draft").is_some());
     }
 
+    // Invariant: a plan can be sent back with a note (the step stops as
+    // interrupted and can be planned again) and approved with a corrected
+    // assumption, which the ticket view then shows. The window only sends the
+    // engine's decisions; a click that sent a plain approval instead would drop
+    // the correction.
+    #[test]
+    fn a_plan_is_sent_back_with_a_note_and_approved_with_a_correction() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        perform(
+            &options,
+            &Action::Start {
+                title: "Plan me".into(),
+                description: "Add an export option".into(),
+                attachments: Vec::new(),
+                workspace: Some(directory.path().to_path_buf()),
+                pipeline: None,
+            },
+        )
+        .unwrap();
+        let id = read(&options).tickets[0].id.clone();
+        if read(&options).tickets[0].asking.is_some() {
+            perform(&options, &Action::AcceptDefaults { ticket: id.clone() }).unwrap();
+        }
+        perform(&options, &Action::MakePlan(id.clone())).unwrap();
+        perform(
+            &options,
+            &Action::SendBack {
+                ticket: id.clone(),
+                note: "mention the CSV header".into(),
+            },
+        )
+        .unwrap();
+        let view = read(&options).tickets[0].clone();
+        assert!(matches!(
+            view.step(Step::Plan).unwrap().state,
+            autopilot_pipeline::StepState::Interrupted(_)
+        ));
+        perform(&options, &Action::RerunPlan(id.clone())).unwrap();
+        perform(
+            &options,
+            &Action::ApproveCorrected {
+                ticket: id.clone(),
+                corrections: vec![autopilot_core::AssumptionCorrection {
+                    assumption: "UTF-8".into(),
+                    correction: "Latin-1".into(),
+                }],
+            },
+        )
+        .unwrap();
+        let view = read(&options).tickets[0].clone();
+        assert_eq!(view.corrections[0].correction, "Latin-1");
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        app.open(&id);
+        app.mode = Mode::PlanReview;
+        frame(&mut app, &context);
+        app.mode = Mode::Watch;
+        frame(&mut app, &context);
+    }
+
     // Invariant: pausing from the window writes the engine's pause flag, the
     // same one the CLI writes.
     #[test]

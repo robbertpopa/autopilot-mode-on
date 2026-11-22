@@ -47,7 +47,9 @@ impl App {
                 }
             }
             columns[3].label(RichText::new("Waiting in line").strong());
-            columns[3].label(theme::muted("needs request R4: a queued state"));
+            columns[3].label(theme::muted(
+                "nothing queues yet: the scheduler has no caller",
+            ));
             columns[4].label(RichText::new("PR open").strong());
             columns[4].label(theme::muted("after real pull requests (S6)"));
         });

@@ -64,9 +64,8 @@ impl App {
             "The plan has no test plan.",
         );
         ui.add_space(10.0);
-        ui.label(theme::muted(
-            "Notes per criterion and assumption corrections need requests R1 and R2.",
-        ));
+        ui.add_space(10.0);
+        self.assumptions_box(ui, &view);
         ui.add_space(8.0);
         self.plan_actions(ui, &view, &analysis);
     }
@@ -112,6 +111,69 @@ impl App {
         }
     }
 
+    /// The assumptions Understand made, each with a box for a correction, and
+    /// what was corrected before.
+    fn assumptions_box(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+        let assumptions = assumptions_of(view);
+        ui.label(RichText::new("Assumptions").size(18.0).strong());
+        if assumptions.is_empty() {
+            ui.label(theme::muted("Understand recorded no assumptions."));
+        }
+        if self.corrections.len() != assumptions.len() {
+            self.corrections = vec![String::new(); assumptions.len()];
+        }
+        for (assumption, correction) in assumptions.iter().zip(&mut self.corrections) {
+            ui.label(assumption);
+            ui.add(
+                egui::TextEdit::singleline(correction)
+                    .hint_text("Correct it, or leave empty to keep it")
+                    .desired_width(f32::INFINITY),
+            );
+        }
+        for fix in &view.corrections {
+            ui.label(theme::muted(format!(
+                "corrected: {} -> {}",
+                fix.assumption, fix.correction
+            )));
+        }
+        ui.add_space(6.0);
+        ui.label(RichText::new("Note for sending back").strong());
+        ui.add(
+            egui::TextEdit::multiline(&mut self.plan_note)
+                .desired_rows(2)
+                .desired_width(f32::INFINITY)
+                .hint_text("What should the plan do differently?"),
+        );
+    }
+
+    /// Approve, carrying any corrections the owner typed.
+    fn approve_plan(&mut self, view: &TicketView) {
+        let assumptions = assumptions_of(view);
+        let corrections: Vec<autopilot_core::AssumptionCorrection> = assumptions
+            .iter()
+            .zip(&self.corrections)
+            .filter(|(_, fix)| !fix.trim().is_empty())
+            .map(|(assumption, fix)| autopilot_core::AssumptionCorrection {
+                assumption: assumption.clone(),
+                correction: fix.trim().to_owned(),
+            })
+            .collect();
+        if corrections.is_empty() {
+            self.act(Action::Decide {
+                ticket: view.id.clone(),
+                approve: true,
+                always: false,
+            });
+        } else {
+            self.act(Action::ApproveCorrected {
+                ticket: view.id.clone(),
+                corrections,
+            });
+        }
+        self.corrections.clear();
+        self.mode = Mode::Watch;
+    }
+
     fn plan_actions(&mut self, ui: &mut egui::Ui, view: &TicketView, analysis: &Analysis) {
         if !awaiting_plan(view) {
             ui.label(theme::muted("The plan is not waiting for a decision."));
@@ -132,11 +194,19 @@ impl App {
                 "Approve"
             };
             if ui.add(theme::primary(label)).clicked() {
-                self.act(Action::Decide {
+                self.approve_plan(view);
+            }
+            let note = self.plan_note.trim().to_owned();
+            if ui
+                .add_enabled(!note.is_empty(), egui::Button::new("Send back with notes"))
+                .on_disabled_hover_text("Write a note first")
+                .clicked()
+            {
+                self.act(Action::SendBack {
                     ticket: view.id.clone(),
-                    approve: true,
-                    always: false,
+                    note,
                 });
+                self.plan_note.clear();
                 self.mode = Mode::Watch;
             }
             if ui.button("Reject").clicked() {
@@ -159,4 +229,14 @@ fn list(ui: &mut egui::Ui, title: &str, items: &[String], empty: &str) {
     for item in items {
         ui.label(theme::mono(item));
     }
+}
+
+/// The assumptions Understand recorded, from its saved result.
+fn assumptions_of(view: &TicketView) -> Vec<String> {
+    view.outputs
+        .iter()
+        .find(|(step, _)| *step == Step::Understand)
+        .and_then(|(_, text)| serde_json::from_str::<autopilot_core::Understanding>(text).ok())
+        .map(|result| result.assumptions)
+        .unwrap_or_default()
 }

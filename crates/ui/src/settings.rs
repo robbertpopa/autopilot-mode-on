@@ -160,7 +160,7 @@ impl App {
             }
         });
         ui.label(theme::muted(
-            "Change it in profile.toml (when_unsure). A per-ticket setting needs request R3.",
+            "Change it in profile.toml (when_unsure). A per-ticket value is recorded but no step reads it yet.",
         ));
     }
 

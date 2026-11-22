@@ -300,11 +300,12 @@ pub(crate) fn run_attempt(
         (Pumped::Failed(error), last) => (Err(Outcome::Failed(error)), last),
     };
     let asked = response.is_ok() && ask_after;
-    let result = conclude(store, &ticket.id, last, response, ask_after)?;
+    let approval = approval_id(&history, Step::Understand);
+    let result = conclude(store, &ticket.id, last, response, ask_after, &approval)?;
     if asked {
         Inbox::in_data_dir(directory).write_request(&approval_request(
             &ticket.id,
-            &approval_id(Step::Understand),
+            &approval,
             Step::Understand,
             false,
         ))?;
@@ -367,14 +368,29 @@ fn pump(
     Ok((pumped, last))
 }
 
-fn approval_id(step: Step) -> RequestId {
-    RequestId::from(format!("{}-approval", step.as_str()))
+/// The id of the approval a step asks for. Answers are kept once per request
+/// id, so a step that is sent back, rejected or run again asks under a new id
+/// each time: the first is `plan-approval`, then `plan-approval-2`, and so on.
+pub(crate) fn approval_id(history: &[RecordedEvent], step: Step) -> RequestId {
+    let base = format!("{}-approval", step.as_str());
+    let used = history
+        .iter()
+        .filter(|record| {
+            matches!(&record.event.kind, Event::Answered { request, .. }
+                if request.as_str().starts_with(&base))
+        })
+        .count();
+    if used == 0 {
+        RequestId::from(base)
+    } else {
+        RequestId::from(format!("{base}-{}", used + 1))
+    }
 }
 
-fn plan_request(ticket: &TicketId, plan: &Plan) -> Request {
+fn plan_request(ticket: &TicketId, plan: &Plan, id: RequestId) -> Request {
     let analysis = autopilot_pipeline::analyze::analyze(plan);
     Request {
-        id: approval_id(Step::Plan),
+        id,
         ticket: ticket.clone(),
         body: RequestBody::Approval {
             action: format!("approve the plan ({})", analysis.describe()),
@@ -402,13 +418,14 @@ fn conclude(
     last: u64,
     response: Result<Understanding, Outcome>,
     ask_after: bool,
+    approval: &RequestId,
 ) -> Result<Understanding, Error> {
     let finished_at = timestamp()?;
     match response {
         Ok(result) => {
             let closing = if ask_after {
                 Event::Asked {
-                    request: approval_id(Step::Understand),
+                    request: approval.clone(),
                 }
             } else {
                 Event::StepFinished
@@ -738,7 +755,7 @@ fn waiting_request(
     if step == Step::Plan {
         let plan =
             plan::latest_plan(history).ok_or_else(|| Error::History("no Plan result".into()))?;
-        return Ok(plan_request(ticket, plan));
+        return Ok(plan_request(ticket, plan, request.clone()));
     }
     Ok(approval_request(ticket, request, step, true))
 }

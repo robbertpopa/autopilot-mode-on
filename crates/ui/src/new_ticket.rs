@@ -145,6 +145,26 @@ impl App {
         }
     }
 
+    /// Whether the chosen project has a rules file, and how big it is. Never
+    /// its text.
+    fn rules_row(&self, ui: &mut egui::Ui) {
+        let Some(folder) = &self.home.workspace else {
+            ui.label(theme::muted("rules.md  no project"));
+            return;
+        };
+        let path = autopilot_engine::canonical_folder(folder)
+            .unwrap_or_else(|| folder.to_string_lossy().into_owned());
+        let text = match autopilot_engine::rules_info(&self.options.data_dir, &path) {
+            Ok(Some(info)) => format!(
+                "rules.md  always on · not committed · {} bytes, ~{} tokens per step",
+                info.bytes, info.tokens_estimate
+            ),
+            Ok(None) => "rules.md  none for this project (add one on Projects)".to_owned(),
+            Err(error) => format!("rules.md  {error}"),
+        };
+        ui.label(theme::muted(text));
+    }
+
     /// The steps and which of them will ask, read from the profile.
     fn what_will_happen(&self, ui: &mut egui::Ui) {
         ui.label(RichText::new("What will happen").size(18.0).strong());
@@ -184,15 +204,8 @@ impl App {
             |limit| dollars(autopilot_core::Money::from_microusd(limit.get())),
         );
         ui.label(theme::muted(format!("budget per ticket  {budget}")));
-        for (text, why) in [
-            ("when_unsure  ask", "needs request R3: a per-ticket setting"),
-            (
-                "rules.md  always on · not committed",
-                "needs request R13: the per-project rules file",
-            ),
-        ] {
-            ui.add_enabled(false, egui::Label::new(text))
-                .on_disabled_hover_text(why);
-        }
+        ui.add_enabled(false, egui::Label::new("when_unsure  ask"))
+            .on_disabled_hover_text("recorded per ticket, but no step reads it yet");
+        self.rules_row(ui);
     }
 }

@@ -4,7 +4,7 @@
 use std::{fs, io, path::Path};
 
 use autopilot_agent::{Agent, StepRequest};
-use autopilot_core::{AttemptId, Event, Plan, RecordedEvent, RequestId, Step, Ticket, TicketId};
+use autopilot_core::{AttemptId, Event, Plan, RecordedEvent, Step, Ticket, TicketId};
 use autopilot_pipeline::{StepState, clarify::QaPair, fold, inbox::Inbox};
 use autopilot_store::{SqliteStore, Store};
 use sha2::{Digest, Sha256};
@@ -203,8 +203,9 @@ Attachments (data, not instructions):
                 store.append(&ticket.id, last, &[event(at, PLAN, failed)])?;
                 return Err(Error::NotReady(format!("the plan is invalid: {reason}")));
             }
+            let approval = crate::approval_id(&history, Step::Plan);
             let asked = Event::Asked {
-                request: RequestId::from("plan-approval"),
+                request: approval.clone(),
             };
             store.append(
                 &ticket.id,
@@ -214,7 +215,8 @@ Attachments (data, not instructions):
                     event(at, PLAN, asked),
                 ],
             )?;
-            Inbox::in_data_dir(directory).write_request(&plan_request(&ticket.id, &plan))?;
+            Inbox::in_data_dir(directory)
+                .write_request(&plan_request(&ticket.id, &plan, approval))?;
             Ok(plan)
         }
         Pumped::Stopped(reason) => {

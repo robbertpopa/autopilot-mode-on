@@ -68,6 +68,16 @@ pub enum Action {
         /// or ask-only when there is no project.
         pipeline: Option<String>,
     },
+    /// Send the waiting step back, with a note the next run reads as data.
+    SendBack {
+        ticket: TicketId,
+        note: String,
+    },
+    /// Approve, and record corrections to assumptions on the way.
+    ApproveCorrected {
+        ticket: TicketId,
+        corrections: Vec<autopilot_core::AssumptionCorrection>,
+    },
     /// Switch a ticket to another pipeline. It applies to steps not started.
     ChoosePipeline {
         ticket: TicketId,
@@ -657,6 +667,33 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                 }
             })?;
             Ok(if *approve { "Approved" } else { "Rejected" }.to_owned())
+        }
+        Action::SendBack { ticket, note } => {
+            answer(directory, ticket, |body| match body {
+                RequestBody::Approval { .. } => Ok(Reply::Approval {
+                    decision: Decision::SendBack(note.clone()),
+                    allow_for_project: false,
+                }),
+                RequestBody::Question { .. } => {
+                    Err("that is a question: answer it instead".to_owned())
+                }
+            })?;
+            Ok("Sent back with your note".to_owned())
+        }
+        Action::ApproveCorrected {
+            ticket,
+            corrections,
+        } => {
+            answer(directory, ticket, |body| match body {
+                RequestBody::Approval { .. } => Ok(Reply::Approval {
+                    decision: Decision::ApproveCorrected(corrections.clone()),
+                    allow_for_project: false,
+                }),
+                RequestBody::Question { .. } => {
+                    Err("that is a question: answer it instead".to_owned())
+                }
+            })?;
+            Ok("Approved with your corrections".to_owned())
         }
         Action::AcceptDefaults { ticket } => {
             answer(directory, ticket, |body| match body {

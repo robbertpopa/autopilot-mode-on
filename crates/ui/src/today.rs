@@ -285,6 +285,17 @@ impl App {
             row(ui, "stopped at", step_name(card.step));
             row(ui, "why", &state_text(&card.state));
         }
+        let hit_turns = stopped.is_some_and(|card| {
+            card.step == Step::Understand && state_text(&card.state).contains("max_turns")
+        });
+        if hit_turns
+            && ui
+                .button("Try again with more turns")
+                .on_hover_text("Doubles the turn cap for this ticket only")
+                .clicked()
+        {
+            self.act(Action::RerunUnderstandWithMoreTurns(view.id.clone()));
+        }
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             if stopped.is_some_and(|card| card.step == Step::Understand)

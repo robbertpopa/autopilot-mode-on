@@ -13,7 +13,8 @@ use crate::theme;
 
 const CODE_WHY: &str = "coming soon: changing code needs real Build runs (S6)";
 const ASK_WHY: &str = "coming soon: a side question to the agent is not built yet";
-const UNSURE_WHY: &str = "needs request R3: a per-ticket when_unsure setting";
+const UNSURE_WHY: &str =
+    "recorded per ticket, but no step reads it yet, so a switch here would change nothing";
 
 /// The mark and colour for a step in the stepper and the story.
 fn mark(state: &StepState) -> (&'static str, Color32) {
@@ -74,6 +75,7 @@ impl App {
         });
         ui.add_space(12.0);
         self.next_card(ui, &view);
+        self.overlap_notice(ui, &view);
         self.orchestrator_card(ui, &view);
         self.story(ui, &view);
         ui.add_space(6.0);
@@ -81,6 +83,41 @@ impl App {
         self.files_panel(ui, &view);
         ui.add_space(12.0);
         self.composer_bar(ui);
+    }
+
+    /// Another open ticket in this project that predicts the same files. It
+    /// only tells: starting, holding or merging is the owner's call.
+    fn overlap_notice(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+        let key = (view.id.clone(), view.last_seq);
+        let fresh = self
+            .overlaps
+            .as_ref()
+            .is_some_and(|(id, seq, _)| *id == key.0 && *seq == key.1);
+        if !fresh {
+            let found = autopilot_engine::find_overlaps(&self.options.data_dir, &view.id)
+                .unwrap_or_default();
+            self.overlaps = Some((key.0, key.1, found));
+        }
+        let Some((_, _, found)) = self.overlaps.clone() else {
+            return;
+        };
+        let mut open = None;
+        for overlap in found {
+            crate::app::banner(
+                ui,
+                &format!(
+                    "{} also changes {}. Finish one first, or open it to compare.",
+                    overlap.title, overlap.path
+                ),
+                false,
+            );
+            if ui.link(format!("Open {}", overlap.title)).clicked() {
+                open = Some(overlap.other);
+            }
+        }
+        if let Some(id) = open {
+            self.open(&id);
+        }
     }
 
     /// One entry per step that has started, in order, so the newest is last.
