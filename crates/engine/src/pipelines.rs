@@ -105,6 +105,31 @@ pub fn choose_pipeline(
     Ok(())
 }
 
+/// Skips to append in the same batch as a reset. A reset puts every later
+/// step back to idle, including steps the ticket's pipeline turned off, so
+/// they are skipped again; otherwise a retry would quietly turn an ask-only
+/// ticket into one that can plan and build.
+#[must_use]
+pub(crate) fn reapply_off(
+    history: &[RecordedEvent],
+    state: &autopilot_pipeline::TicketState,
+    at_ms: u64,
+) -> Vec<NewEvent> {
+    let Some((name, off, _)) = chosen(history) else {
+        return vec![];
+    };
+    off.into_iter()
+        .filter(|step| state.step(*step) == &StepState::Idle)
+        .map(|step| NewEvent {
+            at_ms,
+            step: Some(step),
+            kind: Event::StepSkipped {
+                reason: off_reason(&name),
+            },
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

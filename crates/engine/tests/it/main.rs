@@ -1192,3 +1192,50 @@ fn tickets_that_predict_the_same_file_are_flagged_for_each_other() {
     let back = autopilot_engine::find_overlaps(data.path(), &second).unwrap();
     assert_eq!(back[0].other, first);
 }
+
+// Invariant: a retry does not undo the pipeline. Running Understand again, or
+// resetting a step with everything after it, leaves the steps the pipeline
+// turned off skipped, so an ask-only ticket still cannot be planned. Without
+// the re-skip, the reset sends them back to idle and the ticket quietly turns
+// into one that plans and builds while its pipeline still says ask-only.
+#[test]
+fn a_retry_keeps_the_steps_the_pipeline_turned_off_skipped() {
+    use autopilot_core::Step;
+    use autopilot_pipeline::StepState;
+    use autopilot_profile::Profile;
+    let data = tempfile::tempdir().unwrap();
+    let ticket = understood_with(data.path(), "retry", None);
+    let profile = Profile::parse("p.toml", "").unwrap();
+    autopilot_engine::choose_pipeline(data.path(), &ticket, &profile, "ask-only").unwrap();
+    let agent = Synthetic {
+        data_dir: data.path().into(),
+    };
+    rerun_understand(data.path(), &ticket, &agent, Some(false)).unwrap();
+    let state = fold_of(data.path(), &ticket);
+    for step in [
+        Step::Plan,
+        Step::BuildCheck,
+        Step::PullRequest,
+        Step::Design,
+    ] {
+        assert!(
+            matches!(state.step(step), StepState::Skipped(_)),
+            "{step:?} after a rerun"
+        );
+    }
+    let row = Ticket {
+        id: ticket.clone(),
+        title: "t".into(),
+        description: "plain".into(),
+    };
+    let planner = Planner(good_plan());
+    assert!(run_plan(data.path(), &row, &planner).is_err());
+
+    reset_step(data.path(), &ticket, Step::Understand, true).unwrap();
+    let state = fold_of(data.path(), &ticket);
+    assert_eq!(state.step(Step::Understand), &StepState::Idle);
+    assert!(matches!(state.step(Step::Plan), StepState::Skipped(_)));
+    // The history still folds, so the window does not show a problem.
+    let history = watch(data.path(), &ticket, 0).unwrap();
+    assert!(autopilot_engine::ticket_view(&history).is_ok());
+}
