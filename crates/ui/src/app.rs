@@ -19,6 +19,7 @@ const COLUMN: f32 = 900.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
     Today,
+    Board,
     Asking,
     Checks,
     Look,
@@ -54,6 +55,8 @@ pub struct App {
     pub(crate) screen: Screen,
     pub(crate) selected: Option<TicketId>,
     pub(crate) today_selected: Option<TicketId>,
+    /// A snapshot has arrived, so an empty list means no tickets, not no data yet.
+    pub(crate) loaded: bool,
     pub(crate) ask_edits: std::collections::BTreeMap<Step, bool>,
     pub(crate) design_step: Step,
     pub(crate) advanced: bool,
@@ -117,6 +120,7 @@ impl App {
             screen: Screen::Run,
             selected: None,
             today_selected: None,
+            loaded: false,
             ask_edits: std::collections::BTreeMap::new(),
             design_step: Step::BuildCheck,
             advanced: true,
@@ -183,6 +187,7 @@ impl App {
 
     pub fn set_snapshot(&mut self, snapshot: Snapshot) {
         let first = self.snapshot.tickets.is_empty() && !snapshot.tickets.is_empty();
+        self.loaded = true;
         self.announce(&snapshot);
         self.snapshot = snapshot;
         if first {
@@ -229,6 +234,7 @@ impl App {
             ("settings" | "asking", _) => self.mode = Mode::Asking,
             ("checks", _) => self.mode = Mode::Checks,
             ("look", _) => self.mode = Mode::Look,
+            ("board", _) => self.mode = Mode::Board,
             ("cost", _) => self.mode = Mode::Cost,
             ("accounts", _) => self.mode = Mode::Accounts,
             ("run", Some(id)) => self.open(&id),
@@ -342,6 +348,7 @@ impl App {
                                 self.notice_bar(ui);
                                 match self.mode {
                                     Mode::Today => self.today_screen(ui),
+                                    Mode::Board => self.board_screen(ui),
                                     Mode::NewTicket => self.new_ticket_screen(ui),
                                     Mode::PlanReview => self.plan_review(ui),
                                     Mode::Asking => self.asking_screen(ui),

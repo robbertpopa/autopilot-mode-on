@@ -158,6 +158,10 @@ impl App {
     }
 
     pub(crate) fn today_screen(&mut self, ui: &mut egui::Ui) {
+        if self.is_first_run() {
+            self.first_run_screen(ui);
+            return;
+        }
         ui.label(RichText::new("Today").size(30.0).strong());
         let waiting: Vec<TicketView> = queue(&self.snapshot.tickets).into_iter().cloned().collect();
         if waiting.is_empty() {

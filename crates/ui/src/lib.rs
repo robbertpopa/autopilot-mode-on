@@ -4,8 +4,10 @@
 mod accounts;
 mod app;
 mod backend;
+mod board;
 mod composer;
 pub mod demo;
+mod first_run;
 mod nav;
 mod new_ticket;
 mod pipeline;
@@ -91,6 +93,7 @@ mod tests {
         let mut app = App::new(&context, options.clone(), false);
         for mode in [
             Mode::Today,
+            Mode::Board,
             Mode::NewTicket,
             Mode::Asking,
             Mode::Checks,
@@ -280,6 +283,30 @@ mod tests {
         let after = autopilot_engine::load_profile(&options.profile).unwrap();
         assert_eq!(after.step(Step::Plan).unwrap().ask_after, !before);
         assert!(app.ask_edits.is_empty());
+    }
+
+    // Invariant: an install with no tickets and no chosen folder opens First
+    // run; a chosen folder or a ticket ends it. Before the first snapshot it
+    // is not first run, so the page does not flash while data loads.
+    #[test]
+    fn an_empty_data_directory_opens_first_run() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        assert!(!app.is_first_run(), "nothing has loaded yet");
+        app.set_snapshot(read(&options));
+        assert!(app.is_first_run());
+        app.mode = Mode::Today;
+        frame(&mut app, &context);
+        backend::save_workspace(&options.data_dir, Some(directory.path()));
+        assert!(!app.is_first_run());
     }
 
     // Invariant: pausing from the window writes the engine's pause flag, the
