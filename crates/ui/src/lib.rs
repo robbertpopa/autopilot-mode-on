@@ -8,6 +8,7 @@ mod composer;
 pub mod demo;
 mod nav;
 mod pipeline;
+mod plan_review;
 mod run;
 mod step;
 mod theme;
@@ -104,6 +105,9 @@ mod tests {
         for index in 0..3 {
             let id = app.snapshot.tickets[index].id.clone();
             app.open(&id);
+            app.mode = Mode::PlanReview;
+            frame(&mut app, &context);
+            app.mode = Mode::Watch;
             frame(&mut app, &context);
             for step in Step::ALL {
                 app.screen = Screen::Step(step);
@@ -423,6 +427,16 @@ mod tests {
             view.step(Step::Plan).unwrap().state,
             autopilot_pipeline::StepState::Asking(_)
         ));
+        // The plan review page reads the recorded plan and builds.
+        let plan = plan_review::plan_of(&view).expect("the plan reads back");
+        assert!(plan.validate().is_ok());
+        assert!(plan_review::awaiting_plan(&view));
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        app.open(&id);
+        app.mode = Mode::PlanReview;
+        frame(&mut app, &context);
         perform(
             &options,
             &Action::Decide {

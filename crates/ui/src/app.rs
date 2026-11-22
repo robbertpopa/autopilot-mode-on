@@ -19,6 +19,7 @@ const COLUMN: f32 = 900.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
     Today,
+    PlanReview,
     Design,
     Watch,
     Cost,
@@ -212,6 +213,10 @@ impl App {
             .map(|ticket| ticket.id.clone());
         match (view.as_str(), id) {
             ("today" | "inbox", _) => self.mode = Mode::Today,
+            ("plan", Some(id)) => {
+                self.open(&id);
+                self.mode = Mode::PlanReview;
+            }
             ("cost", _) => self.mode = Mode::Cost,
             ("accounts", _) => self.mode = Mode::Accounts,
             ("run", Some(id)) => self.open(&id),
@@ -325,6 +330,7 @@ impl App {
                                 self.notice_bar(ui);
                                 match self.mode {
                                     Mode::Today => self.today_screen(ui),
+                                    Mode::PlanReview => self.plan_review(ui),
                                     Mode::Design => self.pipeline_screen(ui),
                                     Mode::Watch => self.watch_screen(ui),
                                     Mode::Cost => self.cost_screen(ui),

@@ -384,6 +384,9 @@ impl App {
                     );
                 }
                 ui.horizontal(|ui| {
+                    if *step == Step::Plan && ui.button("Review the plan").clicked() {
+                        self.mode = crate::app::Mode::PlanReview;
+                    }
                     if question {
                         if ui
                             .add(theme::primary("Use the recommended answers"))
