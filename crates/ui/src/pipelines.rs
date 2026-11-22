@@ -1,0 +1,255 @@
+//! Pipelines: which steps a ticket runs. The built-in presets are read-only;
+//! a custom pipeline can be made from one and its steps switched on or off.
+//! A pipeline never changes what a step asks: that stays with Settings and
+//! the policy, so Design and the pull request are drawn as locked.
+
+use autopilot_core::Step;
+use autopilot_engine::{ProjectField, add_pipeline, edit_project, step_name};
+use autopilot_profile::{Pipeline, StepMode};
+use eframe::egui::{self, Color32, RichText};
+
+use crate::app::App;
+use crate::theme;
+
+const fn mode_word(mode: StepMode) -> &'static str {
+    match mode {
+        StepMode::On => "on",
+        StepMode::IfNeeded => "if needed",
+        StepMode::Off => "off",
+    }
+}
+
+/// The pipeline a New ticket suggests for what the owner says it is.
+#[must_use]
+pub const fn suggested(kind: crate::new_ticket::Kind) -> &'static str {
+    match kind {
+        crate::new_ticket::Kind::Bug => "bug-fix",
+        crate::new_ticket::Kind::Change => autopilot_profile::DEFAULT_PIPELINE,
+        crate::new_ticket::Kind::Ask => autopilot_profile::ASK_ONLY,
+    }
+}
+
+/// A row of six dots, one per step: solid runs, hollow runs if needed,
+/// faint is off.
+fn dots(ui: &mut egui::Ui, pipeline: &Pipeline) {
+    ui.horizontal(|ui| {
+        for step in Step::ALL {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+            let painter = ui.painter();
+            let center = rect.center();
+            match pipeline.mode(step) {
+                StepMode::On => {
+                    painter.circle_filled(center, 5.0, theme::BLUE());
+                }
+                StepMode::IfNeeded => {
+                    painter.circle_stroke(center, 5.0, egui::Stroke::new(1.5_f32, theme::BLUE()));
+                }
+                StepMode::Off => {
+                    painter.circle_filled(center, 3.0, theme::TEXT_MUTED());
+                }
+            }
+        }
+    });
+}
+
+impl App {
+    pub(crate) fn pipelines_screen(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("Pipelines").size(30.0).strong());
+        let Ok(profile) = &self.profile else {
+            ui.label(theme::muted("The profile could not be read."));
+            return;
+        };
+        let all = profile.pipelines();
+        ui.add_space(8.0);
+        let mut pick = None;
+        for pipeline in &all {
+            let chosen = self.pipeline_selected.as_deref() == Some(pipeline.name.as_str());
+            ui.horizontal(|ui| {
+                dots(ui, pipeline);
+                let button = egui::Button::new(&pipeline.name)
+                    .fill(if chosen {
+                        theme::SELECTED()
+                    } else {
+                        Color32::TRANSPARENT
+                    })
+                    .min_size(egui::vec2(180.0, 28.0));
+                if theme::named(ui.add(button), &pipeline.name).clicked() {
+                    pick = Some(pipeline.name.clone());
+                }
+                ui.label(theme::muted(if pipeline.builtin {
+                    "built-in"
+                } else {
+                    "custom"
+                }));
+            });
+        }
+        ui.horizontal(|ui| {
+            dots(ui, &all[0]);
+            ui.add_enabled(false, egui::Button::new("review"))
+                .on_disabled_hover_text("soon: the review pipeline arrives with M9");
+            ui.label(theme::muted("soon"));
+        });
+        if let Some(name) = pick {
+            self.pipeline_selected = Some(name);
+        }
+        let selected = self
+            .pipeline_selected
+            .as_deref()
+            .and_then(|name| all.iter().find(|pipeline| pipeline.name == name))
+            .cloned();
+        if let Some(pipeline) = selected {
+            ui.add_space(14.0);
+            self.pipeline_detail(ui, &pipeline);
+        }
+        ui.add_space(14.0);
+        ui.add_enabled(false, egui::Button::new("Build with agent"))
+            .on_disabled_hover_text(
+                "needs request R9: an agent drafts a pipeline and a validator checks it first",
+            );
+    }
+
+    fn pipeline_detail(&mut self, ui: &mut egui::Ui, pipeline: &Pipeline) {
+        ui.label(RichText::new(&pipeline.name).size(20.0).strong());
+        if pipeline.builtin {
+            ui.label(theme::muted(
+                "built-in, read-only. Duplicate it to change it.",
+            ));
+        }
+        let mut modes: Vec<(Step, StepMode)> = Step::ALL
+            .iter()
+            .map(|step| (*step, pipeline.mode(*step)))
+            .collect();
+        let mut changed = false;
+        for (step, mode) in &mut modes {
+            ui.horizontal(|ui| {
+                ui.add_sized([150.0, 20.0], egui::Label::new(step_name(*step)));
+                if pipeline.builtin {
+                    ui.label(mode_word(*mode));
+                } else {
+                    for (value, label) in [
+                        (StepMode::On, "on"),
+                        (StepMode::IfNeeded, "if needed"),
+                        (StepMode::Off, "off"),
+                    ] {
+                        if ui.selectable_label(*mode == value, label).clicked() && *mode != value {
+                            *mode = value;
+                            changed = true;
+                        }
+                    }
+                }
+                if matches!(step, Step::Design | Step::PullRequest) && *mode != StepMode::Off {
+                    ui.label(theme::muted("ask · locked"));
+                } else if let Some(settings) = self
+                    .profile
+                    .as_ref()
+                    .ok()
+                    .and_then(|profile| profile.step(*step))
+                    && settings.ask_after
+                    && *mode != StepMode::Off
+                {
+                    ui.label(theme::muted("ask"));
+                }
+            });
+        }
+        if let Some(rounds) = pipeline.rounds {
+            ui.label(theme::muted(format!("build rounds capped at {rounds}")));
+        }
+        ui.label(theme::muted(
+            "Design and the pull request always ask when they run. A pipeline cannot change that.",
+        ));
+        if changed {
+            self.save_pipeline_modes(pipeline, &modes);
+        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui.button("Duplicate").clicked() {
+                self.duplicate_pipeline(&pipeline.name);
+            }
+            self.set_default_button(ui, &pipeline.name);
+        });
+        if let Some((ok, text)) = &self.pipeline_notice {
+            let color = if *ok { theme::GREEN() } else { theme::RED() };
+            ui.label(RichText::new(text).color(color));
+        }
+    }
+
+    fn set_default_button(&mut self, ui: &mut egui::Ui, name: &str) {
+        let Some(project) = self.project_selected.clone() else {
+            ui.add_enabled(false, egui::Button::new("Set as default"))
+                .on_disabled_hover_text("Choose a project on the Projects page first");
+            return;
+        };
+        let label = format!("Set as default · {}", autopilot_profile::leaf(&project));
+        if ui.button(label).clicked() {
+            match edit_project(
+                &self.options.profile,
+                &project,
+                Some(&ProjectField::DefaultPipeline(Some(name.to_owned()))),
+            ) {
+                Ok(profile) => {
+                    self.profile = Ok(profile);
+                    self.pipeline_notice = Some((true, format!("{name} is the default now")));
+                }
+                Err(error) => self.pipeline_notice = Some((false, error.to_string())),
+            }
+        }
+    }
+
+    /// Copy a pipeline under a free name, so a built-in can be changed.
+    pub(crate) fn duplicate_pipeline(&mut self, name: &str) {
+        let Ok(profile) = &self.profile else {
+            return;
+        };
+        let taken: Vec<String> = profile.pipelines().into_iter().map(|p| p.name).collect();
+        let mut copy = format!("{name}-copy");
+        let mut number = 2;
+        while taken.contains(&copy) {
+            copy = format!("{name}-copy-{number}");
+            number += 1;
+        }
+        let Some(source) = profile.pipeline(name) else {
+            return;
+        };
+        let modes: Vec<(Step, StepMode)> = Step::ALL
+            .iter()
+            .map(|step| (*step, source.mode(*step)))
+            .collect();
+        self.write_pipeline(&copy, &modes, source.rounds);
+        self.pipeline_selected = Some(copy);
+    }
+
+    fn save_pipeline_modes(&mut self, pipeline: &Pipeline, modes: &[(Step, StepMode)]) {
+        self.write_pipeline(&pipeline.name, modes, pipeline.rounds);
+    }
+
+    fn write_pipeline(&mut self, name: &str, modes: &[(Step, StepMode)], rounds: Option<u32>) {
+        let list = |wanted: StepMode| -> Vec<Step> {
+            modes
+                .iter()
+                .filter(|(_, mode)| *mode == wanted)
+                .map(|(step, _)| *step)
+                .collect()
+        };
+        match add_pipeline(
+            &self.options.profile,
+            name,
+            autopilot_profile::DEFAULT_PIPELINE,
+            &list(StepMode::On),
+            &list(StepMode::IfNeeded),
+            &list(StepMode::Off),
+            rounds,
+        ) {
+            Ok(profile) => {
+                self.profile = Ok(profile);
+                self.pipeline_notice = Some((true, format!("saved {name}")));
+            }
+            // The file is left as it was, so the page shows what is stored.
+            Err(error) => self.pipeline_notice = Some((false, error.to_string())),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn write_pipeline_for_test(&mut self, name: &str, modes: &[(Step, StepMode)]) {
+        self.write_pipeline(name, modes, None);
+    }
+}

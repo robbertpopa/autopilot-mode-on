@@ -58,6 +58,7 @@ impl App {
             self.home.workspace = backend::saved_workspace(&self.options.data_dir);
         }
         let before = self.home.workspace.clone();
+        self.pipeline_row(ui);
         let start = composer::show(ui, &mut self.home);
         if self.home.workspace != before {
             backend::save_workspace(&self.options.data_dir, self.home.workspace.as_deref());
@@ -70,12 +71,78 @@ impl App {
         }
         if let Some(action) = start {
             self.home = composer::NewTicket::default();
+            self.pipeline_chosen = false;
             self.new_started = true;
             self.mode = Mode::Watch;
             self.act(action);
         }
         ui.add_space(14.0);
         self.what_will_happen(ui);
+    }
+
+    /// The pipeline a ticket of this kind starts with: the project's default
+    /// for a change, bug-fix for a bug, ask-only to just ask.
+    fn suggestion(&self) -> String {
+        match self.kind {
+            Kind::Bug => crate::pipelines::suggested(Kind::Bug).to_owned(),
+            Kind::Ask => crate::pipelines::suggested(Kind::Ask).to_owned(),
+            Kind::Change => self
+                .home
+                .workspace
+                .as_ref()
+                .and_then(|folder| {
+                    let path = folder.to_string_lossy();
+                    self.profile
+                        .as_ref()
+                        .ok()
+                        .and_then(|profile| profile.project(&path))
+                        .and_then(|project| project.default_pipeline.clone())
+                })
+                .unwrap_or_else(|| crate::pipelines::suggested(Kind::Change).to_owned()),
+        }
+    }
+
+    /// The pipeline select. With no project folder the ticket is ask-only and
+    /// the select is locked; otherwise it shows the suggestion until the owner
+    /// picks one.
+    fn pipeline_row(&mut self, ui: &mut egui::Ui) {
+        let Ok(profile) = &self.profile else {
+            return;
+        };
+        let names: Vec<String> = profile.pipelines().into_iter().map(|p| p.name).collect();
+        let locked = self.home.workspace.is_none();
+        if !self.pipeline_chosen {
+            self.home.pipeline = Some(self.suggestion());
+        }
+        let current = if locked {
+            autopilot_profile::ASK_ONLY.to_owned()
+        } else {
+            self.home.pipeline.clone().unwrap_or_default()
+        };
+        let mut chosen = current.clone();
+        ui.horizontal(|ui| {
+            ui.label(theme::muted("pipeline"));
+            ui.add_enabled_ui(!locked, |ui| {
+                egui::ComboBox::from_id_salt("new-ticket-pipeline")
+                    .selected_text(&current)
+                    .show_ui(ui, |ui| {
+                        for name in &names {
+                            ui.selectable_value(&mut chosen, name.clone(), name);
+                        }
+                    });
+            });
+            ui.label(theme::muted(if locked {
+                "no project: ask-only"
+            } else if self.pipeline_chosen {
+                "chosen"
+            } else {
+                "suggested"
+            }));
+        });
+        if !locked && chosen != current {
+            self.home.pipeline = Some(chosen);
+            self.pipeline_chosen = true;
+        }
     }
 
     /// The steps and which of them will ask, read from the profile.
@@ -118,7 +185,6 @@ impl App {
         );
         ui.label(theme::muted(format!("budget per ticket  {budget}")));
         for (text, why) in [
-            ("pipeline  default", "needs request R7: named pipelines"),
             ("when_unsure  ask", "needs request R3: a per-ticket setting"),
             (
                 "rules.md  always on · not committed",

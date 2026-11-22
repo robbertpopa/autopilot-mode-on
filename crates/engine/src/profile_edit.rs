@@ -154,6 +154,56 @@ pub fn edit_project(
     Ok(profile)
 }
 
+/// Save a custom pipeline. A built-in name is refused by the profile when it
+/// is read back, and so is a pipeline the engine could not run in order, so
+/// nothing invalid is ever written.
+///
+/// # Errors
+/// Returns an error for an unreadable file, or the diagnostic when the result
+/// is invalid. The file is left as it was in that case.
+pub fn add_pipeline(
+    path: &Path,
+    name: &str,
+    based_on: &str,
+    on: &[Step],
+    if_needed: &[Step],
+    off: &[Step],
+    rounds: Option<u32>,
+) -> Result<Profile, ProfileEditError> {
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
+    let mut document: DocumentMut = source
+        .parse()
+        .map_err(|error: toml_edit::TomlError| ProfileEditError::Syntax(error.to_string()))?;
+    let pipelines = child_table(document.as_table_mut(), "pipelines")?;
+    pipelines.set_implicit(true);
+    let table = child_table(pipelines, name)?;
+    table["based_on"] = value(based_on);
+    for (key, steps) in [("on", on), ("if_needed", if_needed), ("off", off)] {
+        let mut list = toml_edit::Array::new();
+        for step in steps {
+            list.push(step.as_str());
+        }
+        table[key] = value(list);
+    }
+    if let Some(rounds) = rounds {
+        table["rounds"] = value(i64::from(rounds));
+    }
+    let text = document.to_string();
+    let profile = Profile::parse(path, &text)?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, text)?;
+    Ok(profile)
+}
+
 fn step_table(document: &mut DocumentMut, step: Step) -> Result<&mut Table, ProfileEditError> {
     let steps = child_table(document.as_table_mut(), "steps")?;
     steps.set_implicit(true);
@@ -300,6 +350,34 @@ protected_paths = [\"infra/**\"]
             Some(&ProjectField::DefaultPipeline(Some("nope".into()))),
         );
         assert!(refused.is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    // Invariant: a saved custom pipeline reads back with the steps it names,
+    // a built-in name or an impossible order is refused, and the file keeps
+    // its comments and is left as it was after a refusal.
+    #[test]
+    fn a_custom_pipeline_is_saved_and_a_bad_one_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("profile.toml");
+        fs::write(&path, "# my notes\n").unwrap();
+        let profile = add_pipeline(
+            &path,
+            "mine",
+            "bug-fix",
+            &[],
+            &[],
+            &[Step::Clarify],
+            Some(2),
+        )
+        .unwrap();
+        let mine = profile.pipeline("mine").unwrap();
+        assert_eq!(mine.off(), [Step::Clarify, Step::Design]);
+        assert_eq!(mine.rounds, Some(2));
+        assert!(fs::read_to_string(&path).unwrap().contains("# my notes"));
+        let before = fs::read_to_string(&path).unwrap();
+        assert!(add_pipeline(&path, "full", "full", &[], &[], &[], None).is_err());
+        assert!(add_pipeline(&path, "bad", "full", &[], &[], &[Step::Plan], None).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
     }
 }

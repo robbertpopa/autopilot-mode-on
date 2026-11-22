@@ -19,6 +19,7 @@ const COLUMN: f32 = 900.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
     Today,
+    Pipelines,
     Projects,
     Board,
     Asking,
@@ -56,6 +57,10 @@ pub struct App {
     pub(crate) screen: Screen,
     pub(crate) selected: Option<TicketId>,
     pub(crate) today_selected: Option<TicketId>,
+    pub(crate) pipeline_selected: Option<String>,
+    pub(crate) pipeline_notice: Option<(bool, String)>,
+    /// The owner picked the pipeline on New ticket, so the suggestion stops.
+    pub(crate) pipeline_chosen: bool,
     /// The project open on the Projects page, by normalised folder path.
     pub(crate) project_selected: Option<String>,
     pub(crate) rules_text: String,
@@ -126,6 +131,9 @@ impl App {
             screen: Screen::Run,
             selected: None,
             today_selected: None,
+            pipeline_selected: None,
+            pipeline_notice: None,
+            pipeline_chosen: false,
             project_selected: None,
             rules_text: String::new(),
             rules_saved: String::new(),
@@ -246,6 +254,7 @@ impl App {
             ("look", _) => self.mode = Mode::Look,
             ("board", _) => self.mode = Mode::Board,
             ("projects", _) => self.mode = Mode::Projects,
+            ("pipelines", _) => self.mode = Mode::Pipelines,
             ("cost", _) => self.mode = Mode::Cost,
             ("accounts", _) => self.mode = Mode::Accounts,
             ("run", Some(id)) => self.open(&id),
@@ -359,6 +368,7 @@ impl App {
                                 self.notice_bar(ui);
                                 match self.mode {
                                     Mode::Today => self.today_screen(ui),
+                                    Mode::Pipelines => self.pipelines_screen(ui),
                                     Mode::Projects => self.projects_screen(ui),
                                     Mode::Board => self.board_screen(ui),
                                     Mode::NewTicket => self.new_ticket_screen(ui),

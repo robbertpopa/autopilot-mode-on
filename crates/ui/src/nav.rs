@@ -168,6 +168,7 @@ impl App {
                 self.today_link(ui, narrow);
                 self.board_link(ui, narrow);
                 self.projects_link(ui, narrow);
+                self.pipelines_link(ui, narrow);
                 if !narrow {
                     ui.add_space(14.0);
                     self.nav_tickets(ui);
@@ -204,6 +205,21 @@ impl App {
             .min_size(egui::vec2(ui.available_width(), 40.0));
         if theme::named(ui.add(button), "New ticket").clicked() {
             self.start_new();
+        }
+    }
+
+    fn pipelines_link(&mut self, ui: &mut egui::Ui, narrow: bool) {
+        let fill = if self.mode == Mode::Pipelines {
+            theme::SELECTED()
+        } else {
+            Color32::TRANSPARENT
+        };
+        let button = egui::Button::new(if narrow { "L" } else { "Pipelines" })
+            .fill(fill)
+            .stroke(Stroke::NONE)
+            .min_size(egui::vec2(ui.available_width(), 34.0));
+        if theme::named(ui.add(button), "Pipelines").clicked() {
+            self.mode = Mode::Pipelines;
         }
     }
 

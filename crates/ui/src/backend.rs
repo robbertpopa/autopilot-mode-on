@@ -64,6 +64,14 @@ pub enum Action {
         attachments: Vec<PathBuf>,
         /// The project folder the agent reads, if one was chosen.
         workspace: Option<PathBuf>,
+        /// The pipeline the owner chose. `None` takes the project's default,
+        /// or ask-only when there is no project.
+        pipeline: Option<String>,
+    },
+    /// Switch a ticket to another pipeline. It applies to steps not started.
+    ChoosePipeline {
+        ticket: TicketId,
+        name: String,
     },
     /// Attach files, images or folders to a ticket that exists.
     Attach {
@@ -601,13 +609,22 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             description,
             attachments,
             workspace,
+            pipeline,
         } => start(
             options,
             title,
             description,
             attachments,
             workspace.as_deref(),
+            pipeline.as_deref(),
         ),
+        Action::ChoosePipeline { ticket, name } => {
+            let profile = autopilot_engine::load_profile(&options.profile)
+                .map_err(|error| error.to_string())?;
+            autopilot_engine::choose_pipeline(directory, ticket, &profile, name)
+                .map(|()| format!("Pipeline is now {name}"))
+                .map_err(|error| error.to_string())
+        }
         Action::Attach { ticket, paths } => autopilot_engine::attach(directory, ticket, paths)
             .map(|count| format!("Attached {count}"))
             .map_err(|error| error.to_string()),
@@ -738,6 +755,7 @@ fn start(
     description: &str,
     attachments: &[PathBuf],
     workspace: Option<&Path>,
+    chosen: Option<&str>,
 ) -> Result<String, String> {
     let directory = options.data_dir.as_path();
     if let Some(folder) = workspace
@@ -776,7 +794,7 @@ fn start(
     // A ticket with no project runs ask-only; one in a project runs the
     // project's default pipeline, or `full` when it names none.
     if let Ok(profile) = autopilot_engine::load_profile(&options.profile) {
-        let name = pipeline_for(&profile, workspace);
+        let name = chosen.map_or_else(|| pipeline_for(&profile, workspace), str::to_owned);
         autopilot_engine::choose_pipeline(directory, &id, &profile, &name).map_err(|error| {
             format!("the ticket started, but its pipeline was not set: {error}")
         })?;

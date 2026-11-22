@@ -11,6 +11,7 @@ mod first_run;
 mod nav;
 mod new_ticket;
 mod pipeline;
+mod pipelines;
 mod plan_review;
 mod projects;
 mod run;
@@ -96,6 +97,7 @@ mod tests {
             Mode::Today,
             Mode::Board,
             Mode::Projects,
+            Mode::Pipelines,
             Mode::NewTicket,
             Mode::Asking,
             Mode::Checks,
@@ -331,6 +333,7 @@ mod tests {
                 description: "What does the export do?".into(),
                 attachments: Vec::new(),
                 workspace: None,
+                pipeline: None,
             },
         )
         .unwrap();
@@ -416,6 +419,131 @@ mod tests {
         app.add_project(&other);
         assert_eq!(app.profile.as_ref().unwrap().projects.len(), 2);
         frame(&mut app, &context);
+    }
+
+    // Invariant: a pipeline can be copied from a built-in, its steps switched,
+    // and an impossible order is refused with the stored file unchanged; a
+    // ticket can move to another pipeline while the step that would change has
+    // not started; and a kind suggests a pipeline while a missing project locks
+    // the choice to ask-only. A start that sent the picked pipeline without a
+    // project would let an ask-only ticket run a build.
+    #[test]
+    #[allow(clippy::too_many_lines, reason = "one scenario from copy to start")]
+    fn pipelines_are_copied_switched_per_ticket_and_suggested_by_kind() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let project = directory.path().join("work").join("app");
+        std::fs::create_dir_all(&project).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.mode = Mode::Pipelines;
+        frame(&mut app, &context);
+        app.duplicate_pipeline("bug-fix");
+        let copy = app.pipeline_selected.clone().unwrap();
+        assert_eq!(copy, "bug-fix-copy");
+        assert!(app.profile.as_ref().unwrap().pipeline(&copy).is_some());
+        let stored = std::fs::read_to_string(&options.profile).unwrap();
+        let mut modes: Vec<(Step, autopilot_profile::StepMode)> = Step::ALL
+            .iter()
+            .map(|step| {
+                (
+                    *step,
+                    app.profile
+                        .as_ref()
+                        .unwrap()
+                        .pipeline(&copy)
+                        .unwrap()
+                        .mode(*step),
+                )
+            })
+            .collect();
+        for (step, mode) in &mut modes {
+            if *step == Step::Plan {
+                *mode = autopilot_profile::StepMode::Off;
+            }
+        }
+        app.write_pipeline_for_test(&copy, &modes);
+        assert_eq!(app.pipeline_notice.as_ref().map(|n| n.0), Some(false));
+        assert_eq!(std::fs::read_to_string(&options.profile).unwrap(), stored);
+        frame(&mut app, &context);
+
+        // Per ticket: a ticket in a project starts on full, then moves.
+        perform(
+            &options,
+            &Action::Start {
+                title: "T".into(),
+                description: "Show the time".into(),
+                attachments: Vec::new(),
+                workspace: Some(project.clone()),
+                pipeline: None,
+            },
+        )
+        .unwrap();
+        let id = read(&options).tickets[0].id.clone();
+        assert_eq!(
+            read(&options).tickets[0].pipeline.as_ref().unwrap().0,
+            "full"
+        );
+        // Clarify already asked its question, so a pipeline that turns it off
+        // is refused and the ticket keeps what it had.
+        let refused = perform(
+            &options,
+            &Action::ChoosePipeline {
+                ticket: id.clone(),
+                name: "quick-change".into(),
+            },
+        );
+        assert!(refused.is_err(), "{refused:?}");
+        assert_eq!(
+            read(&options).tickets[0].pipeline.as_ref().unwrap().0,
+            "full"
+        );
+        perform(
+            &options,
+            &Action::ChoosePipeline {
+                ticket: id.clone(),
+                name: "bug-fix".into(),
+            },
+        )
+        .unwrap();
+        let view = read(&options).tickets[0].clone();
+        assert_eq!(view.pipeline.as_ref().unwrap().0, "bug-fix");
+        assert!(matches!(
+            view.step(Step::Design).unwrap().state,
+            autopilot_pipeline::StepState::Skipped(_)
+        ));
+        assert!(
+            perform(
+                &options,
+                &Action::ChoosePipeline {
+                    ticket: id,
+                    name: "no-such".into(),
+                },
+            )
+            .is_err()
+        );
+
+        // New ticket: the kind suggests, no project locks.
+        app.mode = Mode::NewTicket;
+        app.home.workspace = Some(project);
+        app.kind = new_ticket::Kind::Bug;
+        frame(&mut app, &context);
+        assert_eq!(app.home.pipeline.as_deref(), Some("bug-fix"));
+        app.kind = new_ticket::Kind::Ask;
+        frame(&mut app, &context);
+        assert_eq!(app.home.pipeline.as_deref(), Some("ask-only"));
+        app.home.workspace = None;
+        app.home.description = "x".into();
+        let Action::Start { pipeline, .. } = app.home.start_action() else {
+            panic!("a start");
+        };
+        assert_eq!(pipeline, None, "no project means no pipeline is sent");
     }
 
     // Invariant: pausing from the window writes the engine's pause flag, the
@@ -517,6 +645,7 @@ mod tests {
                 description: "Words kept for the second run".into(),
                 attachments: Vec::new(),
                 workspace: None,
+                pipeline: None,
             },
         )
         .unwrap();
@@ -570,6 +699,7 @@ mod tests {
                 description: "See the brief".into(),
                 attachments: vec![file.clone()],
                 workspace: None,
+                pipeline: None,
             },
         )
         .unwrap();
@@ -584,6 +714,7 @@ mod tests {
                 description: "x".into(),
                 attachments: vec![directory.path().join("missing.txt")],
                 workspace: None,
+                pipeline: None,
             },
         );
         assert!(refused.is_err());
@@ -611,6 +742,7 @@ mod tests {
                 attachments: Vec::new(),
                 // A ticket with no project runs ask-only and has no plan.
                 workspace: Some(directory.path().to_path_buf()),
+                pipeline: None,
             },
         )
         .unwrap();
@@ -675,6 +807,7 @@ mod tests {
                 description: "Build the offline to-do app from the attached spec.".into(),
                 attachments: vec![spec],
                 workspace: None,
+                pipeline: None,
             },
         );
         assert!(outcome.is_ok(), "{outcome:?}");
@@ -737,6 +870,7 @@ mod tests {
                 description: "Build the to-do app. Follow the rules in NOTES.md in the project, and put the exact storage key in your summary.".into(),
                 attachments: Vec::new(),
                 workspace: Some(project.clone()),
+                pipeline: None,
             },
         );
         assert!(outcome.is_ok(), "{outcome:?}");

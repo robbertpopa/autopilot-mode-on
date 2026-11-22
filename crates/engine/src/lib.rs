@@ -60,7 +60,7 @@ pub use overlap::{TicketOverlap, find_overlaps};
 pub use pipelines::{choose_pipeline, chosen as chosen_pipeline};
 pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use profile_edit::{
-    ProfileEditError, ProjectField, StepField, edit_project, edit_step, load_profile,
+    ProfileEditError, ProjectField, StepField, add_pipeline, edit_project, edit_step, load_profile,
 };
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use rerun::ticket_words;

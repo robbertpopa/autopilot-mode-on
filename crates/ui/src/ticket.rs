@@ -14,7 +14,6 @@ use crate::theme;
 const CODE_WHY: &str = "coming soon: changing code needs real Build runs (S6)";
 const ASK_WHY: &str = "coming soon: a side question to the agent is not built yet";
 const UNSURE_WHY: &str = "needs request R3: a per-ticket when_unsure setting";
-const PIPELINE_WHY: &str = "needs request R7: named pipelines per ticket";
 
 /// The mark and colour for a step in the stepper and the story.
 fn mark(state: &StepState) -> (&'static str, Color32) {
@@ -163,6 +162,33 @@ impl App {
         self.change_box(ui);
     }
 
+    /// The pipeline of this ticket. A change applies to steps that have not
+    /// started; the engine refuses one that would switch off a step that ran.
+    fn ticket_pipeline_select(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+        let Ok(profile) = &self.profile else {
+            return;
+        };
+        let names: Vec<String> = profile.pipelines().into_iter().map(|p| p.name).collect();
+        let current = view.pipeline.as_ref().map_or_else(
+            || autopilot_profile::DEFAULT_PIPELINE.to_owned(),
+            |(name, _)| name.clone(),
+        );
+        let mut chosen = current.clone();
+        egui::ComboBox::from_id_salt("ticket-pipeline")
+            .selected_text(&current)
+            .show_ui(ui, |ui| {
+                for name in &names {
+                    ui.selectable_value(&mut chosen, name.clone(), name);
+                }
+            });
+        if chosen != current {
+            self.act(crate::backend::Action::ChoosePipeline {
+                ticket: view.id.clone(),
+                name: chosen,
+            });
+        }
+    }
+
     /// The right panel without a drawer: pipeline, stepper, cost, actions.
     pub(crate) fn stepper_panel(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         ui.label(
@@ -171,8 +197,7 @@ impl App {
                 .strong()
                 .color(theme::TEXT_MUTED()),
         );
-        ui.add_enabled(false, egui::Button::new("default pipeline"))
-            .on_disabled_hover_text(PIPELINE_WHY);
+        self.ticket_pipeline_select(ui, view);
         ui.label(theme::muted("changes only steps not started"));
         ui.add_space(8.0);
         let mut open = None;
