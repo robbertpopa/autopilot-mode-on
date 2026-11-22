@@ -80,6 +80,7 @@ mod tests {
             view: None,
             ticket: None,
         };
+        backend::AgentChoice::Practice.save(&options.data_dir);
         let context = egui::Context::default();
         let mut app = App::new(&context, options.clone(), false);
         for mode in [Mode::Design, Mode::Watch, Mode::Cost, Mode::Accounts] {
@@ -128,6 +129,7 @@ mod tests {
             view: None,
             ticket: None,
         };
+        backend::AgentChoice::Practice.save(&options.data_dir);
         demo::seed(&options.data_dir, now_ms()).unwrap();
         let id = autopilot_core::TicketId::from("demo-heartbeat");
         let before = read(&options);
@@ -158,6 +160,7 @@ mod tests {
             view: None,
             ticket: None,
         };
+        backend::AgentChoice::Practice.save(&options.data_dir);
         demo::seed(&options.data_dir, now_ms()).unwrap();
         let id = autopilot_core::TicketId::from("demo-timezone");
         assert!(perform(&options, &Action::Pause(id)).is_ok());
@@ -175,6 +178,7 @@ mod tests {
             view: None,
             ticket: None,
         };
+        backend::AgentChoice::Practice.save(&options.data_dir);
         let outcome = perform(
             &options,
             &Action::Start {
@@ -213,6 +217,7 @@ mod tests {
             view: None,
             ticket: None,
         };
+        backend::AgentChoice::Practice.save(&options.data_dir);
         perform(
             &options,
             &Action::Start {
@@ -262,6 +267,7 @@ mod tests {
             view: None,
             ticket: None,
         };
+        backend::AgentChoice::Practice.save(&options.data_dir);
         let file = directory.path().join("brief.txt");
         std::fs::write(&file, b"hello").unwrap();
         perform(
@@ -301,6 +307,7 @@ mod tests {
             view: None,
             ticket: None,
         };
+        backend::AgentChoice::Practice.save(&options.data_dir);
         perform(
             &options,
             &Action::Start {
@@ -350,6 +357,7 @@ mod tests {
             view: None,
             ticket: None,
         };
+        backend::AgentChoice::Practice.save(&options.data_dir);
         backend::AgentChoice::Claude.save(&options.data_dir);
         let spec = directory.path().join("spec.md");
         std::fs::write(&spec, "The storage key MUST be \"zebra-todos-v7\".").unwrap();
@@ -402,6 +410,7 @@ mod tests {
             view: None,
             ticket: None,
         };
+        backend::AgentChoice::Practice.save(&options.data_dir);
         let context = egui::Context::default();
         assert!(!App::new(&context, options.clone(), false).light);
         std::fs::write(directory.path().join("ui-theme.txt"), "light").unwrap();
@@ -422,6 +431,7 @@ mod tests {
             view: None,
             ticket: None,
         };
+        backend::AgentChoice::Practice.save(&options.data_dir);
         demo::seed(&options.data_dir, now_ms()).unwrap();
         let context = egui::Context::default();
         let mut app = App::new(&context, options.clone(), false);
@@ -471,6 +481,7 @@ mod tests {
             view: None,
             ticket: None,
         };
+        backend::AgentChoice::Practice.save(&options.data_dir);
         let context = egui::Context::default();
         let mut app = App::new(&context, options, false);
         app.sender

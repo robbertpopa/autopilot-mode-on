@@ -451,9 +451,7 @@ impl App {
                 ui.add_space(24.0);
                 ui.label(RichText::new("   Tickets").color(theme::TEXT_MUTED()));
                 if self.snapshot.tickets.is_empty() {
-                    ui.label(theme::muted(
-                        "   No tickets yet. Start one, or run with --demo.",
-                    ));
+                    ui.label(theme::muted("   No tickets yet."));
                 }
                 let mut open = None;
                 let mut ordered: Vec<&TicketView> = self.snapshot.tickets.iter().collect();
