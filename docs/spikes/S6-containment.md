@@ -90,16 +90,25 @@ Each row ran twice: once directly under `srt`, and once as a grandchild (`bash -
 | `example.com`, and a raw `1.1.1.1:443` that skips the proxy | denied | denied | |
 | `GH_TOKEN`, `ANTHROPIC_API_KEY` in the environment | visible | absent | `srt` inherits the environment; the launcher must scrub it |
 
+### Provider smoke test (2026-11-23)
+
+Real `claude` 2.1.330 under the same `srt` rules, API-key mode with the dedicated key, `--model haiku`, `--max-budget-usd 0.05`, `--max-turns 8`, `--allowedTools Bash`, `--strict-mcp-config` with no servers, a fresh `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_TMPDIR` inside the allowed folder, telemetry off. The launcher started it with `env -i` plus `PATH`, `HOME`, the config and temp folders and the key. The sandbox also denied `/mnt`, so the Windows drives are not readable. The prompt asked the agent to write a file in the worktree, then try to read a sibling marker, read `/mnt/c/Windows/win.ini`, call the host loopback listener and append to `.git/config`.
+
+- Provider reachable through the proxy: 6 turns, $0.0026, no error. A first attempt with a malformed key reached the API and got "Invalid API key" at no cost, which also shows the domain rule lets the provider through.
+- Worktree write landed. The marker and the Windows drive were not there, loopback was refused, and the `.git/config` append was denied (Claude's own permission layer reported it; the sandbox rule from the matrix also covers it). On the host `.git/config` was unchanged and the key did not appear in the output.
+- Needed to start: a writable temp folder (`CLAUDE_CODE_TMPDIR`), read access to the Node and `claude` install folders, and a config folder holding no sign-in.
+- Spend so far in S6: about $0.003.
+
 Limits of this evidence:
 - The `git push` denial is by filesystem rule (the bare remote lies outside the readable set), not by a network rule. A push to a remote over the network is covered by the domain list, which was not exercised with a real Git host.
 - `gh` is not installed in the distro, so that row shows only that the binary is absent. Token separation rests on the scrubbed environment.
 - `srt` refuses an incomplete config (`network.deniedDomains` is required) and refuses to run without `rg`. Both fail closed. With `denyRead` on the home folder the `apply-seccomp` helper had to be re-allowed, or the command failed to start.
-- Not run: the independent check runner (`cargo`, tests), a provider smoke test with `claude` signed in inside WSL, and `srt` on native Windows (`srt windows-install` provisions a service account and machine-wide WFP filters through a UAC prompt, so it needs the owner's go-ahead).
+- Not run: the independent check runner (`cargo`, tests), a subscription-mode smoke test (only API-key mode ran), and `srt` on native Windows (`srt windows-install` provisions a service account and machine-wide WFP filters through a UAC prompt, so it needs the owner's go-ahead).
 - Claude Code's own Bash sandbox is documented as unavailable on native Windows. Inside WSL2 it is available, and `srt` is the same runtime.
 
 ## Result
 
 - **Native Windows, Claude agent:** level 0. Codex MXC has no documented per-domain network rule, and the recorded profile switches the network off, so the provider would be unreachable. Keep it in fixture mode.
-- **WSL2 with `srt`, probe and descendants:** every row of the local matrix held. This is level 2 evidence for filesystem, process-tree, egress and credential rows. It is not yet enough to enable real Build: the check runner, shell and toolchain compatibility and a provider smoke test with a WSL-only sign-in are still open.
+- **WSL2 with `srt`, probe and descendants:** every row of the local matrix held. This is level 2 evidence for filesystem, process-tree, egress and credential rows. It is not yet enough to enable real Build: the check runner, shell and toolchain compatibility and a subscription-mode run are still open. The API-key provider smoke test passed.
 - The direct MXC run above stays preliminary evidence for one Windows CLI version and profile.
 - Keep real Build, Check and publishing gated until the open rows run. The refusal in `autopilot build` stays.
