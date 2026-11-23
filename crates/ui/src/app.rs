@@ -83,6 +83,8 @@ pub struct App {
     pub(crate) pipeline_selected: Option<String>,
     pub(crate) pipeline_notice: Option<(bool, String)>,
     pub(crate) draft_text: String,
+    /// The question typed for the advisor on the open ticket.
+    pub(crate) advise_text: String,
     /// The pipeline the agent box is changing, or none for a new one.
     pub(crate) draft_editing: Option<String>,
     /// The step row open on the Pipelines page.
@@ -206,6 +208,7 @@ impl App {
             pipeline_selected: None,
             pipeline_notice: None,
             draft_text: String::new(),
+            advise_text: String::new(),
             draft_editing: None,
             step_open: None,
             custom_edit: None,

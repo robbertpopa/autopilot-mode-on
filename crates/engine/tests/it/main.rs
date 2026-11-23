@@ -1555,3 +1555,28 @@ mod custom_steps {
         assert!(view.step(step).is_none());
     }
 }
+
+// Invariant: the advisor is paid for once per question and never past its
+// cap. A change that dropped the count or the kept answer would spend on every
+// call; nothing else exercises the history it reads.
+#[test]
+fn the_advisor_answers_once_per_question_and_stops_at_its_cap() {
+    let (data, ticket) = understood_and_asking("ask");
+    let ask = |question: &str, cap: u32, calls: &std::cell::Cell<u32>| {
+        autopilot_engine::advise_ticket(data.path(), &ticket, question, "context", cap, |_| {
+            calls.set(calls.get() + 1);
+            Ok("do the cautious thing".into())
+        })
+    };
+    let calls = std::cell::Cell::new(0);
+
+    assert_eq!(ask("first?", 2, &calls).unwrap(), "do the cautious thing");
+    assert_eq!(ask("first?", 2, &calls).unwrap(), "do the cautious thing");
+    assert_eq!(calls.get(), 1, "the same question is not asked twice");
+    ask("second?", 2, &calls).unwrap();
+    assert!(ask("third?", 2, &calls).is_err(), "the cap is two");
+    assert!(ask("fourth?", 0, &calls).is_err(), "a cap of zero is off");
+    assert_eq!(calls.get(), 2);
+    let history = watch(data.path(), &ticket, 0).unwrap();
+    assert_eq!(autopilot_engine::advisor_calls(&history), 2);
+}

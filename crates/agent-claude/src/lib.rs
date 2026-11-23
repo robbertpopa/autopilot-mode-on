@@ -139,6 +139,20 @@ impl ClaudeAgent {
         )
     }
 
+    /// The advisor's answer to one question. It may read the project when one
+    /// was given, and nothing else.
+    ///
+    /// # Errors
+    /// Returns an error if Claude Code cannot start or fails.
+    pub fn advise(&self, prompt: &str) -> Result<String, AgentError> {
+        let reading = self.workspace.is_some();
+        self.one_call(
+            command::advisor_args(&self.config, reading),
+            self.workspace.clone(),
+            prompt,
+        )
+    }
+
     fn one_call(
         &self,
         args: Vec<std::ffi::OsString>,

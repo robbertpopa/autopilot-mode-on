@@ -418,7 +418,11 @@ mod tests {
         edit_step(&path, Step::Plan, &StepField::Model("default".into())).unwrap();
         let profile = edit_step(&path, Step::Plan, &StepField::Effort("default".into())).unwrap();
         let plan = step_of(&profile, Step::Plan);
-        assert_eq!(plan.model, None);
+        assert_eq!(
+            plan.model.as_deref(),
+            Some("opus"),
+            "back to the step's own default"
+        );
         assert_eq!(plan.effort, None);
         assert!(!fs::read_to_string(&path).unwrap().contains("default"));
     }

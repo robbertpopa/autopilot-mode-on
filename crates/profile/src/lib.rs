@@ -68,6 +68,42 @@ impl Default for ReviewSettings {
     }
 }
 
+/// The advisor: a strong model the engine asks when the main agent is unsure.
+/// It reads and answers; it never changes anything. The cap keeps its cost
+/// bounded, and zero switches it off.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AdvisorSettings {
+    pub model: String,
+    pub effort: Option<String>,
+    /// Most calls per ticket.
+    pub max_calls: u32,
+}
+
+impl Default for AdvisorSettings {
+    fn default() -> Self {
+        Self {
+            model: "opus".to_owned(),
+            effort: None,
+            max_calls: 3,
+        }
+    }
+}
+
+impl AdvisorSettings {
+    /// # Errors
+    /// Returns a sentence for a cap that is not a sensible number of calls.
+    pub fn check(&self) -> Result<(), String> {
+        if self.max_calls > 20 {
+            return Err("max_calls must be between 0 and 20".into());
+        }
+        if self.model.trim().is_empty() {
+            return Err("model must not be empty".into());
+        }
+        Ok(())
+    }
+}
+
 impl ReviewSettings {
     /// # Errors
     /// Returns a sentence for a value that cannot be a sensible threshold.
@@ -170,6 +206,7 @@ pub struct Profile {
     pub budgets: ProjectBudgets,
     pub when_unsure: WhenUnsure,
     pub review: ReviewSettings,
+    pub advisor: AdvisorSettings,
     /// Projects by normalised workspace path.
     pub projects: BTreeMap<String, Project>,
     custom_pipelines: BTreeMap<String, Pipeline>,
@@ -186,6 +223,7 @@ struct ProfileFile {
     budgets: ProjectBudgets,
     when_unsure: WhenUnsure,
     review: ReviewSettings,
+    advisor: AdvisorSettings,
     projects: BTreeMap<String, ProjectFile>,
     pipelines: BTreeMap<String, PipelineFile>,
 }
@@ -266,6 +304,10 @@ impl Profile {
             let offset = source.find("[review]").unwrap_or(0);
             return Err(diagnostic(path, source, offset, "review".into(), why));
         }
+        if let Err(why) = file.advisor.check() {
+            let offset = source.find("[advisor]").unwrap_or(0);
+            return Err(diagnostic(path, source, offset, "advisor".into(), why));
+        }
         let custom_pipelines = resolve_pipelines(&file.pipelines, &custom_steps, path, source)?;
         let projects = resolve_projects(&file.projects, &custom_pipelines, path, source)?;
 
@@ -278,6 +320,7 @@ impl Profile {
             budgets: file.budgets,
             when_unsure: file.when_unsure,
             review: file.review,
+            advisor: file.advisor,
             projects,
             custom_pipelines,
         })
@@ -390,6 +433,18 @@ impl Profile {
     }
 }
 
+/// The model a step uses when the profile does not choose one: the strongest
+/// where a wrong answer is expensive to undo (the plan), a capable mid-size
+/// model for the work that reads and builds, and the cheapest for steps that
+/// only carry results forward. The advisor is separate and always strong.
+fn default_model(step: Step) -> &'static str {
+    match step {
+        Step::Plan => "opus",
+        Step::Clarify | Step::PullRequest => "haiku",
+        _ => "sonnet",
+    }
+}
+
 fn resolve_step(
     step: Step,
     options: StepOverrides,
@@ -411,7 +466,9 @@ fn resolve_step(
     Ok(StepSettings {
         agent: options.agent,
         auth: options.auth,
-        model: options.model,
+        model: options
+            .model
+            .or_else(|| Some(default_model(step).to_owned())),
         effort: options.effort,
         limits: Limits {
             turns: limits.turns.map_or(20, NonZeroU32::get),

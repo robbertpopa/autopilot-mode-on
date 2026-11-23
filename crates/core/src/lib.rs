@@ -751,6 +751,12 @@ pub enum Event {
     Explained {
         text: String,
     },
+    /// One question put to the advisor and its answer, kept so the answer is
+    /// never paid for twice and the number of calls can be counted.
+    Advised {
+        question: String,
+        answer: String,
+    },
     /// The project folder the ticket is about. The read-only steps look at its
     /// files; a later run of any step uses the same folder.
     Workspace {

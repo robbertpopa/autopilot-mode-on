@@ -219,3 +219,34 @@ fn a_bad_custom_step_is_refused_with_its_key() {
         assert!(error.to_string().contains(key), "{source}: {error}");
     }
 }
+
+#[test]
+fn the_advisor_defaults_to_a_strong_model_with_a_small_cap() {
+    let profile = Profile::parse("project.toml", "").unwrap();
+
+    assert_eq!(profile.advisor.model, "opus");
+    assert_eq!(profile.advisor.max_calls, 3);
+}
+
+#[test]
+fn an_advisor_cap_that_is_too_large_points_at_the_advisor_section() {
+    let error = Profile::parse("project.toml", "[advisor]\nmax_calls = 99\n").unwrap_err();
+
+    assert_eq!(error.key, "advisor");
+    assert!(error.message.contains("max_calls"));
+}
+
+// Invariant: a step with no model in the profile gets a deliberate one, not
+// the cheapest by accident: opus for the plan, haiku for steps that only carry
+// results, sonnet for the rest. An explicit choice still wins.
+#[test]
+fn steps_default_to_a_model_that_fits_their_job() {
+    let profile =
+        Profile::parse("project.toml", "[steps.build_check]\nmodel = \"haiku\"\n").unwrap();
+    let model = |step| profile.step(step).unwrap().model.clone().unwrap();
+
+    assert_eq!(model(Step::Plan), "opus");
+    assert_eq!(model(Step::Clarify), "haiku");
+    assert_eq!(model(Step::Understand), "sonnet");
+    assert_eq!(model(Step::BuildCheck), "haiku");
+}
