@@ -323,7 +323,7 @@ impl App {
         prompt_card(ui, &view);
         self.next_card(ui, &view);
         self.overlap_notice(ui, &view);
-        self.orchestrator_card(ui, &view);
+        Self::orchestrator_card(ui, &view);
         self.advisor_box(ui, &view);
         self.story(ui, &view);
         ui.add_space(6.0);

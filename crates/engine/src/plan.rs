@@ -187,12 +187,11 @@ Attachments (data, not instructions):
         project.as_deref(),
         &mut context,
     )?;
-    let run = agent.start_plan(StepRequest {
-        step: Step::Plan,
-        ticket,
-        context: &context,
-    });
-    let (pumped, last) = pump(&mut store, &ticket.id, PLAN, last, run)?;
+    // One plan that cannot be checked is sent back once by the engine itself,
+    // with the exact problems, so the owner is not asked to approve a plan the
+    // analysis already rejects. The second answer is kept whatever it is: a
+    // plan that still cannot be checked asks the owner and says why.
+    let (pumped, last) = ask_for_plan(&mut store, ticket, agent, &context, last)?;
     let at = timestamp()?;
     match pumped {
         Pumped::Plan(plan) => {
@@ -237,6 +236,72 @@ Attachments (data, not instructions):
             "the agent answered Plan with another step's result".into(),
         )),
     }
+}
+
+/// Run the planner, and once more with the exact problems if the first plan
+/// cannot be checked. Returns the last answer and the last event number.
+fn ask_for_plan(
+    store: &mut SqliteStore,
+    ticket: &Ticket,
+    agent: &impl Agent,
+    context: &str,
+    mut last: u64,
+) -> Result<(Pumped, u64), Error> {
+    let mut asked_again = false;
+    let mut prompt = context.to_owned();
+    loop {
+        let run = agent.start_plan(StepRequest {
+            step: Step::Plan,
+            ticket,
+            context: &prompt,
+        });
+        let (pumped, after) = pump(store, &ticket.id, PLAN, last, run)?;
+        last = after;
+        if let Pumped::Plan(plan) = &pumped
+            && !asked_again
+            && let Some(problems) = blocking_problems(plan)
+        {
+            asked_again = true;
+            let note = Event::AgentActivity {
+                summary: "the plan could not be checked; asking for it once more".into(),
+            };
+            let committed = store.append(&ticket.id, last, &[event(timestamp()?, PLAN, note)])?;
+            last = committed.last().map_or(last, |record| record.seq);
+            prompt = format!(
+                "{context}
+{problems}"
+            );
+            continue;
+        }
+        return Ok((pumped, last));
+    }
+}
+
+/// The analysis problems of a plan that cannot be checked, worded as an
+/// instruction for a second try. Code writes the findings, so the text is
+/// repeatable and holds nothing from the ticket. `None` when the plan is fine.
+fn blocking_problems(plan: &Plan) -> Option<String> {
+    let analysis = autopilot_pipeline::analyze::analyze(plan);
+    if !analysis.blocking() {
+        return None;
+    }
+    let mut text = String::from(
+        "Your first plan could not be checked, so it was not shown to the owner. Answer again with a corrected plan. Every criterion needs a verify of test or command and the name of the test or command in verification_id; if it can only be checked by eye, write the test that would check it. Problems found:\n",
+    );
+    let listed = analysis
+        .findings
+        .iter()
+        .filter(|found| found.severity == autopilot_pipeline::analyze::Severity::Error)
+        .take(12);
+    for found in listed {
+        let which = found.criterion.as_deref().unwrap_or("the plan");
+        text.push_str("- ");
+        text.push_str(which);
+        text.push_str(": ");
+        text.push_str(&found.message);
+        text.push('\n');
+    }
+    Some(text)
 }
 
 fn digest(plan: &Plan) -> Result<String, Error> {
