@@ -47,10 +47,10 @@ colors! {
     TEXT_SOFT: Color32::from_rgb(0xC4, 0xC7, 0xCD), Color32::from_rgb(0x3A, 0x41, 0x4B);
     TEXT_MUTED: Color32::from_rgb(0x93, 0x99, 0xA3), Color32::from_rgb(0x5F, 0x67, 0x73);
     ARROW: Color32::from_rgb(0x6B, 0x70, 0x79), Color32::from_rgb(0x8A, 0x92, 0x9D);
-    BLUE: Color32::from_rgb(0x6E, 0xA2, 0xFF), Color32::from_rgb(0x2F, 0x6F, 0xE4);
-    BLUE_TEXT: Color32::from_rgb(0xA9, 0xC9, 0xFF), Color32::from_rgb(0x1D, 0x4F, 0xA8);
-    BLUE_FILL: Color32::from_rgb(0x13, 0x23, 0x3D), Color32::from_rgb(0xE2, 0xEC, 0xFF);
-    ON_ACCENT: Color32::from_rgb(0x0B, 0x12, 0x20), Color32::from_rgb(0xFF, 0xFF, 0xFF);
+    BLUE: Color32::from_rgb(0xE6, 0xE8, 0xEC), Color32::from_rgb(0x20, 0x24, 0x2B);
+    BLUE_TEXT: Color32::from_rgb(0xE6, 0xE8, 0xEC), Color32::from_rgb(0x20, 0x24, 0x2B);
+    BLUE_FILL: Color32::from_rgb(0x2A, 0x2D, 0x33), Color32::from_rgb(0xE3, 0xE6, 0xEB);
+    ON_ACCENT: Color32::from_rgb(0x14, 0x18, 0x1E), Color32::from_rgb(0xFF, 0xFF, 0xFF);
     GREEN: Color32::from_rgb(0x4C, 0xC3, 0x8A), Color32::from_rgb(0x1E, 0x7A, 0x4E);
     GREEN_FILL: Color32::from_rgb(0x14, 0x2A, 0x1F), Color32::from_rgb(0xDD, 0xF3, 0xE8);
     AMBER: Color32::from_rgb(0xF0, 0xB9, 0x4D), Color32::from_rgb(0x8A, 0x56, 0x00);
@@ -160,7 +160,7 @@ pub fn apply(ctx: &egui::Context, light: bool) {
     visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, TEXT());
     visuals.selection.bg_fill = BLUE();
     // Text on a selected option sits on the blue fill, so it has to be white.
-    visuals.selection.stroke = Stroke::new(1.0_f32, Color32::WHITE);
+    visuals.selection.stroke = Stroke::new(1.0_f32, ON_ACCENT());
     visuals.hyperlink_color = BLUE();
     let radius = CornerRadius::same(7);
     for widget in [
