@@ -37,6 +37,7 @@ mod metrics;
 mod notes;
 mod overlap;
 mod pipelines;
+mod places;
 mod plan;
 mod profile_edit;
 mod proposals;
@@ -59,6 +60,7 @@ pub use attachments::{
     stage,
 };
 pub use autopilot_checks::resolve_executable;
+pub use autopilot_tracker::Repo;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
 pub use catalog::{ToolSuggestion, allowed_tools, set_tool_allowed, suggest_tools};
 pub use change::{Proposal, Reading, apply_to_project, apply_to_ticket, propose};
@@ -82,6 +84,7 @@ pub use overlap::{TicketOverlap, find_overlaps};
 pub use pipelines::{
     choose_pipeline, chosen as chosen_pipeline, chosen_custom as chosen_custom_steps,
 };
+pub use places::{Places, gh_for, places, worktree_of};
 pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use profile_edit::{
     ProfileEditError, ProjectField, ReviewField, StepField, add_detected_check, add_pipeline,

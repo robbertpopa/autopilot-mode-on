@@ -128,6 +128,19 @@ impl Repository {
         })
     }
 
+    /// The branch checked out in this repository now.
+    ///
+    /// # Errors
+    /// Returns an error if Git fails or HEAD is not on a branch.
+    pub fn current_branch(&self) -> Result<String, Error> {
+        let output = self.read_git("symbolic-ref", &["--quiet", "--short", "HEAD"])?;
+        let name = String::from_utf8_lossy(&output).trim().to_owned();
+        if name.is_empty() {
+            return Err(Error::LocalBranch("HEAD".into()));
+        }
+        Ok(name)
+    }
+
     /// Resolve the exact local branch to its full object ID.
     ///
     /// # Errors

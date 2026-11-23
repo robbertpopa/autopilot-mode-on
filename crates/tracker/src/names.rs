@@ -36,6 +36,22 @@ impl Repo {
 }
 
 impl Repo {
+    /// The repository a github.com remote address names, in the https, scp-like
+    /// or ssh spelling with or without `.git`. Another host gives `None`.
+    #[must_use]
+    pub fn from_remote(url: &str) -> Option<Self> {
+        let url = url.trim();
+        let path = [
+            "https://github.com/",
+            "git@github.com:",
+            "ssh://git@github.com/",
+        ]
+        .iter()
+        .find_map(|prefix| url.strip_prefix(prefix))?;
+        let path = path.strip_suffix(".git").unwrap_or(path);
+        Self::parse(path).ok()
+    }
+
     /// Whether a remote address points at this repository on github.com, in
     /// the https, scp-like or ssh spelling, with or without `.git`. Anything
     /// else, including another host or a lookalike prefix, is not a match.
@@ -107,6 +123,35 @@ mod tests {
             "",
         ] {
             assert!(!repo.matches_remote(bad), "{bad}");
+        }
+    }
+
+    // Invariant: the repository read from a remote is exactly one the push check
+    // would accept, and a remote that is not on github.com names none. The
+    // window publishes to what this returns, so a reading that disagreed with
+    // `matches_remote` would offer a repository the push then refuses.
+    #[test]
+    fn a_repository_read_from_a_remote_is_one_the_push_check_accepts() {
+        for good in [
+            "https://github.com/owner/name",
+            "https://github.com/owner/name.git",
+            "git@github.com:owner/name.git",
+            "ssh://git@github.com/owner/name",
+            "  https://github.com/owner/name\n",
+        ] {
+            let repo = Repo::from_remote(good).unwrap();
+            assert_eq!(repo.to_string(), "owner/name", "{good}");
+            assert!(repo.matches_remote(good), "{good}");
+        }
+        for bad in [
+            "https://github.com/owner/name/extra",
+            "https://evil.example/owner/name",
+            "https://github.com.evil.example/owner/name",
+            "D:/local/remote.git",
+            "https://github.com/-x/name",
+            "",
+        ] {
+            assert_eq!(Repo::from_remote(bad), None, "{bad}");
         }
     }
 

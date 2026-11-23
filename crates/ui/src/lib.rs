@@ -3,8 +3,10 @@
 
 mod accounts;
 mod app;
-mod backend;
+#[doc(hidden)]
+pub mod backend;
 mod board;
+mod build_actions;
 mod composer;
 pub mod demo;
 mod first_run;
@@ -1648,6 +1650,35 @@ effort = \"high\"
             read(&options).tickets[0].step(Step::Plan).unwrap().state,
             autopilot_pipeline::StepState::Asking(_)
         ));
+    }
+
+    // Invariant: Build in the window says why it cannot start instead of
+    // failing silently: a ticket with no project folder has nothing to build.
+    #[test]
+    fn building_without_a_project_folder_says_so() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        perform(
+            &options,
+            &Action::Start {
+                title: "No folder".into(),
+                description: "Add an export option".into(),
+                attachments: Vec::new(),
+                workspace: None,
+                pipeline: None,
+            },
+        )
+        .unwrap();
+        let id = read(&options).tickets[0].id.clone();
+        let outcome = perform(&options, &Action::MakeBuild(id));
+        let message = outcome.unwrap_err();
+        assert!(message.contains("project folder"), "{message}");
     }
 
     // Invariant: with a project folder chosen, the real agent reads files in it

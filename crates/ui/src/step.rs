@@ -319,7 +319,7 @@ impl App {
                 let why = if rerunnable {
                     "The step has not finished, or another step is running or waiting for you"
                 } else {
-                    "Coming soon: this step cannot run until code can be written safely (containment, S6)"
+                    "A finished build is not re-run from here. Use Build again on the ticket if it stopped, or start a new ticket."
                 };
                 ui.add_enabled(false, button("Re-run this step"))
                     .on_disabled_hover_text(why);
@@ -388,14 +388,22 @@ impl App {
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(theme::muted("Open"));
+            let worktree = autopilot_engine::worktree_of(&self.options.data_dir, &view.id);
+            if ui
+                .add_enabled(worktree.is_some(), button("Open the worktree"))
+                .on_disabled_hover_text(
+                    "There is no copy of the project for this ticket yet: it is made when Build starts.",
+                )
+                .clicked()
+            {
+                self.act(Action::OpenWorktree(view.id.clone()));
+            }
             for text in [
-                "Open the worktree",
                 "Open in a terminal (resume the session)",
                 "Copy the session id",
             ] {
-                ui.add_enabled(false, button(text)).on_disabled_hover_text(
-                    "Not built yet: the real agent session and worktree arrive with S6",
-                );
+                ui.add_enabled(false, button(text))
+                    .on_disabled_hover_text("Not built: the session is kept inside the sandbox");
             }
         });
         ui.add_space(8.0);
