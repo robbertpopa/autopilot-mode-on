@@ -253,6 +253,11 @@ impl<A: Agent> Round for BuildRound<'_, A> {
         // fingerprint and the published commit all include it. A failed fetch
         // (a crate that does not exist, a version that does not resolve) is the
         // agent's to fix, so it is a failing check, not a fault of the machine.
+        // What an `npm ci` creates is never the agent's work, so it is kept out of
+        // the host's commits even when the project forgot to ignore it.
+        if self.worktree.join("package.json").is_file() {
+            self.manager.exclude(&self.ticket.id, "node_modules/")?;
+        }
         if let Err(note) = self.toolbox.prepare(&self.worktree, &self.cancel) {
             return Ok(vec![autopilot_checks::CheckRun {
                 id: "dependencies".to_owned(),

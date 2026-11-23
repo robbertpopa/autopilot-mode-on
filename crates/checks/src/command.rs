@@ -238,13 +238,18 @@ impl Toolbox {
         })
     }
 
-    /// Fetch what a Rust project depends on, once per round, before the checks
-    /// run without a network. It runs under a role that reaches only the crate
-    /// registry. It updates `Cargo.lock` when the agent added a dependency, because
-    /// the agent has no toolchain to do it. Anything but a Rust project is left alone.
+    /// Fetch what a project depends on, once per round, before the checks run
+    /// without a network. Each fetch runs under a role that reaches only its
+    /// own registry: crates.io for a project with a `Cargo.toml`, the npm
+    /// registry for one with a `package-lock.json`. A Rust fetch updates
+    /// `Cargo.lock` when the agent added a dependency, because the agent has no
+    /// toolchain to do it. `npm ci` runs with install scripts off, so no
+    /// package's own code runs; it installs exactly what the lockfile says.
+    /// Any other kind of project is left alone: a Python install builds source
+    /// packages by running their code, which is not something to do on trust.
     ///
     /// # Errors
-    /// Returns the tail of the output if the fetch fails or cannot start.
+    /// Returns the tail of the output if a fetch fails or cannot start.
     pub fn prepare(
         &self,
         worktree: &Path,
@@ -254,26 +259,55 @@ impl Toolbox {
             return Ok(());
         };
         let worktree = plain_directory(worktree);
-        if !worktree.join("Cargo.toml").is_file() {
-            return Ok(());
+        if worktree.join("Cargo.toml").is_file() {
+            let role = Role::Fetch {
+                worktree: worktree.clone(),
+                tmp: sandbox.tmp.clone(),
+            };
+            let env = [("CARGO_TERM_COLOR", "never"), ("LANG", "C.UTF-8")];
+            self.fetch(sandbox, &role, "cargo", &["fetch"], &env, cancel)?;
         }
-        let spec = CommandSpec {
-            program: PathBuf::from("cargo"),
-            args: vec![OsString::from("fetch")],
-            env: vec![
-                ("CARGO_TERM_COLOR".into(), "never".into()),
-                ("LANG".into(), "C.UTF-8".into()),
-            ],
-            cwd: Some(worktree.clone()),
+        if worktree.join("package-lock.json").is_file() {
+            let role = Role::FetchNode {
+                worktree,
+                tmp: sandbox.tmp.clone(),
+            };
+            let env = [("LANG", "C.UTF-8"), ("NO_COLOR", "1")];
+            let args = ["ci", "--ignore-scripts", "--no-audit", "--no-fund"];
+            self.fetch(sandbox, &role, "npm", &args, &env, cancel)?;
+        }
+        Ok(())
+    }
+
+    fn fetch(
+        &self,
+        sandbox: &Sandbox,
+        role: &Role,
+        program: &str,
+        args: &[&str],
+        env: &[(&str, &str)],
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), String> {
+        let worktree = match role {
+            Role::Fetch { worktree, .. } | Role::FetchNode { worktree, .. } => worktree.clone(),
+            Role::Agent { .. } | Role::Check { .. } => {
+                return Err("only a fetch role may fetch".to_owned());
+            }
         };
-        let role = Role::Fetch {
-            worktree,
-            tmp: sandbox.tmp.clone(),
+        let what = format!("{program} {}", args.first().copied().unwrap_or_default());
+        let spec = CommandSpec {
+            program: PathBuf::from(program),
+            args: args.iter().map(OsString::from).collect(),
+            env: env
+                .iter()
+                .map(|(name, value)| ((*name).into(), (*value).into()))
+                .collect(),
+            cwd: Some(worktree),
         };
         let wrapped = sandbox
             .boundary
-            .wrap(&role, &spec, &[])
-            .map_err(|error| format!("cargo fetch could not start: {error}"))?;
+            .wrap(role, &spec, &[])
+            .map_err(|error| format!("{what} could not start: {error}"))?;
         let limits = Limits {
             timeout: TIMEOUT,
             bytes_per_stream: BYTES_PER_STREAM,
@@ -281,7 +315,7 @@ impl Toolbox {
         let output = self
             .runner
             .run(&wrapped, b"", limits, cancel)
-            .map_err(|error| format!("cargo fetch could not start: {error}"))?;
+            .map_err(|error| format!("{what} could not start: {error}"))?;
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&output.stdout),
@@ -290,7 +324,7 @@ impl Toolbox {
         match output.outcome {
             Outcome::Exited(status) if status.success() => Ok(()),
             _ => Err(format!(
-                "cargo fetch failed. Last output:\n{}",
+                "{what} failed. Last output:\n{}",
                 tail(text.trim_end(), NOTE_TAIL)
             )),
         }
