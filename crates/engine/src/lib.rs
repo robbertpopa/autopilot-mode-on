@@ -25,6 +25,7 @@ mod advise;
 mod allowances;
 mod attachments;
 mod build;
+mod catalog;
 mod change;
 mod control;
 mod custom;
@@ -56,6 +57,7 @@ pub use attachments::{
 };
 pub use autopilot_checks::resolve_executable;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
+pub use catalog::{ToolSuggestion, suggest_tools};
 pub use change::{Proposal, Reading, apply_to_project, apply_to_ticket, propose};
 pub use control::{request_pause, request_resume, request_stop};
 pub use custom::{latest as custom_outcome, run_custom};

