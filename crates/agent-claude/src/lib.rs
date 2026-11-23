@@ -205,10 +205,13 @@ impl ClaudeAgent {
             &linux_path(&config)?,
             &linux_path(&tmp)?,
         )?;
+        // The hook is the Linux program installed in the distro, run by Claude Code
+        // before every shell call. Its path is quoted for the shell that runs it.
+        let settings = command::hook_settings(&shell_quote(sandbox.boundary.wsl().hook())?)?;
         let spec = CommandSpec {
             // The distro's own program, found on its PATH; `self.executable` is the host's.
             program: PathBuf::from("claude"),
-            args: command::build_args(&self.config, "{}", session, request.turns_left, budget),
+            args: command::build_args(&self.config, &settings, session, request.turns_left, budget),
             env,
             cwd: Some(request.worktree.to_path_buf()),
         };
@@ -228,6 +231,18 @@ fn host_executable(config: &ClaudeConfig) -> io::Result<PathBuf> {
         }
         None => command::resolve_executable(&process_env::var_os("PATH").unwrap_or_default()),
     }
+}
+
+/// A path as one word for a POSIX shell. A path with a single quote is refused
+/// instead of escaped: an installed program has no reason to have one.
+fn shell_quote(path: &str) -> io::Result<String> {
+    if path.contains(['\'', '\0', '\n']) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the hook path has a character a shell would read as syntax",
+        ));
+    }
+    Ok(format!("'{path}'"))
 }
 
 /// A folder name for a ticket: the id itself when it is plain, otherwise its
@@ -806,6 +821,21 @@ fn check_finish(
 mod tests {
     use super::*;
     use stream::Finish;
+
+    // Invariant: the hook path reaches the shell as one word, and a path that
+    // could end the quote is refused. The hook runs before every shell call, so
+    // a path that split or injected would run something else instead of it.
+    #[test]
+    fn the_hook_path_is_one_shell_word_or_refused() {
+        assert_eq!(
+            shell_quote("/home/u/.autopilot/bin/autopilot-hook").unwrap(),
+            "'/home/u/.autopilot/bin/autopilot-hook'"
+        );
+        assert_eq!(shell_quote("/a b/hook").unwrap(), "'/a b/hook'");
+        for bad in ["/a'b", "/a'; rm -rf ~; '", "/a\nb"] {
+            assert!(shell_quote(bad).is_err(), "{bad}");
+        }
+    }
 
     // Invariant: a ticket id names one folder, never a parent or a nested
     // path, because the folder holds the ticket's sessions and is writable by

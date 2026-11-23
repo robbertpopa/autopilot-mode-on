@@ -4,7 +4,7 @@ use super::{PROVIDER, REGISTRY, ROWS, Role, boundary, judge, probe_script, rows}
 use crate::wsl::{Host, Wsl, parse_discovery};
 
 fn wsl() -> Wsl {
-    let text = "home=/home/u\npath=/usr/bin\nsrt=/home/u/node/bin/srt\nseccomp=/home/u/v/seccomp\n";
+    let text = "home=/home/u\npath=/usr/bin\nsrt=/home/u/node/bin/srt\nseccomp=/home/u/v/seccomp\nhook=/home/u/.autopilot/bin/autopilot-hook\n";
     parse_discovery(
         text,
         Host::Wsl,
@@ -19,7 +19,10 @@ fn wsl() -> Wsl {
 fn answers(flip: Option<&str>, drop: Option<&str>) -> String {
     let mut text = String::new();
     for row in ROWS.iter().filter(|row| Some(**row) != drop) {
-        let works = matches!(*row, "write-worktree" | "write-scratch");
+        let works = matches!(
+            *row,
+            "write-worktree" | "write-scratch" | "hook-denies-push" | "hook-allows-status"
+        );
         let allowed = works != (Some(*row) == flip);
         text.push_str(if allowed { "ALLOWED " } else { "DENIED " });
         text.push_str(row);
@@ -36,20 +39,31 @@ fn answers(flip: Option<&str>, drop: Option<&str>) -> String {
 #[test]
 fn the_probe_passes_only_when_every_row_is_as_expected() {
     assert_eq!(
-        judge(&answers(None, None), "agent", Host::Wsl),
+        judge(&answers(None, None), "agent", Host::Wsl, true),
         Vec::<String>::new()
     );
-    let leaked = judge(&answers(Some("read-sibling"), None), "agent", Host::Wsl);
+    let leaked = judge(
+        &answers(Some("read-sibling"), None),
+        "agent",
+        Host::Wsl,
+        true,
+    );
     assert_eq!(leaked, ["agent: read-sibling was allowed"]);
-    let broken = judge(&answers(Some("write-worktree"), None), "check", Host::Wsl);
+    let broken = judge(
+        &answers(Some("write-worktree"), None),
+        "check",
+        Host::Wsl,
+        false,
+    );
     assert_eq!(broken, ["check: write-worktree was denied but must work"]);
     let silent = judge(
         &answers(None, Some("run-windows-program")),
         "agent",
         Host::Wsl,
+        true,
     );
     assert_eq!(silent, ["agent: run-windows-program gave no answer"]);
-    assert_eq!(judge("", "agent", Host::Wsl).len(), ROWS.len());
+    assert_eq!(judge("", "agent", Host::Wsl, true).len(), ROWS.len());
 }
 
 // Invariant: a Linux host is judged on exactly the rows that exist there, and
@@ -58,21 +72,27 @@ fn the_probe_passes_only_when_every_row_is_as_expected() {
 // a machine for lacking Windows. A change that breaks it: one shared row list.
 #[test]
 fn a_linux_host_drops_the_windows_rows_and_keeps_the_rest() {
-    let linux = rows(Host::Linux);
+    let linux = rows(Host::Linux, true);
     for gone in ["read-windows-drive", "run-windows-program", "run-init"] {
         assert!(!linux.contains(&gone), "{gone}");
-        assert!(!probe_script(Host::Linux).contains(&format!("LABEL={gone} ")));
-        assert!(probe_script(Host::Wsl).contains(&format!("LABEL={gone} ")));
+        assert!(!probe_script(Host::Linux, true).contains(&format!("LABEL={gone} ")));
+        assert!(probe_script(Host::Wsl, true).contains(&format!("LABEL={gone} ")));
     }
     assert_eq!(linux.len(), ROWS.len() - 3);
     // An answer set that only has the Linux rows passes on Linux and fails on WSL.
     let text: String = linux.iter().map(|row| answers_for(row)).collect();
-    assert_eq!(judge(&text, "agent", Host::Linux), Vec::<String>::new());
-    assert_eq!(judge(&text, "agent", Host::Wsl).len(), 3);
+    assert_eq!(
+        judge(&text, "agent", Host::Linux, true),
+        Vec::<String>::new()
+    );
+    assert_eq!(judge(&text, "agent", Host::Wsl, true).len(), 3);
 }
 
 fn answers_for(row: &str) -> String {
-    let works = matches!(row, "write-worktree" | "write-scratch");
+    let works = matches!(
+        row,
+        "write-worktree" | "write-scratch" | "hook-denies-push" | "hook-allows-status"
+    );
     format!(
         "{} {row}
 ",
