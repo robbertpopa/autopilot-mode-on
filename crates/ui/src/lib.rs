@@ -294,6 +294,52 @@ mod tests {
         assert!(app.ask_edits.is_empty());
     }
 
+    // Invariant: every `--view` name the usage text lists opens its screen, so
+    // a script or a screenshot run that names one does not land on the default
+    // page. A name that stops working fails here instead of opening silently
+    // on the wrong page.
+    #[test]
+    fn every_view_name_opens_its_screen() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let cases = [
+            ("today", Mode::Today),
+            ("inbox", Mode::Today),
+            ("new", Mode::NewTicket),
+            ("plan", Mode::PlanReview),
+            ("settings", Mode::Asking),
+            ("asking", Mode::Asking),
+            ("design", Mode::Design),
+            ("checks", Mode::Checks),
+            ("look", Mode::Look),
+            ("board", Mode::Board),
+            ("projects", Mode::Projects),
+            ("pipelines", Mode::Pipelines),
+            ("health", Mode::Health),
+            ("review", Mode::Review),
+            ("cost", Mode::Cost),
+            ("accounts", Mode::Accounts),
+            ("run", Mode::Watch),
+            ("step", Mode::Watch),
+        ];
+        for (view, expected) in cases {
+            let mut shown = options.clone();
+            shown.view = Some(view.to_owned());
+            let mut app = App::new(&context, shown.clone(), false);
+            app.mode = Mode::Board;
+            app.set_snapshot(read(&shown));
+            assert_eq!(app.mode, expected, "--view {view}");
+        }
+    }
+
     // Invariant: an install with no tickets and no chosen folder opens First
     // run; a chosen folder or a ticket ends it. Before the first snapshot it
     // is not first run, so the page does not flash while data loads.
