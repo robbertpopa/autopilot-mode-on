@@ -714,6 +714,79 @@ fn a_plan_with_an_unverifiable_criterion_is_a_forced_confirmation() {
     assert_eq!(approve(data.path(), &ticket.id, false).unwrap(), 1);
 }
 
+// Invariant: a plan the analysis rejects is asked for once more with the exact
+// problems, and the owner sees the corrected plan; a plan that is still bad is
+// kept and asked about, not asked for a third time. Without the retry the owner
+// approves a plan with unverifiable criteria, as happened on a real ticket
+// where 11 of 12 criteria were unknown; without the limit a stubborn agent is
+// paid for in a loop.
+struct TwoTries {
+    plans: std::sync::Mutex<Vec<autopilot_core::Plan>>,
+    prompts: std::sync::Mutex<Vec<String>>,
+}
+
+impl Agent for TwoTries {
+    fn start(&self, _request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        Err(io::Error::other("planner only plans").into())
+    }
+
+    fn start_plan(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        self.prompts
+            .lock()
+            .unwrap()
+            .push(request.context.to_owned());
+        let mut plans = self.plans.lock().unwrap();
+        let plan = if plans.len() > 1 {
+            plans.remove(0)
+        } else {
+            plans[0].clone()
+        };
+        Ok(AgentRun::spawn_plan(move |_| Ok(plan))?)
+    }
+}
+
+#[test]
+fn a_plan_that_cannot_be_checked_is_asked_for_once_more() {
+    let mut bad = good_plan();
+    bad.criteria
+        .push(criterion("c2", autopilot_core::Verify::Unknown, ""));
+    let (data, ticket) = ready_to_plan("plan-retry");
+    let agent = TwoTries {
+        plans: std::sync::Mutex::new(vec![bad.clone(), good_plan()]),
+        prompts: std::sync::Mutex::new(Vec::new()),
+    };
+    run_plan(data.path(), &ticket, &agent).unwrap();
+    let prompts = agent.prompts.lock().unwrap().clone();
+    assert_eq!(prompts.len(), 2);
+    assert!(!prompts[0].contains("could not be checked"));
+    assert!(prompts[1].contains("c2: no verification"), "{}", prompts[1]);
+    let request = Inbox::in_data_dir(data.path())
+        .requests()
+        .unwrap()
+        .remove(0);
+    assert!(matches!(
+        request.body,
+        autopilot_pipeline::inbox::RequestBody::Approval { forced: false, .. }
+    ));
+
+    // A plan that stays bad is kept after the one retry, and asks as forced.
+    let (data, ticket) = ready_to_plan("plan-retry-2");
+    let stubborn = TwoTries {
+        plans: std::sync::Mutex::new(vec![bad]),
+        prompts: std::sync::Mutex::new(Vec::new()),
+    };
+    run_plan(data.path(), &ticket, &stubborn).unwrap();
+    assert_eq!(stubborn.prompts.lock().unwrap().len(), 2);
+    let request = Inbox::in_data_dir(data.path())
+        .requests()
+        .unwrap()
+        .remove(0);
+    assert!(matches!(
+        request.body,
+        autopilot_pipeline::inbox::RequestBody::Approval { forced: true, .. }
+    ));
+}
+
 // Invariant: an invalid plan fails the step, and the step can be tried again.
 #[test]
 fn an_invalid_plan_fails_the_step_and_it_can_run_again() {
@@ -1008,7 +1081,9 @@ fn project_rules_reach_prompts_stay_out_of_the_workspace_and_cannot_loosen_polic
     run_plan(data.path(), &ticket, &agent).unwrap();
 
     let contexts = seen.lock().unwrap().clone();
-    assert_eq!(contexts.len(), 2);
+    // Understand, the plan, and the plan once more: this fixture plan cannot be
+    // checked, and the second ask must carry the rules too.
+    assert_eq!(contexts.len(), 3);
     for context in &contexts {
         assert!(context.contains("Be terse."), "{context}");
         assert!(context.contains("do not change what must be approved"));

@@ -257,8 +257,9 @@ impl App {
         self.busy_inline(ui);
     }
 
-    /// What the orchestrator decided for the later steps, or a way to ask it.
-    pub(crate) fn orchestrator_card(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+    /// What the orchestrator decided for the later steps. It runs by itself
+    /// once Understand has passed, so there is no button to ask for it.
+    pub(crate) fn orchestrator_card(ui: &mut egui::Ui, view: &TicketView) {
         if let Some(triage) = &view.triage {
             ui.add_space(10.0);
             theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
@@ -281,28 +282,6 @@ impl App {
                     "Change any of these in Settings > Pipeline steps for this ticket.",
                 ));
             });
-            return;
-        }
-        let understood = view
-            .step(Step::Understand)
-            .is_some_and(|card| card.state == StepState::Passed);
-        let on = self.orchestrator != crate::backend::Orchestrator::Off
-            && self.agent == crate::backend::AgentChoice::Claude;
-        // It only sets Design and Plan, so once both have started there is
-        // nothing left for it to choose.
-        let open = [Step::Design, Step::Plan].iter().any(|step| {
-            view.step(*step)
-                .is_some_and(|card| card.state == StepState::Idle)
-        });
-        if understood && on && open && !self.busy {
-            ui.add_space(8.0);
-            if ui
-                .button("Ask the orchestrator to choose models and effort")
-                .on_hover_text("One call by a capable model; it picks the cheapest settings it trusts for Design and Plan.")
-                .clicked()
-            {
-                self.act(Action::Orchestrate(view.id.clone()));
-            }
         }
     }
 
