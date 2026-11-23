@@ -36,21 +36,45 @@ exec /usr/bin/env -i "${vars[@]}" "$srt" -s "$settings" -c "$inner"
 "#;
 
 /// What `wsl.exe` itself needs from the Windows side to find the distro.
-const WINDOWS_PASSTHROUGH: &[&str] = &["SYSTEMROOT", "USERPROFILE", "LOCALAPPDATA", "APPDATA"];
+const WINDOWS_PASSTHROUGH: &[&str] = &[
+    "SYSTEMROOT",
+    "USERPROFILE",
+    "LOCALAPPDATA",
+    "APPDATA",
+    // A Linux host finds its tools under the user's home.
+    "HOME",
+];
 
 /// Prefixes under the distro's home that hold tools the sandboxed command may
 /// need to read. A caller picks the ones its role needs.
 pub const NODE_ROOTS: &[&str] = &[".npm-global", "node"];
 pub const RUST_ROOTS: &[&str] = &[".cargo", ".rustup"];
 
+/// Folders hidden from every sandboxed command unless a boundary opens a path
+/// inside them.
+const HIDDEN_ROOTS: &[&str] = &["/mnt", "/media", "/home", "/root", "/srv", "/tmp"];
+
 /// A file under a tool prefix that holds a credential. It is hidden even when
 /// its prefix is readable.
 pub const CARGO_CREDENTIALS: &str = ".cargo/credentials.toml";
 
+/// Where the boundary runs: in a WSL2 distro reached through `wsl.exe` on
+/// Windows, or directly on a Linux host. macOS is not supported: Seatbelt has
+/// no network namespace and treats loopback and Unix sockets differently, so
+/// the probe's rows would mean something else and have not been written.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Host {
+    Wsl,
+    Linux,
+}
+
 #[derive(Clone, Debug)]
 pub struct Wsl {
+    host: Host,
     distro: String,
     launcher: PathBuf,
+    /// The supervisor binary a Linux host needs for the `Runner`; Windows has none.
+    guardian: PathBuf,
     srt: String,
     path: String,
     home: String,
@@ -86,34 +110,70 @@ impl Wsl {
     pub fn discover(distro: &str, settings_dir: PathBuf) -> io::Result<Self> {
         check_distro_name(distro)?;
         let launcher = windows_wsl()?;
-        let spec = CommandSpec {
-            program: launcher.clone(),
-            args: ["-d", distro, "--exec", "/usr/bin/bash", "-c", DISCOVER]
-                .into_iter()
-                .map(OsString::from)
-                .collect(),
-            env: passthrough_env(),
-            cwd: None,
-        };
-        let limits = Limits {
-            timeout: std::time::Duration::from_secs(60),
-            bytes_per_stream: 64 * 1024,
-        };
-        let cancel = std::sync::atomic::AtomicBool::new(false);
-        let output = Runner::new(PathBuf::new()).run(&spec, b"", limits, &cancel)?;
-        if !matches!(&output.outcome, Outcome::Exited(status) if status.success()) {
-            return Err(io::Error::other(format!(
-                "the WSL distro {distro} did not answer: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )));
+        let args = ["-d", distro, "--exec", "/usr/bin/bash", "-c", DISCOVER];
+        let guardian = PathBuf::new();
+        let text = ask(
+            &launcher,
+            &args,
+            &format!("the WSL distro {distro}"),
+            &guardian,
+        )?;
+        parse_discovery(&text, Host::Wsl, distro, launcher, guardian, settings_dir)
+    }
+
+    /// Find the tools on this Linux machine, where the boundary runs directly.
+    ///
+    /// # Errors
+    /// Returns an error on any other system, or if a tool is missing.
+    pub fn discover_local(settings_dir: PathBuf, guardian: PathBuf) -> io::Result<Self> {
+        if !cfg!(target_os = "linux") {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the sandbox runs on a Linux host, or through WSL2 on Windows; macOS has not been validated",
+            ));
         }
-        let text = String::from_utf8_lossy(&output.stdout);
-        parse_discovery(&text, distro, launcher, settings_dir)
+        let launcher = PathBuf::from("/usr/bin/env");
+        let args = ["/usr/bin/bash", "-c", DISCOVER];
+        let text = ask(&launcher, &args, "this machine", &guardian)?;
+        parse_discovery(
+            &text,
+            Host::Linux,
+            "local",
+            launcher,
+            guardian,
+            settings_dir,
+        )
     }
 
     #[must_use]
-    pub(crate) fn launcher(&self) -> &Path {
-        &self.launcher
+    pub(crate) fn guardian(&self) -> &Path {
+        &self.guardian
+    }
+
+    #[must_use]
+    pub fn host(&self) -> Host {
+        self.host
+    }
+
+    /// The program that starts something inside the boundary's machine, and
+    /// the arguments that go before the command (`wsl.exe -d Ubuntu --exec`).
+    #[must_use]
+    pub(crate) fn entry(&self) -> (PathBuf, Vec<OsString>) {
+        let prefix = match self.host {
+            Host::Wsl => ["-d", &self.distro, "--exec"]
+                .into_iter()
+                .map(OsString::from)
+                .collect(),
+            Host::Linux => Vec::new(),
+        };
+        (self.launcher.clone(), prefix)
+    }
+
+    /// Whether the caller can make this folder. A Linux path inside a distro
+    /// cannot be made from the Windows side, but on a Linux host it can.
+    #[must_use]
+    pub(crate) fn can_make(&self, folder: &Path) -> bool {
+        self.host == Host::Linux || !folder.to_string_lossy().starts_with('/')
     }
 
     #[must_use]
@@ -146,7 +206,17 @@ impl Wsl {
         read.push(self.seccomp.clone());
         let hide = linux_paths(&boundary.hide)?;
         let protect = linux_paths(&boundary.protect)?;
-        let mut deny_read = vec!["/mnt".to_owned(), self.home.clone()];
+        // Where a person's own files live: other drives (`/mnt`, `/media`), every
+        // home folder, root's, service data and scratch space. System folders
+        // (`/usr`, `/etc`, `/lib`) stay readable because programs need them.
+        let mut deny_read: Vec<String> =
+            HIDDEN_ROOTS.iter().map(|root| (*root).to_owned()).collect();
+        let covered = deny_read
+            .iter()
+            .any(|root| self.home == *root || self.home.starts_with(&format!("{root}/")));
+        if !covered {
+            deny_read.push(self.home.clone());
+        }
         deny_read.extend(hide);
         let value = serde_json::json!({
             "network": {
@@ -211,14 +281,12 @@ impl Wsl {
                 return Err(invalid("a secret name is not a plain variable name"));
             }
         }
-        if !secrets.is_empty() {
+        if !secrets.is_empty() && self.host == Host::Wsl {
             windows_env.push((OsString::from("WSLENV"), secrets.join(":").into()));
         }
 
-        let mut args: Vec<OsString> = ["-d", &self.distro, "--exec", "/usr/bin/bash", "-c", LAUNCH]
-            .into_iter()
-            .map(OsString::from)
-            .collect();
+        let (launcher, mut args) = self.entry();
+        args.extend(["/usr/bin/bash", "-c", LAUNCH].map(OsString::from));
         args.push("ap-sandbox".into());
         args.push(self.srt.clone().into());
         args.push(linux_path(&settings_file)?.into());
@@ -233,7 +301,7 @@ impl Wsl {
         args.push(program.into());
         args.extend(spec.args.iter().cloned());
         Ok(CommandSpec {
-            program: self.launcher.clone(),
+            program: launcher,
             args,
             env: windows_env,
             cwd: None,
@@ -278,8 +346,10 @@ done
 
 pub(crate) fn parse_discovery(
     text: &str,
+    host: Host,
     distro: &str,
     launcher: PathBuf,
+    guardian: PathBuf,
     settings_dir: PathBuf,
 ) -> io::Result<Wsl> {
     let mut home = None;
@@ -300,29 +370,60 @@ pub(crate) fn parse_discovery(
             missing.push(tool.to_owned());
         }
     }
+    let place = match host {
+        Host::Wsl => format!("the WSL distro {distro}"),
+        Host::Linux => "this machine".to_owned(),
+    };
     if !missing.is_empty() {
         return Err(io::Error::other(format!(
-            "the WSL distro {distro} is missing: {}",
+            "{place} is missing: {}",
             missing.join(", ")
         )));
     }
     let (Some(home), Some(path), Some(srt), Some(seccomp)) = (home, path, srt, seccomp) else {
-        return Err(io::Error::other("the WSL distro gave an incomplete answer"));
+        return Err(io::Error::other(format!(
+            "{place} gave an incomplete answer"
+        )));
     };
     for value in [&home, &path, &srt, &seccomp] {
         if value.is_empty() || value.contains(['\n', '\0']) {
-            return Err(io::Error::other("the WSL distro gave an unusable answer"));
+            return Err(io::Error::other(format!("{place} gave an unusable answer")));
         }
     }
     Ok(Wsl {
+        host,
         distro: distro.to_owned(),
         launcher,
+        guardian,
         srt,
         path,
         home,
         seccomp,
         settings_dir,
     })
+}
+
+/// Run a discovery command and return what it printed.
+fn ask(program: &Path, args: &[&str], what: &str, guardian: &Path) -> io::Result<String> {
+    let spec = CommandSpec {
+        program: program.to_path_buf(),
+        args: args.iter().map(OsString::from).collect(),
+        env: passthrough_env(),
+        cwd: None,
+    };
+    let limits = Limits {
+        timeout: std::time::Duration::from_secs(60),
+        bytes_per_stream: 64 * 1024,
+    };
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let output = Runner::new(guardian.to_path_buf()).run(&spec, b"", limits, &cancel)?;
+    if !matches!(&output.outcome, Outcome::Exited(status) if status.success()) {
+        return Err(io::Error::other(format!(
+            "{what} did not answer: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn windows_wsl() -> io::Result<PathBuf> {

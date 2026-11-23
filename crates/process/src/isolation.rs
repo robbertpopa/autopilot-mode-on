@@ -21,7 +21,7 @@ use std::{
 
 use crate::{
     CommandSpec, Limits, Outcome, Runner,
-    wsl::{Boundary, CARGO_CREDENTIALS, NODE_ROOTS, RUST_ROOTS, Wsl},
+    wsl::{Boundary, CARGO_CREDENTIALS, Host, NODE_ROOTS, RUST_ROOTS, Wsl},
 };
 
 /// The one host an agent may reach.
@@ -66,7 +66,7 @@ impl Validated {
         let boundary = boundary(&self.wsl, role);
         // A Linux path names a folder in the distro, which this side cannot make.
         for folder in boundary.write.iter().chain(&boundary.tmp) {
-            if !folder.to_string_lossy().starts_with('/') {
+            if self.wsl.can_make(folder) {
                 fs::create_dir_all(folder)?;
             }
         }
@@ -227,15 +227,10 @@ impl Listener {
     fn start(wsl: &Wsl, scene: &Scene) -> io::Result<Self> {
         let port = u16::try_from(40_000 + std::process::id() % 20_000).unwrap_or(41_000);
         let hit = crate::wsl::linux_path(&scene.hit)?;
-        let child = Command::new(wsl.launcher())
-            .args([
-                "-d",
-                wsl.distro(),
-                "--exec",
-                "/usr/bin/python3",
-                "-c",
-                LISTEN,
-            ])
+        let (program, prefix) = wsl.entry();
+        let child = Command::new(program)
+            .args(&prefix)
+            .args(["/usr/bin/python3", "-c", LISTEN])
             .arg(port.to_string())
             .arg(&hit)
             .stdin(Stdio::null())
@@ -247,24 +242,18 @@ impl Listener {
         // listener, or a denied row below would prove nothing.
         let mut reached = false;
         for _ in 0..20 {
+            let (program, prefix) = wsl.entry();
             let spec = CommandSpec {
-                program: wsl.launcher().to_path_buf(),
-                args: [
-                    "-d",
-                    wsl.distro(),
-                    "--exec",
-                    "/usr/bin/python3",
-                    "-c",
-                    CONNECT,
-                ]
-                .iter()
-                .map(OsString::from)
-                .chain([OsString::from(port.to_string())])
-                .collect(),
+                program,
+                args: prefix
+                    .into_iter()
+                    .chain(["/usr/bin/python3", "-c", CONNECT].map(OsString::from))
+                    .chain([OsString::from(port.to_string())])
+                    .collect(),
                 env: crate::wsl::passthrough_env(),
                 cwd: None,
             };
-            if run(&spec, Duration::from_secs(20))?.success && scene.hit.is_file() {
+            if run(wsl, &spec, Duration::from_secs(20))?.success && scene.hit.is_file() {
                 reached = true;
                 break;
             }
@@ -294,12 +283,17 @@ struct Finished {
     stderr: String,
 }
 
-fn run(spec: &CommandSpec, timeout: Duration) -> io::Result<Finished> {
+fn run(wsl: &Wsl, spec: &CommandSpec, timeout: Duration) -> io::Result<Finished> {
     let limits = Limits {
         timeout,
         bytes_per_stream: 256 * 1024,
     };
-    let output = Runner::new(PathBuf::new()).run(spec, b"", limits, &AtomicBool::new(false))?;
+    let output = Runner::new(wsl.guardian().to_path_buf()).run(
+        spec,
+        b"",
+        limits,
+        &AtomicBool::new(false),
+    )?;
     Ok(Finished {
         success: matches!(&output.outcome, Outcome::Exited(status) if status.success()),
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -341,6 +335,31 @@ const ROWS: &[&str] = &[
     "unix-socket",
 ];
 
+/// Rows that only exist where Windows is reachable: its drives under `/mnt/c`,
+/// a Windows program through WSL interop, and WSL's own `/init`. A Linux host
+/// has none of them, so it is neither judged on them nor asked.
+const WSL_ONLY: &[&str] = &["read-windows-drive", "run-windows-program", "run-init"];
+
+fn rows(host: Host) -> Vec<&'static str> {
+    ROWS.iter()
+        .copied()
+        .filter(|row| host == Host::Wsl || !WSL_ONLY.contains(row))
+        .collect()
+}
+
+fn probe_script(host: Host) -> String {
+    PROBE
+        .lines()
+        .filter(|line| {
+            host == Host::Wsl
+                || !WSL_ONLY
+                    .iter()
+                    .any(|row| line.starts_with(&format!("LABEL={row} ")))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Result<Vec<String>> {
     let name = match role {
         Role::Agent { .. } => "agent",
@@ -360,7 +379,7 @@ fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Resu
         program: PathBuf::from("/usr/bin/bash"),
         args: vec![
             OsString::from("-c"),
-            OsString::from(PROBE),
+            OsString::from(probe_script(wsl.host())),
             OsString::from("probe"),
             crate::wsl::linux_path(&scene.worktree)?.into(),
             crate::wsl::linux_path(&scene.sibling)?.into(),
@@ -375,7 +394,7 @@ fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Resu
         wsl: Arc::new(wsl.clone()),
     };
     let wrapped = validated.wrap(role, &spec, &[])?;
-    let finished = run(&wrapped, Duration::from_secs(180))?;
+    let finished = run(wsl, &wrapped, Duration::from_secs(180))?;
     let mut failures = Vec::new();
     if !finished.success {
         failures.push(format!(
@@ -384,20 +403,20 @@ fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Resu
         ));
         return Ok(failures);
     }
-    failures.extend(judge(&finished.stdout, name));
+    failures.extend(judge(&finished.stdout, name, wsl.host()));
     failures.extend(host_findings(scene, name));
     Ok(failures)
 }
 
 /// Compare the probe's answers with what each row must be. A row with no
 /// answer fails: a probe that died half way must not count as a pass.
-fn judge(stdout: &str, name: &str) -> Vec<String> {
+fn judge(stdout: &str, name: &str, host: Host) -> Vec<String> {
     let mut failures = Vec::new();
-    for row in ROWS {
-        let must_work = EXPECTED_ALLOWED.contains(row);
+    for row in rows(host) {
+        let must_work = EXPECTED_ALLOWED.contains(&row);
         let answer = stdout.lines().find_map(|line| {
             let (verdict, label) = line.split_once(' ')?;
-            (label == *row).then_some(verdict)
+            (label == row).then_some(verdict)
         });
         match (answer, must_work) {
             (Some("ALLOWED"), true) | (Some("DENIED"), false) => {}

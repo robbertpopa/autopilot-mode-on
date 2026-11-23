@@ -1,11 +1,19 @@
 use std::path::PathBuf;
 
-use super::{PROVIDER, REGISTRY, ROWS, Role, boundary, judge};
-use crate::wsl::{Wsl, parse_discovery};
+use super::{PROVIDER, REGISTRY, ROWS, Role, boundary, judge, probe_script, rows};
+use crate::wsl::{Host, Wsl, parse_discovery};
 
 fn wsl() -> Wsl {
     let text = "home=/home/u\npath=/usr/bin\nsrt=/home/u/node/bin/srt\nseccomp=/home/u/v/seccomp\n";
-    parse_discovery(text, "Ubuntu", PathBuf::from("wsl.exe"), PathBuf::new()).expect("parses")
+    parse_discovery(
+        text,
+        Host::Wsl,
+        "Ubuntu",
+        PathBuf::from("wsl.exe"),
+        PathBuf::new(),
+        PathBuf::new(),
+    )
+    .expect("parses")
 }
 
 fn answers(flip: Option<&str>, drop: Option<&str>) -> String {
@@ -27,14 +35,49 @@ fn answers(flip: Option<&str>, drop: Option<&str>) -> String {
 // missing row as a pass, or checking only the denials.
 #[test]
 fn the_probe_passes_only_when_every_row_is_as_expected() {
-    assert_eq!(judge(&answers(None, None), "agent"), Vec::<String>::new());
-    let leaked = judge(&answers(Some("read-sibling"), None), "agent");
+    assert_eq!(
+        judge(&answers(None, None), "agent", Host::Wsl),
+        Vec::<String>::new()
+    );
+    let leaked = judge(&answers(Some("read-sibling"), None), "agent", Host::Wsl);
     assert_eq!(leaked, ["agent: read-sibling was allowed"]);
-    let broken = judge(&answers(Some("write-worktree"), None), "check");
+    let broken = judge(&answers(Some("write-worktree"), None), "check", Host::Wsl);
     assert_eq!(broken, ["check: write-worktree was denied but must work"]);
-    let silent = judge(&answers(None, Some("run-windows-program")), "agent");
+    let silent = judge(
+        &answers(None, Some("run-windows-program")),
+        "agent",
+        Host::Wsl,
+    );
     assert_eq!(silent, ["agent: run-windows-program gave no answer"]);
-    assert_eq!(judge("", "agent").len(), ROWS.len());
+    assert_eq!(judge("", "agent", Host::Wsl).len(), ROWS.len());
+}
+
+// Invariant: a Linux host is judged on exactly the rows that exist there, and
+// the probe does not ask the others. A row that cannot happen (a Windows
+// program, `/init`) must not pass by being trivially denied, and must not fail
+// a machine for lacking Windows. A change that breaks it: one shared row list.
+#[test]
+fn a_linux_host_drops_the_windows_rows_and_keeps_the_rest() {
+    let linux = rows(Host::Linux);
+    for gone in ["read-windows-drive", "run-windows-program", "run-init"] {
+        assert!(!linux.contains(&gone), "{gone}");
+        assert!(!probe_script(Host::Linux).contains(&format!("LABEL={gone} ")));
+        assert!(probe_script(Host::Wsl).contains(&format!("LABEL={gone} ")));
+    }
+    assert_eq!(linux.len(), ROWS.len() - 3);
+    // An answer set that only has the Linux rows passes on Linux and fails on WSL.
+    let text: String = linux.iter().map(|row| answers_for(row)).collect();
+    assert_eq!(judge(&text, "agent", Host::Linux), Vec::<String>::new());
+    assert_eq!(judge(&text, "agent", Host::Wsl).len(), 3);
+}
+
+fn answers_for(row: &str) -> String {
+    let works = matches!(row, "write-worktree" | "write-scratch");
+    format!(
+        "{} {row}
+",
+        if works { "ALLOWED" } else { "DENIED" }
+    )
 }
 
 // Invariant: the agent role reaches only the provider, may not change `.git`,
@@ -104,5 +147,26 @@ fn each_role_opens_only_what_it_is_for() {
 fn the_real_boundary_passes_the_probe() {
     let directory = tempfile::tempdir_in(r"D:\").expect("temp dir on D:");
     let wsl = Wsl::discover("Ubuntu", directory.path().join("settings")).expect("discover");
+    super::validate(wsl, directory.path()).expect("the boundary holds");
+}
+
+// The same probe on a Linux host, with no `wsl.exe`: run inside the distro,
+// which is a Linux machine. Needs the tools from `tools/wsl`.
+// Invariant: a Linux host validates on the rows that exist there.
+#[test]
+#[ignore = "needs the sandbox tools"]
+#[cfg(target_os = "linux")]
+fn the_real_boundary_passes_the_probe_on_a_linux_host() {
+    // Test binaries sit in target/<profile>/deps, the guardian one level up.
+    let exe = std::env::current_exe().expect("exe");
+    let guardian = exe
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("target dir")
+        .join("autopilot-process-guardian");
+    assert!(guardian.is_file(), "build the workspace first");
+    let directory = tempfile::tempdir().expect("temp dir");
+    let wsl = Wsl::discover_local(directory.path().join("settings"), guardian).expect("discover");
+    assert_eq!(wsl.host(), Host::Linux);
     super::validate(wsl, directory.path()).expect("the boundary holds");
 }

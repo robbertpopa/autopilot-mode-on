@@ -1,6 +1,6 @@
 use std::{ffi::OsString, path::PathBuf};
 
-use super::{Boundary, Wsl, linux_path, parse_discovery};
+use super::{Boundary, Host, Wsl, linux_path, parse_discovery};
 use crate::CommandSpec;
 
 fn wsl(settings_dir: PathBuf) -> Wsl {
@@ -8,8 +8,10 @@ fn wsl(settings_dir: PathBuf) -> Wsl {
                 seccomp=/home/u/lib/vendor/seccomp\n";
     parse_discovery(
         text,
+        Host::Wsl,
         "Ubuntu",
         PathBuf::from(r"C:\Windows\System32\wsl.exe"),
+        PathBuf::new(),
         settings_dir,
     )
     .expect("a complete answer parses")
@@ -71,7 +73,15 @@ fn the_settings_open_only_what_the_boundary_names() {
     let fs = &value["filesystem"];
     assert_eq!(
         fs["denyRead"],
-        serde_json::json!(["/mnt", "/home/u", "/home/u/.cargo/credentials.toml"])
+        serde_json::json!([
+            "/mnt",
+            "/media",
+            "/home",
+            "/root",
+            "/srv",
+            "/tmp",
+            "/home/u/.cargo/credentials.toml"
+        ])
     );
     assert_eq!(
         fs["allowRead"],
@@ -210,8 +220,15 @@ fn a_command_that_cannot_be_passed_safely_is_refused() {
 #[test]
 fn a_distro_missing_a_tool_is_refused_by_name() {
     let text = "home=/h\npath=/usr/bin\nsrt=/x/srt\nseccomp=/x\nmissing:bwrap\nmissing:rg\n";
-    let error = parse_discovery(text, "Ubuntu", PathBuf::from("wsl.exe"), PathBuf::new())
-        .expect_err("missing tools");
+    let error = parse_discovery(
+        text,
+        Host::Wsl,
+        "Ubuntu",
+        PathBuf::from("wsl.exe"),
+        PathBuf::new(),
+        PathBuf::new(),
+    )
+    .expect_err("missing tools");
     let message = error.to_string();
     assert!(
         message.contains("bwrap") && message.contains("rg"),
@@ -220,8 +237,10 @@ fn a_distro_missing_a_tool_is_refused_by_name() {
     assert!(
         parse_discovery(
             "home=/h\n",
+            Host::Wsl,
             "Ubuntu",
             PathBuf::from("wsl.exe"),
+            PathBuf::new(),
             PathBuf::new()
         )
         .is_err()

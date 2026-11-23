@@ -45,13 +45,24 @@ pub struct BuildConfig {
     pub data_dir: PathBuf,
 }
 
-/// Find the WSL distro and run the escape probe in `folder`. The boundary is
-/// returned only if every row held.
+/// Find where the Linux boundary runs and run the escape probe in `folder`:
+/// the WSL distro on Windows, this machine on Linux. The boundary is returned
+/// only if every row held. `guardian` is the supervisor binary a Linux host
+/// needs; Windows ignores it.
 ///
 /// # Errors
-/// Returns an error if the distro is not ready or any row of the probe failed.
-pub fn sandbox_boundary(distro: &str, folder: &std::path::Path) -> io::Result<Validated> {
-    let wsl = autopilot_process::wsl::Wsl::discover(distro, folder.to_path_buf())?;
+/// Returns an error if the machine is not ready, is neither of those (macOS is
+/// not validated), or any row of the probe failed.
+pub fn sandbox_boundary(
+    distro: &str,
+    folder: &std::path::Path,
+    guardian: &std::path::Path,
+) -> io::Result<Validated> {
+    let wsl = if cfg!(windows) {
+        autopilot_process::wsl::Wsl::discover(distro, folder.to_path_buf())?
+    } else {
+        autopilot_process::wsl::Wsl::discover_local(folder.to_path_buf(), guardian.to_path_buf())?
+    };
     autopilot_process::isolation::validate(wsl, folder)
 }
 

@@ -705,7 +705,7 @@ fn run_build(
         }
         Agent::Claude => {
             let config = sandbox_config(profile)?;
-            let boundary = wsl_boundary(data_dir)?;
+            let boundary = wsl_boundary(data_dir, &guardian)?;
             let sandbox = autopilot_agent_claude::Sandbox {
                 boundary: boundary.clone(),
                 config_root: data_dir.join("claude-config"),
@@ -768,7 +768,7 @@ fn sandbox_config(profile: &autopilot_profile::Profile) -> Result<ClaudeConfig, 
 
 /// Find the distro and run the escape probe. The boundary is returned only if
 /// every row held; otherwise Build stays refused and the rows are listed.
-fn wsl_boundary(data_dir: &Path) -> Result<Validated, Box<dyn Error>> {
+fn wsl_boundary(data_dir: &Path, guardian: &Path) -> Result<Validated, Box<dyn Error>> {
     let distro = env::var("AUTOPILOT_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_owned());
     let folder = data_dir.join("sandbox");
     let refused = |error: &dyn std::fmt::Display| -> Box<dyn Error> {
@@ -777,7 +777,8 @@ fn wsl_boundary(data_dir: &Path) -> Result<Validated, Box<dyn Error>> {
         )
         .into()
     };
-    autopilot_agent_claude::sandbox_boundary(&distro, &folder).map_err(|error| refused(&error))
+    autopilot_agent_claude::sandbox_boundary(&distro, &folder, guardian)
+        .map_err(|error| refused(&error))
 }
 
 fn claude_agent(exe: &Path, config: ClaudeConfig) -> Result<ClaudeAgent, Box<dyn Error>> {
