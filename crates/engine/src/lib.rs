@@ -57,7 +57,7 @@ pub use attachments::{
 };
 pub use autopilot_checks::resolve_executable;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
-pub use catalog::{ToolSuggestion, suggest_tools};
+pub use catalog::{ToolSuggestion, allowed_tools, set_tool_allowed, suggest_tools};
 pub use change::{Proposal, Reading, apply_to_project, apply_to_ticket, propose};
 pub use control::{request_pause, request_resume, request_stop};
 pub use custom::{latest as custom_outcome, run_custom};
@@ -71,8 +71,8 @@ pub use draft::{
 };
 pub use explain::{explain_step, kept as explanation_kept, prompt as explain_prompt};
 pub use know::{
-    CardInfo, DetectedCommand, MAX_CARD_BYTES, ProjectCard, card_path, get_to_know, read_card,
-    render_card, scan_workspace,
+    CardInfo, DetectedCommand, MAX_CARD_BYTES, ProjectCard, card_changes, card_path, get_to_know,
+    read_card, render_card, scan_workspace,
 };
 pub use metrics::{PipelineMetrics, StepMetrics, UsageLine, metrics_of, pipeline_metrics};
 pub use overlap::{TicketOverlap, find_overlaps};

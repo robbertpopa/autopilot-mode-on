@@ -18,6 +18,8 @@ pub(crate) struct CardState {
     pub(crate) notice: Option<(bool, String)>,
     pub(crate) commands: Vec<autopilot_engine::DetectedCommand>,
     pub(crate) tools: Vec<autopilot_engine::ToolSuggestion>,
+    /// The suggested tools the owner marked as allowed for this project.
+    pub(crate) allowed: Vec<String>,
 }
 
 /// One row of the list.
@@ -178,6 +180,8 @@ impl App {
         let scanned = autopilot_engine::scan_workspace(std::path::Path::new(path));
         self.card.tools = autopilot_engine::suggest_tools(&scanned);
         self.card.commands = scanned.commands;
+        self.card.allowed =
+            autopilot_engine::allowed_tools(&self.options.data_dir, path).unwrap_or_default();
     }
 
     pub(crate) fn revert_rules(&mut self) {
@@ -221,10 +225,12 @@ impl App {
                 let found = card.commands.len();
                 self.card.tools = autopilot_engine::suggest_tools(&card);
                 self.card.commands = card.commands;
-                self.card.notice = Some((
-                    true,
-                    format!("scanned, {} bytes, {found} commands found", info.bytes),
-                ));
+                let mut said = format!("scanned, {} bytes, {found} commands found", info.bytes);
+                if !info.changes.is_empty() {
+                    said.push_str(". Changed since the last scan: ");
+                    said.push_str(&info.changes.join("; "));
+                }
+                self.card.notice = Some((true, said));
             }
             Err(error) => self.card.notice = Some((false, error.to_string())),
         }
@@ -308,7 +314,7 @@ impl App {
 
     /// Skills and MCP servers the scan suggests. Advice only: nothing here
     /// installs or enables anything.
-    fn suggested_tools(&self, ui: &mut egui::Ui) {
+    fn suggested_tools(&mut self, ui: &mut egui::Ui) {
         if self.card.tools.is_empty() {
             return;
         }
@@ -317,6 +323,7 @@ impl App {
             ui.label(theme::muted("Suggested tools"));
             theme::pill(ui, "advice only", theme::GREY_FILL(), theme::GREY_TEXT());
         });
+        let mut toggle: Option<(&'static str, bool)> = None;
         for tool in &self.card.tools {
             egui::Frame::new()
                 .stroke(egui::Stroke::new(1.0_f32, theme::BORDER()))
@@ -337,7 +344,25 @@ impl App {
                         tool.maintainer, tool.licence, tool.source, tool.pinned, tool.checked_on
                     )));
                     ui.label(theme::muted(format!("can: {}", tool.permissions)));
+                    let mut allowed = self.card.allowed.iter().any(|name| name == tool.name);
+                    if ui
+                        .checkbox(&mut allowed, "Allowed for this project")
+                        .on_hover_text("Your note only. Steps still run without MCP servers.")
+                        .changed()
+                    {
+                        toggle = Some((tool.name, allowed));
+                    }
                 });
+        }
+        if let (Some((name, allowed)), Some(path)) = (toggle, self.project_selected.clone()) {
+            match autopilot_engine::set_tool_allowed(&self.options.data_dir, &path, name, allowed) {
+                Ok(()) => {
+                    self.card.allowed =
+                        autopilot_engine::allowed_tools(&self.options.data_dir, &path)
+                            .unwrap_or_default();
+                }
+                Err(error) => self.card.notice = Some((false, error.to_string())),
+            }
         }
         ui.label(theme::muted(
             "Read the source and what it can do before you use one. Autopilot steps run without MCP servers, and this does not change that.",

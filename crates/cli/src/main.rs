@@ -125,6 +125,12 @@ enum Command {
         #[arg(long)]
         gh_path: Option<PathBuf>,
     },
+    /// Read a project folder into its card (top-level files only, nothing is
+    /// run) and show the card and what changed since the last scan.
+    Know {
+        /// The project folder.
+        workspace: PathBuf,
+    },
     /// Show which Claude, GitHub and Azure accounts this machine is signed in to.
     Accounts {
         /// Print machine-readable JSON instead of text.
@@ -384,6 +390,17 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             let result = ci_command(&cli.data_dir, &ticket, &github, gh_path)?;
             serde_json::to_writer(&mut out, &result)?;
             writeln!(out)?;
+        }
+        Command::Know { workspace } => {
+            let path = workspace.to_string_lossy().into_owned();
+            let (_, info) = autopilot_engine::get_to_know(&cli.data_dir, &path)?;
+            if let Some(text) = autopilot_engine::read_card(&cli.data_dir, &path)? {
+                write!(out, "{text}")?;
+            }
+            for line in &info.changes {
+                writeln!(out, "{line}")?;
+            }
+            writeln!(out, "{} bytes, sha256 {}", info.bytes, &info.sha256[..12])?;
         }
         Command::Hook => run_hook(&mut out)?,
         Command::Accounts { json } => write_accounts_command(&mut out, json)?,

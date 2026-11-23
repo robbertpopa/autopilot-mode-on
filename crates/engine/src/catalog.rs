@@ -8,7 +8,12 @@
 //! at, and says plainly that it has not been reviewed by us: the owner reads
 //! the source and the permissions before using any of it.
 
-use crate::ProjectCard;
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
+
+use crate::{Error, ProjectCard, rules::project_key};
 
 /// One suggested skill or MCP server.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,6 +85,74 @@ const AZURE: ToolSuggestion = ToolSuggestion {
     permissions: "Acts with your Azure login: it can read and change resources you can. Use only in your own sessions.",
     reviewed: false,
 };
+
+const ALL: [ToolSuggestion; 4] = [CONTEXT7, PLAYWRIGHT, GITHUB, AZURE];
+const ALLOWED_FILE: &str = "allowed-tools.txt";
+
+fn allowed_path(directory: &Path, workspace: &str) -> PathBuf {
+    directory
+        .join("projects")
+        .join(project_key(workspace))
+        .join(ALLOWED_FILE)
+}
+
+/// The tools the owner marked as allowed for a project. This is the owner's
+/// note only: steps still run without MCP servers, and nothing reads this list
+/// until an MCP launch path exists. Names that are no longer in the catalog
+/// are dropped.
+///
+/// # Errors
+/// Returns an error only when the file exists but cannot be read.
+pub fn allowed_tools(directory: &Path, workspace: &str) -> Result<Vec<String>, Error> {
+    let text = match fs::read_to_string(allowed_path(directory, workspace)) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::InvalidData => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(text
+        .lines()
+        .filter(|line| ALL.iter().any(|tool| tool.name == *line))
+        .map(str::to_owned)
+        .collect())
+}
+
+/// Mark a catalog tool as allowed, or not, for a project.
+///
+/// # Errors
+/// Returns an error for a name that is not in the catalog, or when the file
+/// cannot be written.
+pub fn set_tool_allowed(
+    directory: &Path,
+    workspace: &str,
+    name: &str,
+    allowed: bool,
+) -> Result<(), Error> {
+    if !ALL.iter().any(|tool| tool.name == name) {
+        return Err(Error::Card(format!(
+            "{name:?} is not a tool in the catalog"
+        )));
+    }
+    let mut names = allowed_tools(directory, workspace)?;
+    names.retain(|kept| kept != name);
+    if allowed {
+        names.push(name.to_owned());
+    }
+    names.sort();
+    let path = allowed_path(directory, workspace);
+    let folder = path
+        .parent()
+        .ok_or_else(|| Error::Card("no folder".into()))?;
+    fs::create_dir_all(folder)?;
+    let temporary = folder.join(format!("{ALLOWED_FILE}.tmp"));
+    let mut text = names.join("\n");
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    fs::write(&temporary, text)?;
+    fs::rename(&temporary, &path)?;
+    Ok(())
+}
 
 /// The suggestions for a scanned project, in a fixed order.
 #[must_use]
@@ -157,5 +230,38 @@ mod tests {
             assert_eq!(tool.checked_on.len(), 10);
             assert!(!tool.reviewed, "{} claims a review", tool.name);
         }
+    }
+
+    // Invariant: only catalog names are kept, one project's choice does not
+    // leak into another, and unallowing removes the name. A change that kept
+    // free text would let a hand-edited file put anything in the list.
+    #[test]
+    fn the_allow_list_keeps_catalog_names_per_project() {
+        let data = tempfile::tempdir().unwrap();
+        assert!(set_tool_allowed(data.path(), "D:/w/a", "Rm Everything", true).is_err());
+        set_tool_allowed(data.path(), "D:/w/a", "Context7", true).unwrap();
+        set_tool_allowed(data.path(), "D:/w/a", "Playwright MCP", true).unwrap();
+        assert_eq!(
+            allowed_tools(data.path(), "D:/w/a").unwrap(),
+            vec!["Context7", "Playwright MCP"]
+        );
+        assert_eq!(
+            allowed_tools(data.path(), "D:/w/b").unwrap(),
+            Vec::<String>::new()
+        );
+        set_tool_allowed(data.path(), "D:/w/a", "Context7", false).unwrap();
+        assert_eq!(
+            allowed_tools(data.path(), "D:/w/a").unwrap(),
+            vec!["Playwright MCP"]
+        );
+        fs::write(
+            allowed_path(data.path(), "D:/w/a"),
+            "Playwright MCP\nevil\n",
+        )
+        .unwrap();
+        assert_eq!(
+            allowed_tools(data.path(), "D:/w/a").unwrap(),
+            vec!["Playwright MCP"]
+        );
     }
 }

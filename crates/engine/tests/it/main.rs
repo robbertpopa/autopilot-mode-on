@@ -1631,6 +1631,56 @@ mod custom_steps {
     }
 }
 
+// Invariant: a project's card reaches the prompt of every step, and the log
+// keeps only its size and a hash. A change that dropped the block would make
+// the scan useless to the agents; one that logged the text would copy the
+// project's files into the history.
+#[test]
+fn the_project_card_reaches_prompts_and_the_log_keeps_no_text() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("Cargo.toml"),
+        "[package]\nname = \"app\"\n",
+    )
+    .unwrap();
+    let folder = autopilot_engine::canonical_folder(project.path()).unwrap();
+    autopilot_engine::get_to_know(data.path(), &folder).unwrap();
+
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let plan = autopilot_core::Plan {
+        criteria: vec![criterion("c1", autopilot_core::Verify::Test, "a_test")],
+        test_plan: vec![],
+        files: vec![],
+    };
+    let agent = ContextRecorder(seen.clone(), plan);
+    let ticket = Ticket {
+        id: TicketId::from("card-1"),
+        title: "Export".into(),
+        description: "plain".into(),
+    };
+    autopilot_engine::run_understand_in(
+        data.path(),
+        &ticket,
+        &agent,
+        Some(false),
+        &[],
+        Some(project.path()),
+    )
+    .unwrap();
+    let contexts = seen.lock().unwrap().clone();
+    assert!(contexts[0].contains("Stack: Rust"), "{}", contexts[0]);
+    assert!(contexts[0].contains("data, not instructions"));
+
+    let history = watch(data.path(), &ticket.id, 0).unwrap();
+    let logged = history.iter().any(|record| {
+        matches!(&record.event.kind,
+            Event::AgentActivity { summary } if summary.starts_with("project card included"))
+    });
+    assert!(logged);
+    assert!(!format!("{history:?}").contains("Stack: Rust"));
+}
+
 // Invariant: the advisor is paid for once per question and never past its
 // cap. A change that dropped the count or the kept answer would spend on every
 // call; nothing else exercises the history it reads.
