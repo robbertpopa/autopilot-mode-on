@@ -271,7 +271,7 @@ impl App {
             .fold(autopilot_core::Money::default(), |total, row| {
                 total.checked_add(row.subscription).unwrap_or(total)
             });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             tile(ui, "runs", &metrics.tickets.to_string());
             tile(
                 ui,
@@ -339,7 +339,8 @@ fn pipeline_row(ui: &mut egui::Ui, name: &str, chosen: bool, watch: bool, tuned:
 
 fn tile(ui: &mut egui::Ui, label: &str, value: &str) {
     theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-        ui.set_width(150.0);
+        ui.set_min_width(110.0);
+        ui.set_max_width(150.0);
         ui.label(
             RichText::new(label.to_uppercase())
                 .monospace()
@@ -391,7 +392,10 @@ fn health_table(ui: &mut egui::Ui, metrics: &PipelineMetrics, watch_permille: u3
     ui.label(RichText::new("Tokens by step").size(14.0).strong());
     theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        step_rows(ui, metrics, watch_permille);
+        // The table is wider than a small window; scroll it instead of cutting it off.
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            step_rows(ui, metrics, watch_permille);
+        });
     });
 }
 

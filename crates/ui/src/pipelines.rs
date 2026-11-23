@@ -482,7 +482,7 @@ impl App {
     /// What a step does and all of its settings.
     fn step_body(&mut self, ui: &mut egui::Ui, step: Step) {
         let (tag, text) = crate::pipeline::blurb(step);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             theme::pill(ui, tag, theme::GREY_FILL(), theme::GREY_TEXT());
             ui.label(theme::muted(text));
         });

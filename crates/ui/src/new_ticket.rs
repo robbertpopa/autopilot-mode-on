@@ -43,11 +43,22 @@ impl App {
             self.home.workspace.clone_from(&self.saved_workspace);
         }
         let before = self.home.workspace.clone();
-        let aside = 340.0_f32.min(ui.available_width() * 0.4);
-        let main = ui.available_width() - aside - 24.0;
+        // Below this width the side card goes under the main column instead of being cut off.
+        let narrow = ui.available_width() < 820.0;
+        let aside = if narrow {
+            ui.available_width()
+        } else {
+            340.0_f32.min(ui.available_width() * 0.4)
+        };
+        let main = if narrow {
+            ui.available_width()
+        } else {
+            ui.available_width() - aside - 24.0
+        };
         let mut start = None;
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 16.0;
+        let columns = egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true);
+        ui.with_layout(columns, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(16.0, 12.0);
             ui.allocate_ui_with_layout(
                 egui::vec2(main, 0.0),
                 egui::Layout::top_down(egui::Align::Min),
