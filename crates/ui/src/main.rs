@@ -9,7 +9,7 @@ const USAGE: &str = "usage: autopilot-ui [--data-dir <dir>] [--profile <file>] [
   --profile   the project profile (default: ./profile.toml)\n\
   --demo      add three sample tickets so every screen has content. Without --data-dir it
               uses ./autopilot-demo-data, never the default folder\n\
-  --view      open on design, cost, run or step (run and step use --ticket, default the newest)";
+  --view      open on today, new, plan, board, projects, pipelines, health, review, settings, design, checks, look, cost, accounts, run or step (plan, run and step use --ticket, default the newest)";
 
 fn main() -> ExitCode {
     let mut data_dir = PathBuf::from("autopilot-data");

@@ -389,7 +389,7 @@ impl App {
     }
 
     /// Honour `--view` and `--ticket` once there are tickets to show.
-    fn apply_start_view(&mut self) {
+    pub(crate) fn apply_start_view(&mut self) {
         let Some(view) = self.options.view.clone() else {
             return;
         };
@@ -412,6 +412,7 @@ impl App {
             }
             ("new", _) => self.mode = Mode::NewTicket,
             ("settings" | "asking", _) => self.mode = Mode::Asking,
+            ("design", _) => self.mode = Mode::Design,
             ("checks", _) => self.mode = Mode::Checks,
             ("look", _) => self.mode = Mode::Look,
             ("board", _) => self.mode = Mode::Board,
