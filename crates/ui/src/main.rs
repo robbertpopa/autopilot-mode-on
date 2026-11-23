@@ -1,3 +1,7 @@
+// A release build is a window app: without this Windows opens a console beside
+// it. Debug builds keep the console so `cargo run` still shows messages.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 //! `autopilot-ui [--data-dir <dir>] [--profile <file>] [--demo] [--view <screen>] [--ticket <id>]`
 
 use std::{env, path::PathBuf, process::ExitCode};
