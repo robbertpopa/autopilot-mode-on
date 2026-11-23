@@ -5,7 +5,7 @@ use crate::CommandSpec;
 
 fn wsl(settings_dir: PathBuf) -> Wsl {
     let text = "home=/home/u\npath=/home/u/node/bin:/usr/bin\nsrt=/home/u/node/bin/srt\n\
-                seccomp=/home/u/lib/vendor/seccomp\n";
+                seccomp=/home/u/lib/vendor/seccomp\nhook=/home/u/.autopilot/bin/autopilot-hook\n";
     parse_discovery(
         text,
         Host::Wsl,
@@ -218,7 +218,8 @@ fn a_command_that_cannot_be_passed_safely_is_refused() {
 
 #[test]
 fn a_distro_missing_a_tool_is_refused_by_name() {
-    let text = "home=/h\npath=/usr/bin\nsrt=/x/srt\nseccomp=/x\nmissing:bwrap\nmissing:rg\n";
+    let text =
+        "home=/h\npath=/usr/bin\nsrt=/x/srt\nseccomp=/x\nhook=/h/hook\nmissing:bwrap\nmissing:rg\n";
     let error = parse_discovery(
         text,
         Host::Wsl,

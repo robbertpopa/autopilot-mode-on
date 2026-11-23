@@ -80,6 +80,9 @@ pub struct Wsl {
     home: String,
     /// Where the seccomp helper lives. The command must be able to start it.
     seccomp: String,
+    /// The installed deny hook, a Linux program an agent runs before each shell
+    /// call. It sits in a folder the agent can read but not write.
+    hook: String,
     settings_dir: PathBuf,
 }
 
@@ -174,6 +177,12 @@ impl Wsl {
     #[must_use]
     pub(crate) fn can_make(&self, folder: &Path) -> bool {
         self.host == Host::Linux || !folder.to_string_lossy().starts_with('/')
+    }
+
+    /// The deny hook's path inside the boundary's machine.
+    #[must_use]
+    pub fn hook(&self) -> &str {
+        &self.hook
     }
 
     #[must_use]
@@ -344,6 +353,11 @@ fi
 for tool in srt bwrap socat rg python3 node; do
   command -v "$tool" >/dev/null || echo "missing:$tool"
 done
+if [ -x "$home/.autopilot/bin/autopilot-hook" ]; then
+  echo "hook=$home/.autopilot/bin/autopilot-hook"
+else
+  echo "missing:autopilot-hook (run tools/wsl/install-hook.sh)"
+fi
 "#;
 
 pub(crate) fn parse_discovery(
@@ -358,6 +372,7 @@ pub(crate) fn parse_discovery(
     let mut path = None;
     let mut srt = None;
     let mut seccomp = None;
+    let mut hook = None;
     let mut missing = Vec::new();
     for line in text.lines() {
         if let Some(value) = line.strip_prefix("home=") {
@@ -368,6 +383,8 @@ pub(crate) fn parse_discovery(
             srt = Some(value.to_owned());
         } else if let Some(value) = line.strip_prefix("seccomp=") {
             seccomp = Some(value.to_owned());
+        } else if let Some(value) = line.strip_prefix("hook=") {
+            hook = Some(value.to_owned());
         } else if let Some(tool) = line.strip_prefix("missing:") {
             missing.push(tool.to_owned());
         }
@@ -382,12 +399,14 @@ pub(crate) fn parse_discovery(
             missing.join(", ")
         )));
     }
-    let (Some(home), Some(path), Some(srt), Some(seccomp)) = (home, path, srt, seccomp) else {
+    let (Some(home), Some(path), Some(srt), Some(seccomp), Some(hook)) =
+        (home, path, srt, seccomp, hook)
+    else {
         return Err(io::Error::other(format!(
             "{place} gave an incomplete answer"
         )));
     };
-    for value in [&home, &path, &srt, &seccomp] {
+    for value in [&home, &path, &srt, &seccomp, &hook] {
         if value.is_empty() || value.contains(['\n', '\0']) {
             return Err(io::Error::other(format!("{place} gave an unusable answer")));
         }
@@ -401,6 +420,7 @@ pub(crate) fn parse_discovery(
         path,
         home,
         seccomp,
+        hook,
         settings_dir,
     })
 }

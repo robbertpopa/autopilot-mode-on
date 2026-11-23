@@ -27,6 +27,10 @@ use crate::{
 /// The one host an agent may reach.
 pub const PROVIDER: &str = "api.anthropic.com";
 
+/// Where the installed deny hook lives, under the home folder
+/// (`tools/wsl/install-hook.sh`).
+const HOOK_ROOT: &str = ".autopilot/bin";
+
 /// What a sandboxed command is for. Each role opens a different set of folders.
 #[derive(Clone, Debug)]
 pub enum Role {
@@ -85,7 +89,13 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
     match role {
         Role::Agent { worktree, config } => Boundary {
             write: vec![worktree.clone(), config.clone()],
-            read: NODE_ROOTS.iter().map(|root| wsl.under_home(root)).collect(),
+            // The hook's folder is readable and, being outside every writable
+            // root, not writable: an agent runs the hook but cannot replace it.
+            read: NODE_ROOTS
+                .iter()
+                .chain(&[HOOK_ROOT])
+                .map(|root| wsl.under_home(root))
+                .collect(),
             protect: vec![worktree.join(".git")],
             hide: Vec::new(),
             domains: vec![PROVIDER.to_owned()],
@@ -303,7 +313,9 @@ fn run(wsl: &Wsl, spec: &CommandSpec, timeout: Duration) -> io::Result<Finished>
 
 /// Each line is `ALLOWED label` or `DENIED label`. Positional parameters:
 /// worktree, sibling, port, scratch folder, the sibling as a Windows path.
-const PROBE: &str = r#"w=$1; s=$2; port=$3; tmp=$4; win=$5
+const PROBE: &str = r#"w=$1; s=$2; port=$3; tmp=$4; win=$5; hook=$6
+push='{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}'
+status='{"tool_name":"Bash","tool_input":{"command":"git status"}}'
 r() { if timeout 20 "$@" </dev/null >/dev/null 2>&1; then echo "ALLOWED $LABEL"; else echo "DENIED $LABEL"; fi; }
 LABEL=write-worktree r bash -c 'echo x > "$0/out.txt"' "$w"
 LABEL=write-scratch r bash -c 'echo x > "$0/out.txt"' "$tmp"
@@ -317,9 +329,17 @@ LABEL=connect-loopback r bash -c 'exec 3<>/dev/tcp/127.0.0.1/$0' "$port"
 LABEL=run-windows-program r "$w/cmd.exe" /c "echo x > $win\\pwned.txt"
 LABEL=run-init r /init
 LABEL=unix-socket r python3 -c 'import socket; socket.socket(socket.AF_UNIX)'
+LABEL=hook-denies-push r bash -c 'printf %s "$1" | "$0" | grep -q "permissionDecision.:.deny"' "$hook" "$push"
+LABEL=hook-allows-status r bash -c '[ "$(printf %s "$1" | "$0")" = "{}" ]' "$hook" "$status"
+LABEL=write-hook r bash -c 'echo x >> "$0"' "$hook"
 "#;
 
-const EXPECTED_ALLOWED: &[&str] = &["write-worktree", "write-scratch"];
+const EXPECTED_ALLOWED: &[&str] = &[
+    "write-worktree",
+    "write-scratch",
+    "hook-denies-push",
+    "hook-allows-status",
+];
 const ROWS: &[&str] = &[
     "write-worktree",
     "write-scratch",
@@ -333,6 +353,9 @@ const ROWS: &[&str] = &[
     "run-windows-program",
     "run-init",
     "unix-socket",
+    "hook-denies-push",
+    "hook-allows-status",
+    "write-hook",
 ];
 
 /// Rows that only exist where Windows is reachable: its drives under `/mnt/c`,
@@ -340,24 +363,34 @@ const ROWS: &[&str] = &[
 /// has none of them, so it is neither judged on them nor asked.
 const WSL_ONLY: &[&str] = &["read-windows-drive", "run-windows-program", "run-init"];
 
-fn rows(host: Host) -> Vec<&'static str> {
+/// Rows about the deny hook, which only the agent role runs: it must deny a
+/// `git push`, let `git status` through, and not be overwritable.
+const AGENT_ONLY: &[&str] = &["hook-denies-push", "hook-allows-status", "write-hook"];
+
+fn skipped(row: &str, host: Host, agent: bool) -> bool {
+    (host == Host::Linux && WSL_ONLY.contains(&row)) || (!agent && AGENT_ONLY.contains(&row))
+}
+
+fn rows(host: Host, agent: bool) -> Vec<&'static str> {
     ROWS.iter()
         .copied()
-        .filter(|row| host == Host::Wsl || !WSL_ONLY.contains(row))
+        .filter(|row| !skipped(row, host, agent))
         .collect()
 }
 
-fn probe_script(host: Host) -> String {
+fn probe_script(host: Host, agent: bool) -> String {
     PROBE
         .lines()
         .filter(|line| {
-            host == Host::Wsl
-                || !WSL_ONLY
-                    .iter()
-                    .any(|row| line.starts_with(&format!("LABEL={row} ")))
+            !ROWS
+                .iter()
+                .any(|row| skipped(row, host, agent) && line.starts_with(&format!("LABEL={row} ")))
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join(
+            "
+",
+        )
 }
 
 fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Result<Vec<String>> {
@@ -366,6 +399,7 @@ fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Resu
         Role::Check { .. } => "check",
         Role::Fetch { .. } => "fetch",
     };
+    let agent = matches!(role, Role::Agent { .. });
     let scratch = match role {
         Role::Agent { config, .. } => config.join("tmp"),
         Role::Check { tmp, .. } | Role::Fetch { tmp, .. } => tmp.clone(),
@@ -379,13 +413,14 @@ fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Resu
         program: PathBuf::from("/usr/bin/bash"),
         args: vec![
             OsString::from("-c"),
-            OsString::from(probe_script(wsl.host())),
+            OsString::from(probe_script(wsl.host(), agent)),
             OsString::from("probe"),
             crate::wsl::linux_path(&scene.worktree)?.into(),
             crate::wsl::linux_path(&scene.sibling)?.into(),
             listener.port.to_string().into(),
             crate::wsl::linux_path(&scratch)?.into(),
             sibling_windows.into(),
+            wsl.hook().into(),
         ],
         env: Vec::new(),
         cwd: Some(scene.worktree.clone()),
@@ -403,16 +438,16 @@ fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Resu
         ));
         return Ok(failures);
     }
-    failures.extend(judge(&finished.stdout, name, wsl.host()));
+    failures.extend(judge(&finished.stdout, name, wsl.host(), agent));
     failures.extend(host_findings(scene, name));
     Ok(failures)
 }
 
 /// Compare the probe's answers with what each row must be. A row with no
 /// answer fails: a probe that died half way must not count as a pass.
-fn judge(stdout: &str, name: &str, host: Host) -> Vec<String> {
+fn judge(stdout: &str, name: &str, host: Host, agent: bool) -> Vec<String> {
     let mut failures = Vec::new();
-    for row in rows(host) {
+    for row in rows(host, agent) {
         let must_work = EXPECTED_ALLOWED.contains(&row);
         let answer = stdout.lines().find_map(|line| {
             let (verdict, label) = line.split_once(' ')?;
