@@ -6,7 +6,7 @@ use autopilot_engine::{Badge, TicketView, dollars, step_name};
 use autopilot_pipeline::StepState;
 use eframe::egui::{self, Frame, Margin, RichText, Stroke};
 
-use crate::app::{App, Screen, badge_colors};
+use crate::app::{App, badge_colors};
 use crate::backend::Action;
 use crate::theme;
 
@@ -26,6 +26,15 @@ pub(crate) fn ready_to_design(view: &TicketView) -> bool {
             Some(StepState::Passed | StepState::Skipped(_))
         )
         && state(Step::Design) == Some(&StepState::Idle)
+}
+
+/// The plan is approved and the next step, Build, has not started and is not
+/// running: the state a ticket stays in until real Build runs exist.
+pub(crate) fn waits_for_build(view: &TicketView) -> bool {
+    let state = |step| view.step(step).map(|card| &card.state);
+    state(Step::Plan) == Some(&StepState::Passed)
+        && state(Step::BuildCheck) == Some(&StepState::Idle)
+        && !view.steps.iter().any(|card| card.state.is_active())
 }
 
 /// Understand and Clarify are settled and Plan has not started.
@@ -353,6 +362,12 @@ impl App {
                 theme::BLUE_FILL(),
                 theme::BLUE_TEXT(),
                 "Ready to make a plan.".to_owned(),
+            )
+        } else if waits_for_build(view) {
+            (
+                theme::GREY_FILL(),
+                theme::GREY_TEXT(),
+                "The plan is approved. Build is next, and it cannot run yet: changing code safely needs containment (S6), which is not built. Nothing is wrong; the ticket waits here.".to_owned(),
             )
         } else {
             return;
@@ -701,9 +716,8 @@ impl App {
         let Some(view) = self.current().cloned() else {
             return;
         };
-        let drawer = matches!(self.screen, Screen::Step(_));
         egui::SidePanel::right("drawer")
-            .exact_width(if drawer { 460.0 } else { 300.0 })
+            .exact_width(300.0)
             .resizable(false)
             .frame(
                 Frame::new()
@@ -712,13 +726,7 @@ impl App {
                     .inner_margin(Margin::same(20)),
             )
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    if let Screen::Step(step) = self.screen {
-                        self.drawer(ui, &view, step);
-                    } else {
-                        self.stepper_panel(ui, &view);
-                    }
-                });
+                egui::ScrollArea::vertical().show(ui, |ui| self.stepper_panel(ui, &view));
             });
     }
 }
