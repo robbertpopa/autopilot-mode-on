@@ -1,0 +1,330 @@
+use std::{ffi::OsString, path::PathBuf};
+
+use super::{Boundary, Wsl, linux_path, parse_discovery};
+use crate::CommandSpec;
+
+fn wsl(settings_dir: PathBuf) -> Wsl {
+    let text = "home=/home/u\npath=/home/u/node/bin:/usr/bin\nsrt=/home/u/node/bin/srt\n\
+                seccomp=/home/u/lib/vendor/seccomp\n";
+    parse_discovery(
+        text,
+        "Ubuntu",
+        PathBuf::from(r"C:\Windows\System32\wsl.exe"),
+        settings_dir,
+    )
+    .expect("a complete answer parses")
+}
+
+fn args(spec: &CommandSpec) -> Vec<String> {
+    spec.args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect()
+}
+
+// Invariant: a path that is not plainly absolute is refused, so a relative or
+// `..` path cannot name a folder the caller did not mean to open.
+// A change that breaks it: joining the text without checking its parts. No
+// other test looks at the translation.
+#[test]
+fn a_windows_path_becomes_a_mnt_path_and_anything_unclear_is_refused() {
+    let translated = |text: &str| linux_path(&PathBuf::from(text)).ok();
+    assert_eq!(translated(r"D:\a\b"), Some("/mnt/d/a/b".into()));
+    assert_eq!(translated("d:/a//b/"), Some("/mnt/d/a/b".into()));
+    assert_eq!(translated(r"\\?\C:\x"), Some("/mnt/c/x".into()));
+    assert_eq!(translated("/home/u/x"), Some("/home/u/x".into()));
+    for refused in [
+        r"relative\dir",
+        r"D:rel",
+        r"D:\a\..\b",
+        "/home/u/../x",
+        r"\\server\share\x",
+        "/",
+        r"D:\",
+        "/mnt/d",
+        "/home/u/a\nb",
+    ] {
+        assert_eq!(translated(refused), None, "{refused}");
+    }
+}
+
+// Invariant: the settings deny `/mnt` and the home folder and then open only
+// what the boundary names, with the seccomp helper readable so the command can
+// start. A change that breaks it: opening a parent folder, or dropping the
+// helper (every command then fails to start, as the matrix first showed).
+#[test]
+fn the_settings_open_only_what_the_boundary_names() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let wsl = wsl(directory.path().to_path_buf());
+    let boundary = Boundary {
+        write: vec![PathBuf::from(r"D:\work\wt")],
+        read: vec![PathBuf::from("/home/u/.cargo")],
+        protect: vec![PathBuf::from(r"D:\work\wt\.git")],
+        hide: vec![PathBuf::from("/home/u/.cargo/credentials.toml")],
+        domains: vec!["api.anthropic.com".into()],
+    };
+    let value: serde_json::Value =
+        serde_json::from_str(&wsl.settings(&boundary).expect("settings")).expect("json");
+    assert_eq!(value["network"]["allowedDomains"][0], "api.anthropic.com");
+    assert_eq!(value["network"]["deniedDomains"], serde_json::json!([]));
+    let fs = &value["filesystem"];
+    assert_eq!(
+        fs["denyRead"],
+        serde_json::json!(["/mnt", "/home/u", "/home/u/.cargo/credentials.toml"])
+    );
+    assert_eq!(
+        fs["allowRead"],
+        serde_json::json!([
+            "/home/u/.cargo",
+            "/mnt/d/work/wt",
+            "/home/u/lib/vendor/seccomp"
+        ])
+    );
+    assert_eq!(fs["allowWrite"], serde_json::json!(["/mnt/d/work/wt"]));
+    assert_eq!(fs["denyWrite"], serde_json::json!(["/mnt/d/work/wt/.git"]));
+
+    let none = wsl.settings(&Boundary::default()).expect("settings");
+    let value: serde_json::Value = serde_json::from_str(&none).expect("json");
+    assert_eq!(
+        value["network"]["allowedDomains"],
+        serde_json::json!([]),
+        "no domains means no network"
+    );
+    assert_eq!(value["filesystem"]["allowWrite"], serde_json::json!([]));
+}
+
+// Invariant: a secret reaches the distro by `WSLENV` and never by a command
+// line, which anything in the distro can read. A change that breaks it:
+// putting every variable in the argument list.
+#[test]
+fn a_secret_travels_by_wslenv_and_never_by_command_line() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let wsl = wsl(directory.path().to_path_buf());
+    let spec = CommandSpec {
+        program: PathBuf::from("/home/u/node/bin/claude"),
+        args: vec![OsString::from("-p"), OsString::from("a b")],
+        env: vec![
+            (
+                OsString::from("ANTHROPIC_API_KEY"),
+                OsString::from("sk-secret"),
+            ),
+            (OsString::from("LANG"), OsString::from("C.UTF-8")),
+        ],
+        cwd: Some(PathBuf::from(r"D:\work\wt")),
+    };
+    let wrapped = wsl
+        .wrap(&spec, &Boundary::default(), &["ANTHROPIC_API_KEY"])
+        .expect("wrap");
+    let all = args(&wrapped).join("\u{1}");
+    assert!(!all.contains("sk-secret"), "the key is on a command line");
+    assert!(all.contains("LANG=C.UTF-8"));
+    assert!(all.contains("ANTHROPIC_API_KEY"), "only the name is passed");
+    let env: Vec<(String, String)> = wrapped
+        .env
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().into_owned(),
+                v.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    assert!(env.contains(&("ANTHROPIC_API_KEY".into(), "sk-secret".into())));
+    assert!(env.contains(&("WSLENV".into(), "ANTHROPIC_API_KEY".into())));
+    assert_eq!(
+        wrapped.program,
+        PathBuf::from(r"C:\Windows\System32\wsl.exe")
+    );
+}
+
+// Invariant: the command and its arguments follow a lone `--` as separate
+// parameters, after the working folder in Linux form. A change that breaks it:
+// joining them into one string, which re-parses spaces and quotes.
+#[test]
+fn the_command_follows_the_separator_as_separate_parameters() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let wsl = wsl(directory.path().to_path_buf());
+    let spec = CommandSpec {
+        program: PathBuf::from("/usr/bin/env"),
+        args: vec![OsString::from("a b"), OsString::from("$(x)")],
+        env: Vec::new(),
+        cwd: Some(PathBuf::from(r"D:\my work\wt")),
+    };
+    let wrapped = wsl.wrap(&spec, &Boundary::default(), &[]).expect("wrap");
+    let list = args(&wrapped);
+    let at = list.iter().position(|arg| arg == "--").expect("separator");
+    assert_eq!(list[at + 1..], ["/usr/bin/env", "a b", "$(x)"]);
+    assert_eq!(list[6], "ap-sandbox");
+    assert_eq!(list[7], "/home/u/node/bin/srt");
+    assert_eq!(list[9], "/mnt/d/my work/wt");
+    assert!(list[8].contains("/srt-") && list[8].starts_with("/mnt/"));
+    assert!(wrapped.env.iter().all(|(key, _)| key != "WSLENV"));
+}
+
+// Invariant: a command that is not an absolute Linux program, has no working
+// folder or names a variable that is not a plain name is refused rather than
+// run unconfined or with a smuggled value.
+#[test]
+fn a_command_that_cannot_be_passed_safely_is_refused() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let wsl = wsl(directory.path().to_path_buf());
+    let base = || CommandSpec {
+        program: PathBuf::from("/usr/bin/env"),
+        args: Vec::new(),
+        env: Vec::new(),
+        cwd: Some(PathBuf::from(r"D:\work\wt")),
+    };
+    let run = |spec: &CommandSpec, secrets: &[&str]| {
+        wsl.wrap(spec, &Boundary::default(), secrets).is_err()
+    };
+    let mut windows_program = base();
+    windows_program.program = PathBuf::from(r"C:\tool.exe");
+    assert!(run(&windows_program, &[]));
+    let mut relative = base();
+    relative.program = PathBuf::from("env");
+    assert!(run(&relative, &[]));
+    let mut no_cwd = base();
+    no_cwd.cwd = None;
+    assert!(run(&no_cwd, &[]));
+    let mut bad_name = base();
+    bad_name.env = vec![(OsString::from("A=B"), OsString::from("x"))];
+    assert!(run(&bad_name, &[]));
+    assert!(run(&base(), &["not a name"]));
+}
+
+#[test]
+fn a_distro_missing_a_tool_is_refused_by_name() {
+    let text = "home=/h\npath=/usr/bin\nsrt=/x/srt\nseccomp=/x\nmissing:bwrap\nmissing:rg\n";
+    let error = parse_discovery(text, "Ubuntu", PathBuf::from("wsl.exe"), PathBuf::new())
+        .expect_err("missing tools");
+    let message = error.to_string();
+    assert!(
+        message.contains("bwrap") && message.contains("rg"),
+        "{message}"
+    );
+    assert!(
+        parse_discovery(
+            "home=/h\n",
+            "Ubuntu",
+            PathBuf::from("wsl.exe"),
+            PathBuf::new()
+        )
+        .is_err()
+    );
+}
+
+// Needs this PC's WSL distro with the tools installed (`tools/wsl/setup.sh`),
+// so it stays out of the normal run: `cargo test -p autopilot-process -- --ignored wsl_`.
+// Invariant: a command launched through `wrap` runs under the boundary on the
+// real distro: it writes inside its folder, cannot write beside it, and gets
+// only the environment it was given.
+#[test]
+#[ignore = "needs the WSL distro"]
+#[cfg(windows)]
+fn wsl_runs_a_wrapped_command_under_the_boundary() {
+    use crate::{Limits, Outcome, Runner};
+    use std::{sync::atomic::AtomicBool, time::Duration};
+
+    let directory = tempfile::tempdir_in(r"D:\").expect("temp dir on D:");
+    let work = directory.path().join("wt");
+    let beside = directory.path().join("beside");
+    std::fs::create_dir_all(&work).expect("work");
+    std::fs::create_dir_all(&beside).expect("beside");
+    let wsl = Wsl::discover("Ubuntu", directory.path().join("settings")).expect("discover");
+    let boundary = Boundary {
+        write: vec![work.clone()],
+        ..Boundary::default()
+    };
+    let script = format!(
+        "echo in > in.txt; echo out > '{}/out.txt' || echo blocked; printenv GH_TOKEN || echo no-token",
+        super::linux_path(&beside).expect("path")
+    );
+    let spec = CommandSpec {
+        program: PathBuf::from("/usr/bin/bash"),
+        args: vec![OsString::from("-c"), OsString::from(script)],
+        env: Vec::new(),
+        cwd: Some(work.clone()),
+    };
+    let wrapped = wsl.wrap(&spec, &boundary, &[]).expect("wrap");
+    let limits = Limits {
+        timeout: Duration::from_secs(60),
+        bytes_per_stream: 64 * 1024,
+    };
+    let output = Runner::new(PathBuf::new())
+        .run(&wrapped, b"", limits, &AtomicBool::new(false))
+        .expect("run");
+    assert!(
+        matches!(&output.outcome, Outcome::Exited(s) if s.success()),
+        "{output:?}"
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains("blocked") && text.contains("no-token"),
+        "{text}"
+    );
+    assert!(
+        work.join("in.txt").is_file(),
+        "the write inside did not land"
+    );
+    assert!(
+        !beside.join("out.txt").exists(),
+        "a write beside the folder landed"
+    );
+}
+
+// Invariant: arguments reach the program in the distro byte for byte, whatever
+// quotes, spaces, backslashes or shell syntax they hold. Build passes a JSON
+// settings argument, so a mangled quote would change what the agent runs with.
+// A change that breaks it: building the inner command with plain joining.
+#[test]
+#[ignore = "needs the WSL distro"]
+#[cfg(windows)]
+fn wsl_passes_awkward_arguments_through_unchanged() {
+    use crate::{Limits, Outcome, Runner};
+    use std::{sync::atomic::AtomicBool, time::Duration};
+
+    let directory = tempfile::tempdir_in(r"D:\").expect("temp dir on D:");
+    let work = directory.path().join("my work");
+    std::fs::create_dir_all(&work).expect("work");
+    let wsl = Wsl::discover("Ubuntu", directory.path().join("settings")).expect("discover");
+    let awkward = [
+        r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"\"C:\a b\x.exe\" hook"}]}]}}"#,
+        "it's $(echo x) `y` $HOME ${Z} * ; | & > <",
+        "trailing backslash\\",
+        "tab\there",
+        "two\nlines",
+        "ünïcödé ✔",
+        "",
+        "--flag=with space",
+        r"C:\Users\x y\z",
+    ];
+    let spec = CommandSpec {
+        program: PathBuf::from("/usr/bin/printf"),
+        args: std::iter::once(OsString::from("%s\\0"))
+            .chain(awkward.iter().map(OsString::from))
+            .collect(),
+        env: Vec::new(),
+        cwd: Some(work.clone()),
+    };
+    let boundary = Boundary {
+        write: vec![work],
+        ..Boundary::default()
+    };
+    let wrapped = wsl.wrap(&spec, &boundary, &[]).expect("wrap");
+    let limits = Limits {
+        timeout: Duration::from_secs(60),
+        bytes_per_stream: 64 * 1024,
+    };
+    let output = Runner::new(PathBuf::new())
+        .run(&wrapped, b"", limits, &AtomicBool::new(false))
+        .expect("run");
+    assert!(
+        matches!(&output.outcome, Outcome::Exited(s) if s.success()),
+        "{output:?}"
+    );
+    let got: Vec<&str> = std::str::from_utf8(&output.stdout)
+        .expect("utf8")
+        .split_terminator('\0')
+        .collect();
+    assert_eq!(got, awkward);
+}
