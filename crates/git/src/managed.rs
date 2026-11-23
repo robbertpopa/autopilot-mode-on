@@ -73,6 +73,14 @@ impl WorktreeManager {
         })
     }
 
+    /// The folder name under the worktree root that holds a ticket's checkout.
+    ///
+    /// # Errors
+    /// Returns an error if the ticket id cannot name a folder.
+    pub fn checkout_folder(ticket: &TicketId) -> Result<String, Error> {
+        ticket_worktree(ticket).map(|(_, key)| key)
+    }
+
     /// The branch name the manager uses for a ticket.
     ///
     /// # Errors

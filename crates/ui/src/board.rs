@@ -19,7 +19,7 @@ pub const fn column(badge: Badge) -> &'static str {
 }
 
 /// Column name, then the colour of its dot. `queued` has no tickets until the
-/// scheduler has a caller, and `pr open` none until real pull requests (S6).
+/// scheduler has a caller.
 const COLUMNS: [&str; 5] = ["needs you", "running", "queued", "pr open", "done"];
 
 fn dot(name: &str) -> Color32 {

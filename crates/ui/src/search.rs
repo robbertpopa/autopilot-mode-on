@@ -132,7 +132,7 @@ fn command_hits(needle: &str, open_ticket: Option<&TicketView>) -> Vec<Hit> {
         (
             "Open the worktree",
             Command::OpenWorktree,
-            Some("coming soon: no run has made a worktree yet (S6)"),
+            open_ticket.is_none().then_some("open a ticket first"),
         ),
     ];
     commands.retain(|(label, _, _)| needle.is_empty() || matches(label, needle));
@@ -364,7 +364,11 @@ impl App {
                     self.act(action);
                 }
             }
-            Target::Command(Command::OpenWorktree) => {}
+            Target::Command(Command::OpenWorktree) => {
+                if let Some(view) = self.current().cloned() {
+                    self.act(Action::OpenWorktree(view.id));
+                }
+            }
         }
     }
 }

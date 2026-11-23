@@ -137,6 +137,16 @@ pub enum Action {
         step: Step,
         question: String,
     },
+    /// Build the approved plan: the agent works in a copy of the project, the
+    /// checks run after every turn, and a reviewer reads the change.
+    MakeBuild(TicketId),
+    /// Ask for the owner's approval to open a pull request for a built ticket.
+    /// Nothing leaves the machine until it is approved.
+    PreparePullRequest(TicketId),
+    /// Push the approved commit and open a draft pull request.
+    OpenPullRequest(TicketId),
+    /// Show the ticket's copy of the project in the file manager.
+    OpenWorktree(TicketId),
     /// Make the design (static mockups) for a ticket that changes a screen,
     /// or skip the step when it needs none.
     MakeDesign(TicketId),
@@ -189,6 +199,10 @@ impl Action {
             | Self::MakePlan(ticket)
             | Self::RerunPlan(ticket)
             | Self::Orchestrate(ticket)
+            | Self::MakeBuild(ticket)
+            | Self::PreparePullRequest(ticket)
+            | Self::OpenPullRequest(ticket)
+            | Self::OpenWorktree(ticket)
             | Self::MakeDesign(ticket)
             | Self::RerunDesign(ticket)
             | Self::OpenDesign(ticket)
@@ -208,6 +222,9 @@ impl Action {
             Self::Chat { .. } => "Answering your question about this step",
             Self::MakePlan(_) | Self::RerunPlan(_) => "Making the plan",
             Self::MakeDesign(_) | Self::RerunDesign(_) => "Making the design",
+            Self::MakeBuild(_) => "Building: the agent works, the checks run, a reviewer reads it",
+            Self::PreparePullRequest(_) => "Getting the pull request ready for your approval",
+            Self::OpenPullRequest(_) => "Pushing the commit and opening the pull request",
             Self::RunCustom { .. } => "Running your step",
             Self::RerunUnderstand(_) => "Reading the request again",
             Self::Explain { .. } => "Explaining in plain words",
@@ -339,7 +356,7 @@ pub fn switch_account(
     });
 }
 
-fn guardian() -> std::path::PathBuf {
+pub(crate) fn guardian() -> std::path::PathBuf {
     std::env::current_exe()
         .map(|exe| {
             exe.with_file_name(format!(
@@ -535,7 +552,7 @@ impl autopilot_agent::Agent for Chosen {
 
 /// A helper binary that sits next to the window, or one folder up when the
 /// window runs from `target/debug/deps` in a test.
-fn beside(name: &str) -> Result<PathBuf, String> {
+pub(crate) fn beside(name: &str) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
     let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
     let near = exe.with_file_name(&file);
@@ -554,7 +571,7 @@ fn beside(name: &str) -> Result<PathBuf, String> {
 /// time limit and auth for it, and the shipped defaults for what it leaves out.
 /// The settings a step runs with: the profile's, then the ticket's own
 /// overrides (the owner's changes and the orchestrator's choices) on top.
-fn claude_config(
+pub(crate) fn claude_config(
     options: &Options,
     step: Step,
     ticket: Option<&TicketId>,
@@ -613,7 +630,7 @@ fn profile_config(options: &Options, step: Step) -> autopilot_agent_claude::Clau
 }
 
 /// The project folder recorded on a ticket, if it still exists.
-fn ticket_folder(options: &Options, ticket: &TicketId) -> Option<PathBuf> {
+pub(crate) fn ticket_folder(options: &Options, ticket: &TicketId) -> Option<PathBuf> {
     let history = autopilot_engine::watch(&options.data_dir, ticket, 0).ok()?;
     autopilot_engine::workspace_of(&history)
         .map(PathBuf::from)
@@ -1026,6 +1043,17 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             })
             .map(|_| "Explanation kept".to_owned())
             .map_err(|error| error.to_string())
+        }
+        Action::MakeBuild(ticket) => crate::build_actions::make_build(options, ticket),
+        Action::PreparePullRequest(ticket) => {
+            crate::build_actions::prepare_pull_request(options, ticket)
+        }
+        Action::OpenPullRequest(ticket) => crate::build_actions::open_pull_request(options, ticket),
+        Action::OpenWorktree(ticket) => {
+            let folder = autopilot_engine::worktree_of(directory, ticket)
+                .ok_or_else(|| "There is no copy of the project for this ticket yet: it is made when Build starts".to_owned())?;
+            autopilot_update::open_installer(&folder)?;
+            Ok("Opened the worktree".to_owned())
         }
         Action::MakeDesign(ticket) => {
             orchestrated_first(options, ticket);
