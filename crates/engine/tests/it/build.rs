@@ -801,9 +801,12 @@ fn a_rust_build_is_checked_inside_the_sandbox_and_refined() {
         ticket,
     };
 
-    let boundary =
-        autopilot_agent_claude::sandbox_boundary("Ubuntu", &world.data.path().join("sandbox"))
-            .unwrap();
+    let boundary = autopilot_agent_claude::sandbox_boundary(
+        "Ubuntu",
+        &world.data.path().join("sandbox"),
+        &PathBuf::new(),
+    )
+    .unwrap();
     let profile = Profile::parse("p.toml", RUST_BUILD).unwrap();
     let setup = BuildSetup {
         repository: world.repository.path(),
