@@ -689,9 +689,22 @@ impl App {
                 }
             });
         }
-        if self.busy {
-            ui.label(theme::muted(format!("{}...", self.busy_what)));
+        self.busy_inline(ui);
+    }
+
+    /// A spinner and what is happening, while an action runs. Drawn at the top
+    /// of the page and beside each button that starts work, so a click always
+    /// shows that it was taken.
+    pub(crate) fn busy_inline(&self, ui: &mut egui::Ui) {
+        if !self.busy {
+            return;
         }
+        ui.horizontal(|ui| {
+            ui.add(egui::Spinner::new().size(14.0).color(theme::BLUE()));
+            ui.label(theme::muted(format!("{}...", self.busy_what)));
+        });
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(100));
     }
 
     fn cost_screen(&mut self, ui: &mut egui::Ui) {

@@ -500,10 +500,14 @@ impl App {
                     self.decide(&view.id, false);
                 }
             }
+            if step == Step::Design && ui.button("Open the mockups").clicked() {
+                self.act(Action::OpenDesign(view.id.clone()));
+            }
             if ui.button("Open (E)").clicked() {
                 self.open(&view.id);
             }
         });
+        self.busy_inline(ui);
     }
 
     fn stopped_rows(&mut self, ui: &mut egui::Ui, view: &TicketView) {
