@@ -21,7 +21,11 @@ fn answers(flip: Option<&str>, drop: Option<&str>) -> String {
     for row in ROWS.iter().filter(|row| Some(**row) != drop) {
         let works = matches!(
             *row,
-            "write-worktree" | "write-scratch" | "hook-denies-push" | "hook-allows-status"
+            "write-worktree"
+                | "write-scratch"
+                | "hook-denies-push"
+                | "hook-allows-status"
+                | "key-is-masked"
         );
         let allowed = works != (Some(*row) == flip);
         text.push_str(if allowed { "ALLOWED " } else { "DENIED " });
@@ -91,7 +95,11 @@ fn a_linux_host_drops_the_windows_rows_and_keeps_the_rest() {
 fn answers_for(row: &str) -> String {
     let works = matches!(
         row,
-        "write-worktree" | "write-scratch" | "hook-denies-push" | "hook-allows-status"
+        "write-worktree"
+            | "write-scratch"
+            | "hook-denies-push"
+            | "hook-allows-status"
+            | "key-is-masked"
     );
     format!(
         "{} {row}

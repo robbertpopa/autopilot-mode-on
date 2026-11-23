@@ -65,11 +65,40 @@ fn the_settings_open_only_what_the_boundary_names() {
         hide: vec![PathBuf::from("/home/u/.cargo/credentials.toml")],
         domains: vec!["api.anthropic.com".into()],
         tmp: Some(PathBuf::from(r"D:\work\tmp")),
+        mask_env: vec!["ANTHROPIC_API_KEY".into()],
     };
     let value: serde_json::Value =
         serde_json::from_str(&wsl.settings(&boundary).expect("settings")).expect("json");
     assert_eq!(value["network"]["allowedDomains"][0], "api.anthropic.com");
     assert_eq!(value["network"]["deniedDomains"], serde_json::json!([]));
+    // A masked variable turns TLS termination on, and the real value is put
+    // back only on requests to the hosts the boundary reaches.
+    assert_eq!(
+        value["network"]["tlsTerminate"],
+        serde_json::json!({"excludeDomains": []})
+    );
+    assert_eq!(
+        value["credentials"]["envVars"],
+        serde_json::json!([{
+            "name": "ANTHROPIC_API_KEY",
+            "mode": "mask",
+            "injectHosts": ["api.anthropic.com"]
+        }])
+    );
+    // A masked variable turns TLS termination on, and the real value is put
+    // back only on requests to the hosts the boundary reaches.
+    assert_eq!(
+        value["network"]["tlsTerminate"],
+        serde_json::json!({"excludeDomains": []})
+    );
+    assert_eq!(
+        value["credentials"]["envVars"],
+        serde_json::json!([{
+            "name": "ANTHROPIC_API_KEY",
+            "mode": "mask",
+            "injectHosts": ["api.anthropic.com"]
+        }])
+    );
     let fs = &value["filesystem"];
     assert_eq!(
         fs["denyRead"],
@@ -105,6 +134,10 @@ fn the_settings_open_only_what_the_boundary_names() {
         "no domains means no network"
     );
     assert_eq!(value["filesystem"]["allowWrite"], serde_json::json!([]));
+    assert!(
+        value.get("credentials").is_none() && value["network"].get("tlsTerminate").is_none(),
+        "no masked variable, no interception"
+    );
 }
 
 // Invariant: a secret reaches the distro by `WSLENV` and never by a command

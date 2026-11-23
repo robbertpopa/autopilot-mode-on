@@ -24,6 +24,9 @@ use crate::{
     wsl::{Boundary, CARGO_CREDENTIALS, Host, NODE_ROOTS, RUST_ROOTS, Wsl},
 };
 
+/// The variable that carries the dedicated key into an agent's environment.
+pub const API_KEY: &str = "ANTHROPIC_API_KEY";
+
 /// The one host an agent may reach.
 pub const PROVIDER: &str = "api.anthropic.com";
 
@@ -107,6 +110,10 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
             hide: Vec::new(),
             domains: vec![PROVIDER.to_owned()],
             tmp: Some(config.join("tmp")),
+            // The dedicated key is the one secret the agent is given. It sees a
+            // placeholder; only the proxy holds the real value, and only sends
+            // it to the provider.
+            mask_env: vec![API_KEY.to_owned()],
         },
         Role::Check { worktree, tmp } => Boundary {
             write: vec![worktree.clone()],
@@ -119,6 +126,7 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
             hide: vec![wsl.under_home(CARGO_CREDENTIALS)],
             domains: Vec::new(),
             tmp: Some(tmp.clone()),
+            mask_env: Vec::new(),
         },
         Role::Fetch { worktree, tmp } => Boundary {
             write: vec![
@@ -131,6 +139,7 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
             hide: vec![wsl.under_home(CARGO_CREDENTIALS)],
             domains: REGISTRY.iter().map(|host| (*host).to_owned()).collect(),
             tmp: Some(tmp.clone()),
+            mask_env: Vec::new(),
         },
         Role::FetchNode { worktree, tmp } => Boundary {
             write: vec![worktree.clone(), wsl.under_home(".npm")],
@@ -139,6 +148,7 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
             hide: Vec::new(),
             domains: NPM_REGISTRY.iter().map(|host| (*host).to_owned()).collect(),
             tmp: Some(tmp.clone()),
+            mask_env: Vec::new(),
         },
     }
 }
@@ -178,6 +188,10 @@ struct Scene {
     tmp: PathBuf,
     hit: PathBuf,
 }
+
+/// Stands in for the dedicated key in the agent probe. The row `key-is-masked`
+/// passes only if the command inside sees something else.
+const PROBE_SECRET: &str = "probe-secret-not-a-real-key";
 
 const MARKER: &str = "SYNTHETIC-MARKER\n";
 const GIT_CONFIG: &str = "[core]\n\tbare = false\n";
@@ -336,7 +350,7 @@ fn run(wsl: &Wsl, spec: &CommandSpec, timeout: Duration) -> io::Result<Finished>
 
 /// Each line is `ALLOWED label` or `DENIED label`. Positional parameters:
 /// worktree, sibling, port, scratch folder, the sibling as a Windows path.
-const PROBE: &str = r#"w=$1; s=$2; port=$3; tmp=$4; win=$5; hook=$6
+const PROBE: &str = r#"w=$1; s=$2; port=$3; tmp=$4; win=$5; hook=$6; secret=$7
 push='{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}'
 status='{"tool_name":"Bash","tool_input":{"command":"git status"}}'
 r() { if timeout 20 "$@" </dev/null >/dev/null 2>&1; then echo "ALLOWED $LABEL"; else echo "DENIED $LABEL"; fi; }
@@ -355,6 +369,7 @@ LABEL=unix-socket r python3 -c 'import socket; socket.socket(socket.AF_UNIX)'
 LABEL=hook-denies-push r bash -c 'printf %s "$1" | "$0" | grep -q "permissionDecision.:.deny"' "$hook" "$push"
 LABEL=hook-allows-status r bash -c '[ "$(printf %s "$1" | "$0")" = "{}" ]' "$hook" "$status"
 LABEL=write-hook r bash -c 'echo x >> "$0"' "$hook"
+LABEL=key-is-masked r bash -c '[ -n "$ANTHROPIC_API_KEY" ] && [ "$ANTHROPIC_API_KEY" != "$0" ]' "$secret"
 "#;
 
 const EXPECTED_ALLOWED: &[&str] = &[
@@ -362,6 +377,7 @@ const EXPECTED_ALLOWED: &[&str] = &[
     "write-scratch",
     "hook-denies-push",
     "hook-allows-status",
+    "key-is-masked",
 ];
 const ROWS: &[&str] = &[
     "write-worktree",
@@ -379,6 +395,7 @@ const ROWS: &[&str] = &[
     "hook-denies-push",
     "hook-allows-status",
     "write-hook",
+    "key-is-masked",
 ];
 
 /// Rows that only exist where Windows is reachable: its drives under `/mnt/c`,
@@ -388,7 +405,12 @@ const WSL_ONLY: &[&str] = &["read-windows-drive", "run-windows-program", "run-in
 
 /// Rows about the deny hook, which only the agent role runs: it must deny a
 /// `git push`, let `git status` through, and not be overwritable.
-const AGENT_ONLY: &[&str] = &["hook-denies-push", "hook-allows-status", "write-hook"];
+const AGENT_ONLY: &[&str] = &[
+    "hook-denies-push",
+    "hook-allows-status",
+    "write-hook",
+    "key-is-masked",
+];
 
 fn skipped(row: &str, host: Host, agent: bool) -> bool {
     (host == Host::Linux && WSL_ONLY.contains(&row)) || (!agent && AGENT_ONLY.contains(&row))
@@ -447,14 +469,20 @@ fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Resu
             crate::wsl::linux_path(&scratch)?.into(),
             sibling_windows.into(),
             wsl.hook().into(),
+            PROBE_SECRET.into(),
         ],
-        env: Vec::new(),
+        env: if agent {
+            vec![(OsString::from(API_KEY), OsString::from(PROBE_SECRET))]
+        } else {
+            Vec::new()
+        },
         cwd: Some(scene.worktree.clone()),
     };
     let validated = Validated {
         wsl: Arc::new(wsl.clone()),
     };
-    let wrapped = validated.wrap(role, &spec, &[])?;
+    let secrets: &[&str] = if agent { &[API_KEY] } else { &[] };
+    let wrapped = validated.wrap(role, &spec, secrets)?;
     let finished = run(wsl, &wrapped, Duration::from_secs(180))?;
     let mut failures = Vec::new();
     if !finished.success {

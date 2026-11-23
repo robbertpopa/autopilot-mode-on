@@ -102,6 +102,11 @@ pub struct Boundary {
     pub domains: Vec<String>,
     /// Scratch folder, made writable and exported as `TMPDIR`.
     pub tmp: Option<PathBuf>,
+    /// Environment variables whose real value the command must never see. The
+    /// command gets a placeholder of the same shape, and the proxy puts the real
+    /// value back on requests to `domains`. This needs TLS termination, which
+    /// is switched on whenever a variable is listed.
+    pub mask_env: Vec<String>,
 }
 
 impl Wsl {
@@ -229,7 +234,7 @@ impl Wsl {
             deny_read.push(self.home.clone());
         }
         deny_read.extend(hide);
-        let value = serde_json::json!({
+        let mut value = serde_json::json!({
             "network": {
                 "allowedDomains": boundary.domains,
                 "deniedDomains": [],
@@ -241,6 +246,20 @@ impl Wsl {
                 "denyWrite": protect,
             },
         });
+        if !boundary.mask_env.is_empty() {
+            value["network"]["tlsTerminate"] = serde_json::json!({ "excludeDomains": [] });
+            value["credentials"] = serde_json::json!({
+                "envVars": boundary
+                    .mask_env
+                    .iter()
+                    .map(|name| serde_json::json!({
+                        "name": name,
+                        "mode": "mask",
+                        "injectHosts": boundary.domains,
+                    }))
+                    .collect::<Vec<_>>(),
+            });
+        }
         serde_json::to_string_pretty(&value).map_err(io::Error::other)
     }
 
