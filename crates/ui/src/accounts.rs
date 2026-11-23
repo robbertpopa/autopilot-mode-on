@@ -211,7 +211,7 @@ impl App {
         ui.add_space(14.0);
         ui.label(RichText::new("Who is signed in?").size(18.0).strong());
         ui.label(theme::muted(
-            "Read from the tools on this computer. No password or token is shown or kept.",
+            "Read from the tools on this computer. No password or token is kept.",
         ));
         ui.add_space(10.0);
         ui.add_space(6.0);
@@ -228,7 +228,7 @@ impl App {
             }
         });
         ui.label(theme::muted(
-            "Claude uses your Claude Code sign-in. The offline demo gives fixed sample answers, spends nothing and needs no sign-in; it is for trying the app.",
+            "Offline demo: fixed sample answers, no cost, no sign-in.",
         ));
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -248,7 +248,7 @@ impl App {
             }
         });
         ui.label(theme::muted(
-            "After Understand, one call by this model judges how complex the ticket is against what each step costs, and picks the cheapest model and effort for Design and Plan. You can change any of its choices.",
+            "Picks the cheapest model and effort for Design and Plan after Understand.",
         ));
         ui.add_space(10.0);
         let Some(accounts) = self.accounts.clone() else {

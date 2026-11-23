@@ -130,11 +130,6 @@ impl App {
             let color = if *ok { theme::GREEN() } else { theme::RED() };
             ui.label(RichText::new(text).color(color));
         }
-        ui.add_space(8.0);
-        ui.add_enabled(false, egui::Button::new("Quality reviewer"))
-            .on_disabled_hover_text(
-                "needs a live model and the review side of M9; it would spend money, so it ships off",
-            );
     }
 
     fn save_review(&mut self, changes: &[(ReviewField, String)]) {

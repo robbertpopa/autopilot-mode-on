@@ -243,7 +243,7 @@ impl App {
             ));
         }
         ui.add_space(12.0);
-        self.rules_editor(ui, &row.path);
+        self.rules_editor(ui);
     }
 
     fn pipeline_choice(&mut self, ui: &mut egui::Ui, row: &Row) {
@@ -278,7 +278,7 @@ impl App {
         }
     }
 
-    fn rules_editor(&mut self, ui: &mut egui::Ui, path: &str) {
+    fn rules_editor(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("rules.md").strong());
             theme::pill(
@@ -316,12 +316,8 @@ impl App {
             let color = if *ok { theme::GREEN() } else { theme::RED() };
             ui.label(RichText::new(text).color(color));
         }
-        ui.label(theme::muted(format!(
-            "{}",
-            autopilot_engine::rules_path(&self.options.data_dir, path).display()
-        )));
         ui.label(theme::muted(
-            "Kept in the app data folder, not in the project. It guides the agent and cannot loosen what asks, what is protected or any budget.",
+            "Kept outside the project. It guides the agent and cannot loosen what asks, what is protected or any budget.",
         ));
     }
 }

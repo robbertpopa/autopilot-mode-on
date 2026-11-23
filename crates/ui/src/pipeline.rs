@@ -9,8 +9,8 @@ use eframe::egui::{self, Frame, Margin, RichText, Stroke};
 use crate::app::App;
 use crate::theme;
 
-const MODELS: [&str; 3] = ["haiku-5-5", "sonnet-5-5", "opus-5-5"];
-const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+const MODELS: [&str; 4] = ["default", "haiku-5-5", "sonnet-5-5", "opus-5-5"];
+const EFFORTS: [&str; 6] = ["default", "low", "medium", "high", "xhigh", "max"];
 const TURNS: [u32; 6] = [10, 20, 30, 60, 100, 200];
 const ROUNDS: [u32; 5] = [1, 2, 3, 5, 8];
 const BUDGETS: [u64; 6] = [50_000, 100_000, 200_000, 500_000, 1_000_000, 2_000_000];
@@ -59,7 +59,7 @@ impl App {
                 .strong(),
         );
         ui.label(theme::muted(
-            "Steps a ticket doesn't need are skipped. A step asks you when it needs something, or when you tick \"Ask me after this step\".",
+            "A step asks you when it needs something, or when you tick \"Ask me after this step\".",
         ));
         ui.add_space(10.0);
         if let Err(problem) = &self.profile {
@@ -75,10 +75,6 @@ impl App {
                         &mut self.advanced,
                         &[(false, "Simple"), (true, "Advanced")],
                     );
-                    ui.label(theme::muted(format!(
-                        "Selected: {} · saved in profile.toml",
-                        step_name(self.design_step).to_lowercase()
-                    )));
                 });
             });
             ui.add_space(8.0);
@@ -120,7 +116,7 @@ impl App {
             ],
         ];
         let gap = 40.0;
-        for (index, row) in rows.iter().enumerate() {
+        for row in &rows {
             let total_weight: f32 = row.iter().map(|(_, weight)| weight).sum();
             let room = 2.0_f32.mul_add(-gap, ui.available_width()) - 28.0;
             ui.horizontal_top(|ui| {
@@ -133,12 +129,6 @@ impl App {
                     }
                 }
             });
-            if index == 0 {
-                ui.add_space(4.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(theme::muted("steps it doesn't need are skipped"));
-                });
-            }
         }
     }
 
@@ -403,8 +393,6 @@ impl App {
                     ticket.title
                 )));
             });
-        } else {
-            ui.label(theme::muted("In short: no ticket has run this step yet."));
         }
     }
 

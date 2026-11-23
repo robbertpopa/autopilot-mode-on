@@ -159,6 +159,8 @@ pub fn apply(ctx: &egui::Context, light: bool) {
         Stroke::new(1.5_f32, if light { TEXT() } else { Color32::WHITE });
     visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, TEXT());
     visuals.selection.bg_fill = BLUE();
+    // Text on a selected option sits on the blue fill, so it has to be white.
+    visuals.selection.stroke = Stroke::new(1.0_f32, Color32::WHITE);
     visuals.hyperlink_color = BLUE();
     let radius = CornerRadius::same(7);
     for widget in [
@@ -184,6 +186,9 @@ pub fn apply(ctx: &egui::Context, light: bool) {
     ctx.style_mut(|style| {
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
         style.spacing.button_padding = egui::vec2(12.0, 6.0);
+        // The default popup height (200) hides the seventh pipeline with no
+        // sign that the list scrolls.
+        style.spacing.combo_height = 360.0;
         style.text_styles = [
             (
                 egui::TextStyle::Small,

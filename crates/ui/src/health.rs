@@ -99,10 +99,6 @@ impl App {
             self.health_findings(ui, &name);
             self.health_tunings(ui, &name);
         }
-        ui.add_space(14.0);
-        ui.label(theme::muted(
-            "Grades need the model-graded reviewer, which is not built. Findings and tier 1 tuning work from the recorded usage.",
-        ));
     }
 
     /// The metrics of one pipeline, kept until a ticket changes.

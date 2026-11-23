@@ -68,6 +68,14 @@ pub fn edit_step(path: &Path, step: Step, field: &StepField) -> Result<Profile, 
                 Auth::Api => "api",
             });
         }
+        // "default" is the word the window shows for no choice, so picking it
+        // takes the key out and the step goes back to the profile's model.
+        StepField::Model(model) if model == "default" => {
+            table.remove("model");
+        }
+        StepField::Effort(effort) if effort == "default" => {
+            table.remove("effort");
+        }
         StepField::Model(model) => table["model"] = value(model.as_str()),
         StepField::Effort(effort) => table["effort"] = value(effort.as_str()),
         StepField::AskAfter(ask) => table["ask_after"] = value(*ask),
@@ -395,6 +403,24 @@ mod tests {
         assert!(text.contains("# my notes"));
         assert!(text.contains("infra/**"));
         assert_eq!(load_profile(&path).unwrap(), profile);
+    }
+
+    // Invariant: choosing "default" for a model or an effort removes the key,
+    // so a step can go back to the profile's choice. Without it the window's
+    // list had no way back once a model was picked, and "default" written as a
+    // model name would be rejected by every agent.
+    #[test]
+    fn default_takes_the_model_and_effort_keys_out() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("profile.toml");
+        edit_step(&path, Step::Plan, &StepField::Model("opus-5-5".into())).unwrap();
+        edit_step(&path, Step::Plan, &StepField::Effort("high".into())).unwrap();
+        edit_step(&path, Step::Plan, &StepField::Model("default".into())).unwrap();
+        let profile = edit_step(&path, Step::Plan, &StepField::Effort("default".into())).unwrap();
+        let plan = step_of(&profile, Step::Plan);
+        assert_eq!(plan.model, None);
+        assert_eq!(plan.effort, None);
+        assert!(!fs::read_to_string(&path).unwrap().contains("default"));
     }
 
     // Invariant: a change that would make the profile invalid is refused with

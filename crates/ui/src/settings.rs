@@ -170,9 +170,7 @@ impl App {
                 });
             }
         });
-        ui.label(theme::muted(
-            "Change it in profile.toml (when_unsure). A per-ticket value is recorded but no step reads it yet.",
-        ));
+        ui.label(theme::muted("Set in profile.toml."));
     }
 
     /// What forces an ask whatever the switches say, read from the profile.
