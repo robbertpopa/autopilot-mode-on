@@ -254,6 +254,7 @@ impl App {
                 });
             }
         });
+        self.busy_inline(ui);
     }
 
     /// What the orchestrator decided for the later steps, or a way to ask it.
@@ -419,6 +420,7 @@ impl App {
                         self.act(Action::MakePlan(view.id.clone()));
                     }
                 }
+                self.busy_inline(ui);
                 if let Some(card) = problem {
                     if matches!(card.step, Step::Understand | Step::Design | Step::Plan) {
                         if ui.add(theme::primary("Try again")).clicked() {
@@ -497,7 +499,11 @@ impl App {
                             });
                         }
                     }
+                    if *step == Step::Design && ui.button("Open the mockups").clicked() {
+                        self.act(Action::OpenDesign(view.id.clone()));
+                    }
                 });
+                self.busy_inline(ui);
             });
         ui.add_space(10.0);
     }

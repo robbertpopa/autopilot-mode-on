@@ -59,6 +59,12 @@ pub fn run(options: Options) -> eframe::Result {
 struct Window(App);
 
 impl eframe::App for Window {
+    /// What shows through any part of the window no panel painted, for example
+    /// while it is being resized. Without it that part is black.
+    fn clear_color(&self, _visuals: &eframe::egui::Visuals) -> [f32; 4] {
+        eframe::egui::Rgba::from(theme::BACKGROUND()).to_array()
+    }
+
     fn update(&mut self, context: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         self.0.ui(context);
     }
@@ -1154,6 +1160,52 @@ effort = \"high\"
         let id = autopilot_core::TicketId::from("demo-timezone");
         assert!(perform(&options, &Action::Pause(id)).is_ok());
         assert!(options.data_dir.join("control").is_dir());
+    }
+
+    // Invariant: Shift+Enter in the message box adds a line and sends nothing;
+    // plain Enter sends. `consume_key` with no modifiers also matches a Shift
+    // press, so a change that dropped the explicit Shift check would send the
+    // half-written message.
+    #[test]
+    fn shift_enter_adds_a_line_and_does_not_send() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options, false);
+        app.start_new();
+        app.home.description = "First line".into();
+        frame(&mut app, &context);
+        let enter = egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: Some(egui::Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::SHIFT,
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1500.0, 920.0),
+            )),
+            // The held-key state is separate from the event's own modifiers.
+            modifiers: egui::Modifiers::SHIFT,
+            events: vec![enter],
+            ..Default::default()
+        };
+        let _ = context.run(input, |context| app.ui(context));
+        assert!(!app.busy, "Shift+Enter started a ticket");
+        assert_eq!(app.mode, Mode::NewTicket);
+        assert!(
+            app.home.description.contains('\n'),
+            "{:?}",
+            app.home.description
+        );
     }
 
     // Invariant: starting a ticket from the window runs the real engine with

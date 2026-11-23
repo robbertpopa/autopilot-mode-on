@@ -129,6 +129,7 @@ impl App {
                         step,
                     });
                 }
+                self.busy_inline(ui);
             }
         });
         ui.add_space(6.0);
@@ -356,6 +357,7 @@ impl App {
             {
                 self.act(Action::OpenDesign(view.id.clone()));
             }
+            self.busy_inline(ui);
             if matches!(card, Some(StepState::Skipped(_))) {
                 ui.add_enabled(false, button("Run it anyway"))
                     .on_disabled_hover_text(

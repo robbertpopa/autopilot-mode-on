@@ -171,8 +171,14 @@ pub fn show(ui: &mut egui::Ui, form: &mut NewTicket) -> Option<Action> {
     };
     let text_id = egui::Id::new("composer-text");
     // Take Enter before the text box turns it into a new line.
+    // `consume_key` with no modifiers also matches Shift+Enter, so the Shift
+    // state is checked first and Shift+Enter reaches the text box as a new line.
     let send_key = ui.memory(|memory| memory.has_focus(text_id))
-        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        && ui.input_mut(|input| {
+            !input.modifiers.shift
+                && !input.modifiers.command
+                && input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+        });
     egui::Frame::new()
         .fill(theme::CARD())
         .stroke(egui::Stroke::new(1.0_f32, border))
