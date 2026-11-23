@@ -160,6 +160,10 @@ impl App {
     pub(crate) fn select_project(&mut self, path: &str) {
         self.project_selected = Some(path.to_owned());
         self.revert_rules();
+        self.card_notice = None;
+        self.card_text = autopilot_engine::read_card(&self.options.data_dir, path)
+            .ok()
+            .flatten();
     }
 
     pub(crate) fn revert_rules(&mut self) {
@@ -182,8 +186,31 @@ impl App {
             Ok(profile) => {
                 self.profile = Ok(profile);
                 self.select_project(&normalize_path(&path));
+                // A new project is read once, so its page opens with a card.
+                self.scan_project();
             }
             Err(error) => self.notice = Some((false, error.to_string())),
+        }
+    }
+
+    /// Read the selected project's folder into its card. A refusal says why
+    /// and leaves the last card as it was.
+    pub(crate) fn scan_project(&mut self) {
+        let Some(path) = self.project_selected.clone() else {
+            return;
+        };
+        match autopilot_engine::get_to_know(&self.options.data_dir, &path) {
+            Ok((card, info)) => {
+                self.card_text = autopilot_engine::read_card(&self.options.data_dir, &path)
+                    .ok()
+                    .flatten();
+                let found = card.commands.len();
+                self.card_notice = Some((
+                    true,
+                    format!("scanned, {} bytes, {found} commands found", info.bytes),
+                ));
+            }
+            Err(error) => self.card_notice = Some((false, error.to_string())),
         }
     }
 
@@ -243,7 +270,55 @@ impl App {
             ));
         }
         ui.add_space(12.0);
+        self.card_section(ui, row);
+        ui.add_space(12.0);
         self.rules_editor(ui);
+    }
+
+    fn card_section(&mut self, ui: &mut egui::Ui, row: &Row) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("project card").strong());
+            theme::pill(ui, "read-only scan", theme::GREY_FILL(), theme::GREY_TEXT());
+            theme::pill(ui, "not committed", theme::GREY_FILL(), theme::GREY_TEXT());
+        });
+        match &self.card_text {
+            Some(text) => {
+                egui::Frame::new()
+                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER()))
+                    .corner_radius(egui::CornerRadius::same(8))
+                    .inner_margin(egui::Margin::symmetric(12, 9))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(theme::mono(text).size(12.0));
+                    });
+                ui.label(theme::muted(format!(
+                    "~{} tokens   {} of {} bytes",
+                    text.len().div_ceil(4),
+                    text.len(),
+                    autopilot_engine::MAX_CARD_BYTES
+                )));
+            }
+            None => {
+                ui.label(theme::muted(
+                    "No card yet. Scan reads manifest names, not source.",
+                ));
+            }
+        }
+        let label = if self.card_text.is_some() {
+            "Scan again"
+        } else {
+            "Scan"
+        };
+        if row.registered && ui.button(label).clicked() {
+            self.scan_project();
+        }
+        if let Some((ok, text)) = &self.card_notice {
+            let color = if *ok { theme::GREEN() } else { theme::RED() };
+            ui.label(RichText::new(text).color(color));
+        }
+        ui.label(theme::muted(
+            "Kept outside the project. Commands are suggestions: nothing becomes a check until you add it to [checks].",
+        ));
     }
 
     fn pipeline_choice(&mut self, ui: &mut egui::Ui, row: &Row) {
