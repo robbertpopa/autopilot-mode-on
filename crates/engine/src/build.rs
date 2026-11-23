@@ -99,6 +99,8 @@ struct BuildRound<'a, A: Agent> {
     base: String,
     toolbox: std::sync::Arc<Toolbox>,
     review: bool,
+    /// What the review's model calls cost this round, for the step's cap.
+    review_spent: Rc<std::cell::Cell<Money>>,
     checks: Vec<Box<dyn Check>>,
     kept: Kept,
     session: Option<SessionId>,
@@ -162,6 +164,10 @@ impl<A: Agent> Round for BuildRound<'_, A> {
         Ok(self.manager.fingerprint(&self.ticket.id)?.to_string())
     }
 
+    fn check_cost(&mut self) -> Money {
+        self.review_spent.take()
+    }
+
     fn build(&mut self, request: &BuildRequest) -> Result<BuildTurn, Error> {
         self.gate()?;
         let session = match (&request.session, &self.session) {
@@ -221,6 +227,7 @@ impl<A: Agent> Round for BuildRound<'_, A> {
                 | AgentEvent::PlanResult(_)
                 | AgentEvent::DraftResult(_)
                 | AgentEvent::DesignResult(_)
+                | AgentEvent::ReviewResult(_)
                 | AgentEvent::CustomResult(_) => {
                     return Err(Error::NotReady(
                         "the agent answered Build with a result".into(),
@@ -295,6 +302,8 @@ impl<A: Agent> Round for BuildRound<'_, A> {
                 ticket: self.ticket,
                 plan: self.plan,
                 patch: self.manager.committed_patch(&self.ticket.id)?,
+                rules: self.rules.as_ref().map(|(block, _)| block.as_str()),
+                spent: Rc::clone(&self.review_spent),
             };
             let reviewers: [Box<dyn Check + '_>; 1] = [Box::new(review)];
             runs.extend(run_all(&reviewers, &context, &key, &mut self.kept)?);
@@ -516,6 +525,7 @@ pub fn run_build(
         base: owned.base.as_str().to_owned(),
         toolbox,
         review: setup.review,
+        review_spent: Rc::default(),
         checks,
         kept: Kept::default(),
         session: latest_session(&history),

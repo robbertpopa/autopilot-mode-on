@@ -13,6 +13,8 @@ struct Script {
     tree: u32,
     unrefinable: bool,
     fail_build: bool,
+    /// What each round's checks cost, as a review would.
+    check_cost: Money,
 }
 
 impl Script {
@@ -28,6 +30,7 @@ impl Script {
             tree: 0,
             unrefinable: false,
             fail_build: false,
+            check_cost: Money::default(),
         }
     }
 }
@@ -48,6 +51,10 @@ impl Round for Script {
             self.tree += 1;
         }
         Ok(self.turn)
+    }
+
+    fn check_cost(&mut self) -> Money {
+        self.check_cost
     }
 
     fn check(&mut self) -> Result<Vec<CheckRun>, String> {
@@ -144,6 +151,37 @@ fn the_turn_cap_stops_before_another_build_turn() {
     let left: Vec<u32> = script.requests.iter().map(|r| r.turns_left).collect();
     assert_eq!(left, [7, 2], "each call is launched with what remains");
     assert_eq!(needs_you(&outcome).0, &Stop::TurnCap { turns: 10 });
+}
+
+// Invariant: what the checks spend counts against the step's dollar cap. A
+// review that calls a model each round would otherwise spend without limit:
+// the loop saw only the build turns. A change that breaks it: reading only
+// `turn.cost`.
+#[test]
+fn what_the_checks_spend_counts_against_the_budget() {
+    let mut script = Script::never_fixes();
+    script.turn.cost = Money::from_microusd(10);
+    script.check_cost = Money::from_microusd(600);
+    let (outcome, _) = go(limits(10, 100, Some(1000)), &mut script);
+    assert_eq!(
+        script.requests.len(),
+        2,
+        "610 after round one, 1220 after two"
+    );
+    let left: Vec<Option<u64>> = script
+        .requests
+        .iter()
+        .map(|r| r.budget_left.map(Money::as_microusd))
+        .collect();
+    assert_eq!(
+        left,
+        [Some(1000), Some(390)],
+        "round two sees the review's spend"
+    );
+    assert!(matches!(
+        needs_you(&outcome).0,
+        Stop::BudgetCap { spent } if spent.as_microusd() == 1220
+    ));
 }
 
 #[test]

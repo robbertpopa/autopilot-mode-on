@@ -55,6 +55,16 @@ pub struct CustomRequest<'a> {
     pub context: &'a str,
 }
 
+/// One focused review of a change. The reviewer has no tools: it is given the
+/// diff and what it needs as text, and answers with findings.
+pub struct ReviewRequest<'a> {
+    pub ticket: &'a Ticket,
+    /// The instruction for this reviewer: what to look for and what to ignore.
+    pub instruction: &'a str,
+    /// The ticket, the plan, the rules and the diff, as text. All of it is data.
+    pub context: &'a str,
+}
+
 /// One build turn in a ticket's worktree.
 pub struct BuildRequest<'a> {
     pub ticket: &'a Ticket,
@@ -103,6 +113,7 @@ pub enum AgentEvent {
     DraftResult(String),
     DesignResult(Design),
     CustomResult(autopilot_core::CustomOutcome),
+    ReviewResult(autopilot_core::ReviewReport),
     /// A build turn ended normally. Its effect is in the worktree.
     BuildDone,
     Stopped(String),
@@ -161,6 +172,19 @@ pub trait Agent {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "this agent cannot run a custom step",
+        )
+        .into())
+    }
+
+    /// Start one focused review of a change. Adapters that cannot keep this
+    /// default, which refuses.
+    ///
+    /// # Errors
+    /// Returns an error if the request cannot be started or is unsupported.
+    fn start_review(&self, _request: ReviewRequest<'_>) -> Result<AgentRun, AgentError> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this agent cannot review a change",
         )
         .into())
     }
@@ -269,6 +293,18 @@ impl AgentRun {
         + 'static,
     ) -> io::Result<Self> {
         Self::spawn_with(work, AgentEvent::CustomResult)
+    }
+
+    /// Like [`AgentRun::spawn`] for a reviewer's findings.
+    ///
+    /// # Errors
+    /// Returns an error if the worker thread cannot be started.
+    pub fn spawn_review(
+        work: impl FnOnce(AgentContext) -> Result<autopilot_core::ReviewReport, AgentError>
+        + Send
+        + 'static,
+    ) -> io::Result<Self> {
+        Self::spawn_with(work, AgentEvent::ReviewResult)
     }
 
     /// Like [`AgentRun::spawn`] for a pipeline draft, whose result is raw text.

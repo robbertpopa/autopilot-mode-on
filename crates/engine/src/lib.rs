@@ -389,6 +389,11 @@ fn pump(
                     io::Error::other("a step that expects a result got a pipeline draft").into(),
                 );
             }
+            Some(AgentEvent::ReviewResult(_)) => {
+                break Pumped::Failed(
+                    io::Error::other("a step that expects a result got review findings").into(),
+                );
+            }
             Some(AgentEvent::PlanResult(plan)) => break Pumped::Plan(plan),
             Some(AgentEvent::DesignResult(design)) => break Pumped::Design(design),
             Some(AgentEvent::CustomResult(outcome)) => break Pumped::Custom(outcome),

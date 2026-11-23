@@ -12,6 +12,10 @@ use autopilot_core::Ticket;
 const TRANSCRIPT: &[u8] = include_bytes!("../../../fixtures/agent/understand.jsonl");
 const CLAUDE_SUCCESS: &[u8] = include_bytes!("../../../fixtures/claude/synthetic-understand.jsonl");
 const CLAUDE_PLAN: &[u8] = include_bytes!("../../../fixtures/claude/synthetic-plan.jsonl");
+const REVIEW_CLEAN: &[u8] = include_bytes!("../../../fixtures/claude/synthetic-review-clean.jsonl");
+const REVIEW_FINDING: &[u8] =
+    include_bytes!("../../../fixtures/claude/synthetic-review-finding.jsonl");
+const REVIEW_LOW: &[u8] = include_bytes!("../../../fixtures/claude/synthetic-review-low.jsonl");
 
 fn main() -> ExitCode {
     // Real Claude Code starts with `-p` or `auth`; the replay mode keeps its own word.
@@ -94,8 +98,17 @@ fn claude_print() -> Result<ExitCode, Box<dyn std::error::Error>> {
     if prompt.contains("scenario:record-cwd") {
         std::fs::write("cwd-marker.txt", "started here")?;
     }
-    // The Plan prompt asks for a plan; every other prompt is Understand.
-    let reply = if prompt.contains("Write a plan for this ticket") {
+    // A review prompt starts with its instruction; the ticket's own words pick
+    // what the fake reviewer finds, so a test can drive each outcome.
+    let reply = if prompt.contains("Your instruction for this review") {
+        if prompt.contains("scenario:review-finding") {
+            REVIEW_FINDING
+        } else if prompt.contains("scenario:review-low") {
+            REVIEW_LOW
+        } else {
+            REVIEW_CLEAN
+        }
+    } else if prompt.contains("Write a plan for this ticket") {
         CLAUDE_PLAN
     } else {
         CLAUDE_SUCCESS
