@@ -9,6 +9,17 @@ use eframe::egui::{self, RichText};
 use crate::app::App;
 use crate::theme;
 
+/// What the page holds about the selected project's card: its saved text, the
+/// last scan's notice, and what that scan offered. Read when a project is
+/// chosen or scanned, never per frame.
+#[derive(Default)]
+pub(crate) struct CardState {
+    pub(crate) text: Option<String>,
+    pub(crate) notice: Option<(bool, String)>,
+    pub(crate) commands: Vec<autopilot_engine::DetectedCommand>,
+    pub(crate) tools: Vec<autopilot_engine::ToolSuggestion>,
+}
+
 /// One row of the list.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Row {
@@ -160,11 +171,13 @@ impl App {
     pub(crate) fn select_project(&mut self, path: &str) {
         self.project_selected = Some(path.to_owned());
         self.revert_rules();
-        self.card_notice = None;
-        self.card_text = autopilot_engine::read_card(&self.options.data_dir, path)
+        self.card.notice = None;
+        self.card.text = autopilot_engine::read_card(&self.options.data_dir, path)
             .ok()
             .flatten();
-        self.card_commands = autopilot_engine::scan_workspace(std::path::Path::new(path)).commands;
+        let scanned = autopilot_engine::scan_workspace(std::path::Path::new(path));
+        self.card.tools = autopilot_engine::suggest_tools(&scanned);
+        self.card.commands = scanned.commands;
     }
 
     pub(crate) fn revert_rules(&mut self) {
@@ -202,17 +215,18 @@ impl App {
         };
         match autopilot_engine::get_to_know(&self.options.data_dir, &path) {
             Ok((card, info)) => {
-                self.card_text = autopilot_engine::read_card(&self.options.data_dir, &path)
+                self.card.text = autopilot_engine::read_card(&self.options.data_dir, &path)
                     .ok()
                     .flatten();
                 let found = card.commands.len();
-                self.card_commands = card.commands;
-                self.card_notice = Some((
+                self.card.tools = autopilot_engine::suggest_tools(&card);
+                self.card.commands = card.commands;
+                self.card.notice = Some((
                     true,
                     format!("scanned, {} bytes, {found} commands found", info.bytes),
                 ));
             }
-            Err(error) => self.card_notice = Some((false, error.to_string())),
+            Err(error) => self.card.notice = Some((false, error.to_string())),
         }
     }
 
@@ -286,14 +300,52 @@ impl App {
         match autopilot_engine::add_detected_check(&self.options.profile, &path, command) {
             Ok(profile) => {
                 self.profile = Ok(profile);
-                self.card_notice = Some((true, format!("added `{command}` to [checks]")));
+                self.card.notice = Some((true, format!("added `{command}` to [checks]")));
             }
-            Err(error) => self.card_notice = Some((false, error.to_string())),
+            Err(error) => self.card.notice = Some((false, error.to_string())),
         }
     }
 
+    /// Skills and MCP servers the scan suggests. Advice only: nothing here
+    /// installs or enables anything.
+    fn suggested_tools(&self, ui: &mut egui::Ui) {
+        if self.card.tools.is_empty() {
+            return;
+        }
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(theme::muted("Suggested tools"));
+            theme::pill(ui, "advice only", theme::GREY_FILL(), theme::GREY_TEXT());
+        });
+        for tool in &self.card.tools {
+            egui::Frame::new()
+                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER()))
+                .corner_radius(egui::CornerRadius::same(8))
+                .inner_margin(egui::Margin::symmetric(12, 8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(tool.name).strong());
+                        theme::pill(ui, tool.kind, theme::BLUE_FILL(), theme::BLUE_TEXT());
+                        if !tool.reviewed {
+                            theme::pill(ui, "unreviewed", theme::AMBER_FILL(), theme::AMBER());
+                        }
+                    });
+                    ui.label(theme::muted(tool.summary));
+                    ui.label(theme::muted(format!(
+                        "{} · {} · {} · {} (looked at {})",
+                        tool.maintainer, tool.licence, tool.source, tool.pinned, tool.checked_on
+                    )));
+                    ui.label(theme::muted(format!("can: {}", tool.permissions)));
+                });
+        }
+        ui.label(theme::muted(
+            "Read the source and what it can do before you use one. Autopilot steps run without MCP servers, and this does not change that.",
+        ));
+    }
+
     fn detected_commands(&mut self, ui: &mut egui::Ui) {
-        if self.card_commands.is_empty() {
+        if self.card.commands.is_empty() {
             return;
         }
         let set: Vec<String> = self
@@ -303,7 +355,7 @@ impl App {
             .unwrap_or_default();
         let mut chosen = None;
         ui.label(theme::muted("Detected commands, not yet checks:"));
-        for found in &self.card_commands {
+        for found in &self.card.commands {
             ui.horizontal(|ui| {
                 theme::cell(ui, 60.0, found.kind);
                 ui.label(theme::mono(&found.command).size(12.0));
@@ -325,7 +377,7 @@ impl App {
             theme::pill(ui, "read-only scan", theme::GREY_FILL(), theme::GREY_TEXT());
             theme::pill(ui, "not committed", theme::GREY_FILL(), theme::GREY_TEXT());
         });
-        match &self.card_text {
+        match &self.card.text {
             Some(text) => {
                 egui::Frame::new()
                     .stroke(egui::Stroke::new(1.0_f32, theme::BORDER()))
@@ -349,7 +401,8 @@ impl App {
             }
         }
         self.detected_commands(ui);
-        let label = if self.card_text.is_some() {
+        self.suggested_tools(ui);
+        let label = if self.card.text.is_some() {
             "Scan again"
         } else {
             "Scan"
@@ -357,7 +410,7 @@ impl App {
         if row.registered && ui.button(label).clicked() {
             self.scan_project();
         }
-        if let Some((ok, text)) = &self.card_notice {
+        if let Some((ok, text)) = &self.card.notice {
             let color = if *ok { theme::GREEN() } else { theme::RED() };
             ui.label(RichText::new(text).color(color));
         }
