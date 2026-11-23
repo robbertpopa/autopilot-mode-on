@@ -723,6 +723,7 @@ fn run_build(
         git: PathBuf::from("git"),
         guardian,
         profile,
+        review: matches!(isolation, autopilot_engine::Isolation::Wsl(_)),
     };
     let outcome = autopilot_engine::run_build(data_dir, ticket, &agent, &setup, isolation)?;
     Ok(match outcome {

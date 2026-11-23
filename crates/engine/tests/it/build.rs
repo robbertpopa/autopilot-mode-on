@@ -212,6 +212,7 @@ fn build(world: &World, profile: &str) -> Result<BuildOutcome, Error> {
         git: PathBuf::from("git"),
         guardian: PathBuf::new(),
         profile: &profile,
+        review: false,
     };
     run_build(
         world.data.path(),
@@ -811,6 +812,7 @@ fn a_rust_build_is_checked_inside_the_sandbox_and_refined() {
         git: PathBuf::from("git"),
         guardian: PathBuf::new(),
         profile: &profile,
+        review: false,
     };
     let outcome = run_build(
         world.data.path(),
@@ -833,5 +835,124 @@ fn a_rust_build_is_checked_inside_the_sandbox_and_refined() {
         failed[0].contains("not fixed yet"),
         "the failure text came from the build script in the sandbox: {}",
         failed[0]
+    );
+}
+
+/// The fake agent for Build, plus a reviewer that answers from a queue and
+/// counts its calls.
+struct Reviewing {
+    inner: ClaudeAgent,
+    answers: std::sync::Mutex<Vec<autopilot_core::CustomOutcome>>,
+    calls: std::sync::atomic::AtomicUsize,
+    seen: std::sync::Mutex<Vec<String>>,
+}
+
+impl Agent for Reviewing {
+    fn start(&self, request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        self.inner.start(request)
+    }
+
+    fn start_build(
+        &self,
+        request: autopilot_agent::BuildRequest<'_>,
+    ) -> Result<AgentRun, AgentError> {
+        self.inner.start_build(request)
+    }
+
+    fn start_custom(
+        &self,
+        request: autopilot_agent::CustomRequest<'_>,
+    ) -> Result<AgentRun, AgentError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.seen.lock().unwrap().push(request.context.to_owned());
+        let answer = self.answers.lock().unwrap().remove(0);
+        Ok(AgentRun::spawn_custom(move |_| Ok(answer))?)
+    }
+}
+
+fn reviewing(world: &World, answers: Vec<(bool, &str)>) -> Reviewing {
+    Reviewing {
+        inner: agent(world),
+        answers: std::sync::Mutex::new(
+            answers
+                .into_iter()
+                .map(|(ok, summary)| autopilot_core::CustomOutcome {
+                    summary: summary.into(),
+                    ok,
+                })
+                .collect(),
+        ),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        seen: std::sync::Mutex::new(Vec::new()),
+    }
+}
+
+fn build_reviewed(world: &World, profile: &str, agent: &Reviewing) -> BuildOutcome {
+    let profile = Profile::parse("p.toml", profile).unwrap();
+    let setup = BuildSetup {
+        repository: world.repository.path(),
+        base_branch: "main",
+        worktrees: world.worktrees.path(),
+        git: PathBuf::from("git"),
+        guardian: PathBuf::new(),
+        profile: &profile,
+        review: true,
+    };
+    run_build(
+        world.data.path(),
+        &world.ticket,
+        agent,
+        &setup,
+        Isolation::Fixture,
+    )
+    .unwrap()
+}
+
+// Invariant: a review that finds a problem is a failed check: the build goes
+// another round and the review runs again on the new change, and the step ends
+// only on an approving review. A change that breaks it: treating the review as
+// advice, which would finish a build the reviewer rejected.
+#[test]
+fn a_rejecting_review_sends_the_build_back_and_an_approving_one_ends_it() {
+    let world = world("b-review", "plain", false);
+    let agent = reviewing(
+        &world,
+        vec![
+            (false, "The change has no doc comment."),
+            (true, "Looks right."),
+        ],
+    );
+    assert_eq!(
+        build_reviewed(&world, ALWAYS_PASS, &agent),
+        BuildOutcome::Ready
+    );
+    assert_eq!(agent.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let failed = failures(&world);
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(failed[0].contains("no doc comment"), "{failed:?}");
+    // The reviewer got the plan and the committed change as text.
+    let seen = agent.seen.lock().unwrap();
+    assert!(
+        seen[0].contains("Plan:") && seen[0].contains("diff --git"),
+        "{}",
+        seen[0]
+    );
+}
+
+// Invariant: the review waits for the checks that run code. A build that fails
+// its build check is not reviewed that round, so no call is paid for a change
+// that is already known to be wrong.
+#[test]
+fn the_review_is_not_asked_while_an_earlier_check_fails() {
+    let world = world("b-review-late", "plain", false);
+    let agent = reviewing(&world, vec![(true, "Fine.")]);
+    assert_eq!(
+        build_reviewed(&world, NEEDS_FIX, &agent),
+        BuildOutcome::Ready
+    );
+    assert_eq!(
+        agent.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "one review, after the round that passed"
     );
 }

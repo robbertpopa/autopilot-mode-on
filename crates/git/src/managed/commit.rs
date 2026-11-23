@@ -73,6 +73,25 @@ impl WorktreeManager {
         self.repository.diff_stats(&base, &head)
     }
 
+    /// The unified diff of everything committed in a ticket's checkout since its
+    /// base.
+    ///
+    /// # Errors
+    /// Returns an error for an unverified checkout, a Git failure or a diff
+    /// larger than the bounded read.
+    pub fn committed_patch(&self, ticket: &TicketId) -> Result<String, Error> {
+        let path = self.verified_checkout(ticket)?;
+        let (_, key) = ticket_worktree(ticket)?;
+        let owner = read_ownership(&self.root.join(format!("{key}.owner.json")))?
+            .ok_or_else(|| Error::WorktreeConflict(path.clone()))?;
+        let base = ObjectId::parse(owner.base.as_bytes())?;
+        let head =
+            self.repository
+                .git(&path, "rev-parse", ["--verify", "HEAD"], CHECKOUT_LIMITS)?;
+        let head = ObjectId::parse(head.trim_ascii_end())?;
+        self.repository.patch(&base, &head)
+    }
+
     /// The checkout path, after confirming this manager owns it and it is ready.
     fn verified_checkout(&self, ticket: &TicketId) -> Result<std::path::PathBuf, Error> {
         let (branch, key) = ticket_worktree(ticket)?;

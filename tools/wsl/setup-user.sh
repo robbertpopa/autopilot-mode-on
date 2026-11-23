@@ -18,7 +18,9 @@ npm install -g @anthropic-ai/sandbox-runtime @anthropic-ai/claude-code
 if [ ! -x ~/.cargo/bin/rustup ]; then
   curl -fsSL https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init -o /tmp/rustup-init
   chmod +x /tmp/rustup-init
-  /tmp/rustup-init -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN:-1.99.1}"
+  /tmp/rustup-init -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN:-1.99.1}" -c rustfmt -c clippy
 fi
 srt --version
 claude --version
+# Formatting and lint checks need these on a toolchain installed without them.
+~/.cargo/bin/rustup component add rustfmt clippy
