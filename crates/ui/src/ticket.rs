@@ -256,22 +256,27 @@ impl App {
                     .is_some_and(|settings| settings.ask_after);
                 let locked = matches!(card.step, Step::Design | Step::PullRequest);
                 let skipped = matches!(card.state, StepState::Skipped(_));
-                let row = ui.horizontal(|ui| {
+                ui.horizontal(|ui| {
                     ui.label(RichText::new(glyph).color(color));
                     let name = RichText::new(step_name(card.step));
                     let name = if skipped { name.weak() } else { name };
                     if ui.link(name).clicked() {
                         open = Some(card.step);
                     }
-                    if locked {
-                        ui.label(theme::muted("ask · locked"));
-                    } else if ask {
-                        ui.label(theme::muted("ask"));
-                    }
+                    // The state sits on the right, as in the design, so the
+                    // column of names stays aligned.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if skipped {
+                            ui.label(theme::muted("skipped"));
+                        } else if locked {
+                            ui.label(theme::muted("ask · locked"));
+                        } else if ask {
+                            ui.label(theme::muted("ask"));
+                        }
+                    });
                 });
                 if let StepState::Skipped(reason) = &card.state {
-                    ui.label(theme::muted(format!("   skipped: {reason}")));
-                    dashed(ui, row.response.rect);
+                    ui.label(theme::muted(format!("      {reason}")));
                 }
             }
         });

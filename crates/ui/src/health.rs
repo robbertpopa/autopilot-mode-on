@@ -99,10 +99,6 @@ impl App {
             self.health_findings(ui, &name);
             self.health_tunings(ui, &name);
         }
-        ui.add_space(14.0);
-        ui.label(theme::muted(
-            "Grades need the model-graded reviewer, which is not built. Findings and tier 1 tuning work from the recorded usage.",
-        ));
     }
 
     /// The metrics of one pipeline, kept until a ticket changes.
@@ -305,18 +301,16 @@ impl App {
 fn pipeline_row(ui: &mut egui::Ui, name: &str, chosen: bool, watch: bool, tuned: bool) -> bool {
     let shown = egui::Frame::new()
         .fill(if chosen {
-            theme::CARD()
+            theme::BLUE_FILL()
         } else {
             egui::Color32::TRANSPARENT
         })
-        .stroke(egui::Stroke::new(
-            1.0_f32,
-            if chosen {
-                theme::BORDER_STRONG()
-            } else {
-                theme::BORDER()
-            },
-        ))
+        // The same blue edge as the Pipelines list marks the chosen row.
+        .stroke(if chosen {
+            egui::Stroke::new(2.0_f32, theme::BLUE())
+        } else {
+            egui::Stroke::new(1.0_f32, theme::BORDER())
+        })
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(egui::Margin::symmetric(12, 9))
         .show(ui, |ui| {

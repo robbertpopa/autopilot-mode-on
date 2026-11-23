@@ -428,7 +428,7 @@ impl App {
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .small_button(if open { "Hide ▴" } else { "Edit ▾" })
+                        .small_button(if open { "Hide" } else { "Edit" })
                         .clicked()
                     {
                         toggle = true;

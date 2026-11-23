@@ -497,9 +497,6 @@ impl App {
             });
             if let Some(text) = &build.in_short {
                 ui.label(format!("In short: {text}"));
-                ui.label(theme::muted(
-                    "Made from the run's results by code, so it costs nothing.",
-                ));
             }
             ui.add_space(4.0);
             ui.label(theme::muted(
@@ -554,10 +551,7 @@ impl App {
             }
             ui.horizontal(|ui| {
                 theme::cost_tag(ui, true);
-                ui.label(theme::muted(format!(
-                    "est {}   ·   turns, tokens and cache are not recorded yet",
-                    dollars(build.subscription)
-                )));
+                ui.label(theme::muted(format!("est {}", dollars(build.subscription))));
             });
         });
     }

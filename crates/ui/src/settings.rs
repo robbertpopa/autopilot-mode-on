@@ -63,8 +63,27 @@ impl App {
         self.mode_tabs(ui);
         ui.add_space(14.0);
         ui.label(RichText::new("When it asks you").size(18.0).strong());
-        ui.label(theme::muted("pipeline · ask_after"));
+        ui.label(theme::muted("Which steps stop and wait for you."));
         ui.add_space(10.0);
+        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+            ui.set_width(520.0);
+            self.ask_rows(ui);
+        });
+        if let Some((step, text)) = &self.profile_problem {
+            ui.label(RichText::new(format!("{}: {text}", step_name(*step))).color(theme::RED()));
+        }
+        self.save_bar(ui);
+        ui.add_space(14.0);
+        self.when_unsure_cards(ui);
+        ui.add_space(14.0);
+        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+            ui.set_width(520.0);
+            self.forced_rules(ui);
+        });
+    }
+
+    /// One row per step: its name and whether it asks after it.
+    fn ask_rows(&mut self, ui: &mut egui::Ui) {
         for step in Step::ALL {
             ui.horizontal(|ui| {
                 theme::cell(ui, 170.0, step_name(step));
@@ -82,14 +101,6 @@ impl App {
                 }
             });
         }
-        if let Some((step, text)) = &self.profile_problem {
-            ui.label(RichText::new(format!("{}: {text}", step_name(*step))).color(theme::RED()));
-        }
-        self.save_bar(ui);
-        ui.add_space(14.0);
-        self.when_unsure_cards(ui);
-        ui.add_space(14.0);
-        self.forced_rules(ui);
     }
 
     /// The diff first, then Save. Nothing is written before.
@@ -159,9 +170,7 @@ impl App {
                 });
             }
         });
-        ui.label(theme::muted(
-            "Change it in profile.toml (when_unsure). A per-ticket value is recorded but no step reads it yet.",
-        ));
+        ui.label(theme::muted("Set in profile.toml."));
     }
 
     /// What forces an ask whatever the switches say, read from the profile.

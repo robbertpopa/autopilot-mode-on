@@ -278,9 +278,6 @@ impl App {
             ui.label(theme::muted("The profile could not be read."));
             return;
         };
-        ui.label(theme::muted(
-            "These are the project settings. The same fields are on the pipeline screen.",
-        ));
         let rows = [
             ("auth", format!("{:?}", settings.auth).to_lowercase()),
             (
