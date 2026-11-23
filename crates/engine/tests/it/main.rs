@@ -1081,7 +1081,9 @@ fn project_rules_reach_prompts_stay_out_of_the_workspace_and_cannot_loosen_polic
     run_plan(data.path(), &ticket, &agent).unwrap();
 
     let contexts = seen.lock().unwrap().clone();
-    assert_eq!(contexts.len(), 2);
+    // Understand, the plan, and the plan once more: this fixture plan cannot be
+    // checked, and the second ask must carry the rules too.
+    assert_eq!(contexts.len(), 3);
     for context in &contexts {
         assert!(context.contains("Be terse."), "{context}");
         assert!(context.contains("do not change what must be approved"));
