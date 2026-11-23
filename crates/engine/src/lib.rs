@@ -49,7 +49,10 @@ mod triage;
 mod tuning;
 mod view;
 mod workspace;
-pub use advise::{advise_ticket, calls as advisor_calls, kept as advice_kept};
+pub use advise::{
+    advise_ticket, calls as advisor_calls, chat_calls, chat_context, chat_of, chat_ticket,
+    kept as advice_kept,
+};
 pub use allowances::{allow, allowed, list as allowances, revoke};
 pub use attachments::{
     Attachment, MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_FOLDER_ITEMS, MAX_TICKET_BYTES, attach, note,

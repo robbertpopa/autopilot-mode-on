@@ -78,6 +78,8 @@ pub struct AdvisorSettings {
     pub effort: Option<String>,
     /// Most calls per ticket.
     pub max_calls: u32,
+    /// Most questions per ticket the owner may ask in a step's chat.
+    pub chat_calls: u32,
 }
 
 impl Default for AdvisorSettings {
@@ -86,6 +88,7 @@ impl Default for AdvisorSettings {
             model: "opus".to_owned(),
             effort: None,
             max_calls: 3,
+            chat_calls: 20,
         }
     }
 }
@@ -94,6 +97,9 @@ impl AdvisorSettings {
     /// # Errors
     /// Returns a sentence for a cap that is not a sensible number of calls.
     pub fn check(&self) -> Result<(), String> {
+        if self.chat_calls > 100 {
+            return Err("chat_calls must be between 0 and 100".into());
+        }
         if self.max_calls > 20 {
             return Err("max_calls must be between 0 and 20".into());
         }

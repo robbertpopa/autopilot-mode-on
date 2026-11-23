@@ -138,6 +138,8 @@ pub struct TicketView {
     pub triage: Option<autopilot_core::Triage>,
     /// Understand said the ticket changes a screen, so Design must run.
     pub needs_design: bool,
+    /// The owner's questions about each step and the answers, oldest first.
+    pub chat: Vec<(Step, String, String)>,
     /// Plain-words explanations kept in the history, by step.
     pub explained: Vec<(Step, String)>,
     /// The pipeline chosen for the ticket and the steps it turns off. `None`
@@ -248,6 +250,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     let mut attachments = Vec::new();
     let mut workspace = None;
     let mut triage = None;
+    let mut chat = Vec::new();
     let mut needs_design = false;
     let mut explained: Vec<(Step, String)> = Vec::new();
     let mut pipeline = None;
@@ -272,6 +275,11 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
             }
             Event::Workspace { path } => workspace = Some(path.clone()),
             Event::Triaged { triage: made } => triage = Some(made.clone()),
+            Event::Advised { question, answer } => {
+                if let Some(step) = record.event.step {
+                    chat.push((step, question.clone(), answer.clone()));
+                }
+            }
             Event::UsageReported { usage: reported } => usage.push(crate::metrics::UsageLine {
                 step,
                 at_ms,
@@ -420,6 +428,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         attachments,
         workspace,
         triage,
+        chat,
         needs_design,
         explained,
         pipeline,

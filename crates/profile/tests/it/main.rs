@@ -226,6 +226,9 @@ fn the_advisor_defaults_to_a_strong_model_with_a_small_cap() {
 
     assert_eq!(profile.advisor.model, "opus");
     assert_eq!(profile.advisor.max_calls, 3);
+    assert_eq!(profile.advisor.chat_calls, 20);
+    let error = Profile::parse("project.toml", "[advisor]\nchat_calls = 101\n").unwrap_err();
+    assert!(error.message.contains("chat_calls"));
 }
 
 #[test]

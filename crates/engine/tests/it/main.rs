@@ -1655,3 +1655,52 @@ fn the_advisor_answers_once_per_question_and_stops_at_its_cap() {
     let history = watch(data.path(), &ticket, 0).unwrap();
     assert_eq!(autopilot_engine::advisor_calls(&history), 2);
 }
+
+// Invariant: a question about a step is kept under that step, counted apart
+// from the advisor's own calls, paid for once, and stops at its own cap. A
+// change that mixed the two counts would let the chat use up the advisor's
+// calls, or the other way round.
+#[test]
+fn a_step_chat_is_kept_per_step_and_counted_apart_from_the_advisor() {
+    let (data, ticket) = understood_and_asking("ask");
+    let calls = std::cell::Cell::new(0);
+    let chat = |step: autopilot_core::Step, question: &str, cap: u32| {
+        autopilot_engine::chat_ticket(data.path(), &ticket, step, question, "context", cap, |_| {
+            calls.set(calls.get() + 1);
+            Ok("because the plan says so".into())
+        })
+    };
+    chat(autopilot_core::Step::Plan, "why?", 2).unwrap();
+    chat(autopilot_core::Step::Plan, "why?", 2).unwrap();
+    assert_eq!(calls.get(), 1, "the same question on a step is paid once");
+    chat(autopilot_core::Step::Design, "why?", 2).unwrap();
+    assert_eq!(
+        calls.get(),
+        2,
+        "the same words on another step are a new question"
+    );
+    assert!(
+        chat(autopilot_core::Step::Plan, "and now?", 2).is_err(),
+        "the chat cap is two"
+    );
+    assert!(
+        chat(autopilot_core::Step::Plan, "again?", 0).is_err(),
+        "a cap of zero is off"
+    );
+    let advised = autopilot_engine::advise_ticket(data.path(), &ticket, "unsure?", "c", 1, |_| {
+        Ok("ok".into())
+    });
+    assert!(
+        advised.is_ok(),
+        "the advisor's own cap is not used by the chat"
+    );
+    let history = watch(data.path(), &ticket, 0).unwrap();
+    assert_eq!(autopilot_engine::chat_calls(&history), 2);
+    assert_eq!(autopilot_engine::advisor_calls(&history), 1);
+    assert_eq!(
+        autopilot_engine::chat_of(&history, autopilot_core::Step::Plan).len(),
+        1
+    );
+    let view = autopilot_engine::ticket_view(&history).unwrap();
+    assert_eq!(view.chat.len(), 2);
+}
