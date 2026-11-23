@@ -30,6 +30,7 @@ mod custom;
 mod design;
 mod draft;
 mod explain;
+mod know;
 mod metrics;
 mod notes;
 mod overlap;
@@ -65,6 +66,10 @@ pub use draft::{
     validate_draft_for,
 };
 pub use explain::{explain_step, kept as explanation_kept, prompt as explain_prompt};
+pub use know::{
+    CardInfo, DetectedCommand, MAX_CARD_BYTES, ProjectCard, card_path, get_to_know, read_card,
+    render_card, scan_workspace,
+};
 pub use metrics::{PipelineMetrics, StepMetrics, UsageLine, metrics_of, pipeline_metrics};
 pub use overlap::{TicketOverlap, find_overlaps};
 pub use pipelines::{
@@ -130,6 +135,8 @@ pub enum Error {
     Draft(String),
     #[error("the rules file cannot be used: {0}")]
     Rules(String),
+    #[error("the project card cannot be used: {0}")]
+    Card(String),
     #[error("the recorded history is invalid: {0}")]
     History(String),
     #[error("ticket has no recorded run")]
