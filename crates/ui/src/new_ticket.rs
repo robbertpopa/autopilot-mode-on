@@ -223,7 +223,9 @@ impl App {
             } else if step == Step::BuildCheck {
                 tags.push("runs");
             }
-            ui.horizontal(|ui| {
+            // Wrapped, so a long tag line goes under the name instead of widening
+            // the card past the window.
+            ui.horizontal_wrapped(|ui| {
                 theme::cell(
                     ui,
                     110.0,
