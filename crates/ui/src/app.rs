@@ -673,6 +673,32 @@ impl App {
         if self.mode == Mode::Watch && self.current().is_some() {
             self.side_panel(ctx);
         }
+        // The change box stays at the bottom of a ticket, so it is never
+        // scrolled out of reach.
+        if self.mode == Mode::Watch && self.current().is_some() {
+            egui::TopBottomPanel::bottom("change")
+                .resizable(false)
+                // Room for the mode row and the box on the first frame; the panel
+                // otherwise starts small and keeps that size until something moves.
+                .min_height(150.0)
+                .frame(
+                    Frame::new()
+                        .fill(theme::BACKGROUND())
+                        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER()))
+                        .inner_margin(Margin::symmetric(32, 10)),
+                )
+                .show(ctx, |ui| {
+                    // A proposal can be tall; the box scrolls inside its own panel
+                    // instead of pushing the ticket off the screen.
+                    egui::ScrollArea::vertical()
+                        .max_height(260.0)
+                        .auto_shrink([false, true])
+                        .id_salt("change-scroll")
+                        .show(ui, |ui| {
+                            self.composer_bar(ui);
+                        });
+                });
+        }
         egui::CentralPanel::default()
             .frame(
                 Frame::new()

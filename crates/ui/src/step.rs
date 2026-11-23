@@ -3,7 +3,7 @@
 use autopilot_core::Step;
 use autopilot_engine::{StepField, TicketView, dollars, step_name};
 use autopilot_pipeline::StepState;
-use eframe::egui::{self, Color32, Frame, Margin, RichText, Stroke};
+use eframe::egui::{self, Frame, Margin, RichText};
 
 use crate::app::{App, Screen, Tab};
 use crate::backend::Action;
@@ -53,31 +53,6 @@ impl App {
                 _ => (theme::GREY_FILL(), theme::GREY_TEXT()),
             };
             theme::pill(ui, &state_text(&card.state), fill, color);
-        });
-        ui.horizontal_wrapped(|ui| {
-            for other in &view.steps {
-                let (mark, fill) = match other.state {
-                    StepState::Passed => ("✔ ", theme::GREEN_FILL()),
-                    StepState::Running => ("▶ ", theme::BLUE_FILL()),
-                    StepState::Skipped(_) => ("", Color32::TRANSPARENT),
-                    _ => ("", theme::GREY_FILL()),
-                };
-                let text = format!("{mark}{}", step_name(other.step));
-                let button = egui::Button::new(RichText::new(text).size(13.0))
-                    .fill(fill)
-                    .stroke(Stroke::new(
-                        1.0_f32,
-                        if other.step == step {
-                            theme::BLUE()
-                        } else {
-                            theme::BORDER()
-                        },
-                    ))
-                    .corner_radius(egui::CornerRadius::same(99));
-                if ui.add(button).clicked() {
-                    self.screen = Screen::Step(other.step);
-                }
-            }
         });
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
             ui.set_width(ui.available_width());

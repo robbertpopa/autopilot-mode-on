@@ -1516,6 +1516,9 @@ effort = \"high\"
             read(&options).tickets[0].step(Step::Plan).unwrap().state,
             autopilot_pipeline::StepState::Passed
         ));
+        // With the plan approved the ticket waits for Build, and says so: a
+        // ticket that sat idle with no word looked broken.
+        assert!(run::waits_for_build(&read(&options).tickets[0]));
     }
 
     // Invariant: a ticket started in this window gets its plan without a

@@ -320,6 +320,12 @@ impl App {
             );
         });
         ui.add_space(12.0);
+        // A step opened from the stepper shows in this column; the stepper stays
+        // where it was, so the window does not change shape.
+        if let Screen::Step(step) = self.screen {
+            self.drawer(ui, &view, step);
+            return;
+        }
         prompt_card(ui, &view);
         self.next_card(ui, &view);
         self.overlap_notice(ui, &view);
@@ -329,8 +335,6 @@ impl App {
         ui.add_space(6.0);
         self.build_panel(ui, &view);
         self.files_panel(ui, &view);
-        ui.add_space(12.0);
-        self.composer_bar(ui);
     }
 
     /// Another open ticket in this project that predicts the same files. It
@@ -432,7 +436,7 @@ impl App {
 
     /// Mode row and the plain-words change box. Modes that need a real agent
     /// are greyed with their reason.
-    fn composer_bar(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn composer_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             for (label, why) in [("code", CODE_WHY), ("ask", ASK_WHY)] {
                 ui.add_enabled(false, egui::Button::new(label))
@@ -495,7 +499,12 @@ impl App {
             ui.label(theme::muted("changes only steps not started"));
             ui.add_space(8.0);
             progress_bar(ui, view);
-            let current = current_step(view).map(|card| card.step);
+            // The step open in the main column is the one marked, so a click
+            // is answered where the eye already is.
+            let current = match self.screen {
+                Screen::Step(open) => Some(open),
+                Screen::Run => current_step(view).map(|card| card.step),
+            };
             let last = view.steps.len().saturating_sub(1);
             for (index, card) in view.steps.iter().enumerate() {
                 let ask = self
