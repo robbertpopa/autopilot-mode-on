@@ -28,6 +28,252 @@ fn mark(state: &StepState) -> (&'static str, Color32) {
     }
 }
 
+/// What the owner asked, in full. The title is cut to one line, so without
+/// this the original request cannot be read again.
+fn prompt_card(ui: &mut egui::Ui, view: &TicketView) {
+    if view.description.trim().is_empty() {
+        return;
+    }
+    theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        egui::CollapsingHeader::new(RichText::new("YOUR PROMPT").monospace().size(11.0).strong())
+            .id_salt(("prompt", view.id.as_str()))
+            .default_open(true)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(180.0)
+                    .show(ui, |ui| {
+                        ui.add(egui::Label::new(view.description.as_str()).selectable(true));
+                    });
+            });
+    });
+    ui.add_space(10.0);
+}
+
+/// The step the ticket is on: the first one that has not finished or been
+/// skipped. `None` when everything is done.
+pub(crate) fn current_step(view: &TicketView) -> Option<&autopilot_engine::StepView> {
+    view.steps
+        .iter()
+        .find(|card| !matches!(card.state, StepState::Passed | StepState::Skipped(_)))
+}
+
+/// Minutes and seconds, `2:05`.
+fn clock(ms: u64) -> String {
+    let seconds = ms / 1000;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
+/// One line that says what the ticket is doing right now. Only a running
+/// ticket gets a spinner, so motion always means work is happening.
+pub(crate) fn live_status(ui: &mut egui::Ui, view: &TicketView) {
+    let Some(card) = current_step(view) else {
+        return;
+    };
+    let name = step_name(card.step);
+    let (text, color) = match &card.state {
+        StepState::Running => {
+            // The ticket's own clock: per-step start times are not recorded.
+            let since = crate::now_ms().saturating_sub(view.started_ms);
+            (
+                format!("Running {name} · {} since start", clock(since)),
+                theme::BLUE_TEXT(),
+            )
+        }
+        StepState::Asking(_) => (format!("{name} is waiting for you"), theme::AMBER()),
+        StepState::Paused => (format!("Paused at {name}"), theme::GREY_TEXT()),
+        StepState::Failed(_) | StepState::Interrupted(_) => {
+            (format!("Stopped at {name}"), theme::RED())
+        }
+        _ => return,
+    };
+    let running = matches!(card.state, StepState::Running);
+    ui.horizontal(|ui| {
+        if running {
+            ui.add(egui::Spinner::new().size(14.0).color(color));
+            // The clock must keep moving while nothing else changes.
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(500));
+        }
+        ui.label(RichText::new(text).color(color).strong());
+    });
+}
+
+/// Steps that count towards progress, finished first. Skipped steps are out.
+fn progress(view: &TicketView) -> (usize, usize) {
+    let total = view
+        .steps
+        .iter()
+        .filter(|card| !matches!(card.state, StepState::Skipped(_)))
+        .count();
+    let done = view
+        .steps
+        .iter()
+        .filter(|card| matches!(card.state, StepState::Passed))
+        .count();
+    (done, total)
+}
+
+/// "2 of 7 steps" and a thin bar above the stepper.
+fn progress_bar(ui: &mut egui::Ui, view: &TicketView) {
+    let (done, total) = progress(view);
+    ui.label(RichText::new(format!("{done} of {total} steps")).strong());
+    #[allow(clippy::cast_precision_loss, reason = "a handful of steps")]
+    let fraction = if total == 0 {
+        0.0
+    } else {
+        done as f32 / total as f32
+    };
+    ui.add(
+        egui::ProgressBar::new(fraction)
+            .desired_height(6.0)
+            .fill(theme::GREEN()),
+    );
+    ui.add_space(8.0);
+}
+
+/// The dot for one step: filled when finished, a pulsing ring while it runs,
+/// hollow when it has not started. Colour is never the only signal: the row
+/// also carries the state as text.
+fn draw_dot(ui: &egui::Ui, center: egui::Pos2, state: &StepState) {
+    let painter = ui.painter();
+    let radius = 7.0_f32;
+    match state {
+        StepState::Passed => {
+            painter.circle_filled(center, radius, theme::GREEN());
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                "✔",
+                egui::FontId::proportional(9.0),
+                Color32::WHITE,
+            );
+        }
+        StepState::Running => {
+            #[allow(clippy::cast_possible_truncation, reason = "a value between 0 and 1")]
+            let phase = (ui.input(|input| input.time) % 1.2 / 1.2) as f32;
+            painter.circle_stroke(
+                center,
+                radius + 5.0 * phase,
+                Stroke::new(2.0_f32, theme::BLUE_TEXT().gamma_multiply(1.0 - phase)),
+            );
+            painter.circle_filled(center, radius, theme::BLUE_TEXT());
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(40));
+        }
+        StepState::Asking(_) => {
+            painter.circle_filled(center, radius, theme::AMBER());
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                "?",
+                egui::FontId::proportional(10.0),
+                Color32::WHITE,
+            );
+        }
+        StepState::Failed(_) | StepState::Interrupted(_) => {
+            painter.circle_filled(center, radius, theme::RED());
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                "×",
+                egui::FontId::proportional(11.0),
+                Color32::WHITE,
+            );
+        }
+        StepState::Paused => {
+            painter.circle_filled(center, radius, theme::GREY_TEXT());
+        }
+        StepState::Skipped(_) | StepState::Idle => {
+            painter.circle_stroke(
+                center,
+                radius - 1.0,
+                Stroke::new(1.5_f32, theme::TEXT_MUTED()),
+            );
+        }
+    }
+}
+
+/// One row of the vertical stepper, joined to its neighbours by a line that
+/// is green up to the last finished step.
+fn stepper_row(
+    ui: &mut egui::Ui,
+    card: &autopilot_engine::StepView,
+    tag: &str,
+    current: bool,
+    (first, last): (bool, bool),
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::click());
+    let painter = ui.painter();
+    if current {
+        painter.rect_filled(rect, egui::CornerRadius::same(6), theme::SELECTED());
+    }
+    let x = rect.left() + 14.0;
+    let y = rect.center().y;
+    let done = matches!(card.state, StepState::Passed);
+    let line = Stroke::new(
+        2.0_f32,
+        if done {
+            theme::GREEN()
+        } else {
+            theme::BORDER()
+        },
+    );
+    if !first {
+        painter.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, y - 8.0)], line);
+    }
+    if !last {
+        painter.line_segment([egui::pos2(x, y + 8.0), egui::pos2(x, rect.bottom())], line);
+    }
+    draw_dot(ui, egui::pos2(x, y), &card.state);
+    let skipped = matches!(card.state, StepState::Skipped(_));
+    let text_color = if skipped {
+        theme::TEXT_MUTED()
+    } else {
+        ui.visuals().text_color()
+    };
+    let font = if current {
+        egui::FontId::proportional(14.0)
+    } else {
+        egui::FontId::proportional(13.5)
+    };
+    ui.painter().text(
+        egui::pos2(rect.left() + 32.0, y),
+        egui::Align2::LEFT_CENTER,
+        step_name(card.step),
+        font,
+        text_color,
+    );
+    let right = if current && !matches!(card.state, StepState::Idle) {
+        short_state(&card.state)
+    } else {
+        tag
+    };
+    ui.painter().text(
+        egui::pos2(rect.right() - 8.0, y),
+        egui::Align2::RIGHT_CENTER,
+        right,
+        egui::FontId::monospace(11.0),
+        mark(&card.state).1,
+    );
+    response
+}
+
+/// The state as one or two words, for the current row.
+fn short_state(state: &StepState) -> &'static str {
+    match state {
+        StepState::Running => "running",
+        StepState::Asking(_) => "waiting for you",
+        StepState::Paused => "paused",
+        StepState::Failed(_) => "failed",
+        StepState::Interrupted(_) => "interrupted",
+        StepState::Passed => "done",
+        StepState::Skipped(_) => "skipped",
+        StepState::Idle => "",
+    }
+}
+
 /// A dashed outline, because a skipped step is drawn dashed with its reason.
 fn dashed(ui: &egui::Ui, rect: egui::Rect) {
     let points = vec![
@@ -74,6 +320,7 @@ impl App {
             );
         });
         ui.add_space(12.0);
+        prompt_card(ui, &view);
         self.next_card(ui, &view);
         self.overlap_notice(ui, &view);
         self.orchestrator_card(ui, &view);
@@ -247,8 +494,10 @@ impl App {
             self.ticket_pipeline_select(ui, view);
             ui.label(theme::muted("changes only steps not started"));
             ui.add_space(8.0);
-            for card in &view.steps {
-                let (glyph, color) = mark(&card.state);
+            progress_bar(ui, view);
+            let current = current_step(view).map(|card| card.step);
+            let last = view.steps.len().saturating_sub(1);
+            for (index, card) in view.steps.iter().enumerate() {
                 let ask = self
                     .profile
                     .as_ref()
@@ -256,26 +505,25 @@ impl App {
                     .and_then(|profile| profile.step(card.step))
                     .is_some_and(|settings| settings.ask_after);
                 let locked = matches!(card.step, Step::Design | Step::PullRequest);
-                let skipped = matches!(card.state, StepState::Skipped(_));
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(glyph).color(color));
-                    let name = RichText::new(step_name(card.step));
-                    let name = if skipped { name.weak() } else { name };
-                    if ui.link(name).clicked() {
-                        open = Some(card.step);
-                    }
-                    // The state sits on the right, as in the design, so the
-                    // column of names stays aligned.
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if skipped {
-                            ui.label(theme::muted("skipped"));
-                        } else if locked {
-                            ui.label(theme::muted("ask · locked"));
-                        } else if ask {
-                            ui.label(theme::muted("ask"));
-                        }
-                    });
-                });
+                let tag = if matches!(card.state, StepState::Skipped(_)) {
+                    "skipped"
+                } else if locked {
+                    "ask · locked"
+                } else if ask {
+                    "ask"
+                } else {
+                    ""
+                };
+                let row = stepper_row(
+                    ui,
+                    card,
+                    tag,
+                    current == Some(card.step),
+                    (index == 0, index == last),
+                );
+                if theme::named(row, step_name(card.step)).clicked() {
+                    open = Some(card.step);
+                }
                 if let StepState::Skipped(reason) = &card.state {
                     ui.label(theme::muted(format!("      {reason}")));
                 }

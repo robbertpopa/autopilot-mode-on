@@ -1027,12 +1027,53 @@ fn start(
     // The orchestrator is not run here: it takes a capable model's time, and the
     // window starts it as its own action so the ticket shows up first.
     match autopilot_engine::start_clarify(directory, &id) {
-        Ok(_) => Ok(format!("Started \"{}\"", ticket.title)),
+        Ok(autopilot_engine::ClarifyStart::Asking { request, questions }) => {
+            if decides_alone(options, &id) {
+                answer_with_recommended(directory, &id, &request, questions.len())?;
+                return Ok(format!(
+                    "Started \"{}\". Clarify used the recommended answers; they are in the history.",
+                    ticket.title
+                ));
+            }
+            Ok(format!("Started \"{}\"", ticket.title))
+        }
+        Ok(autopilot_engine::ClarifyStart::Skipped(_)) => {
+            Ok(format!("Started \"{}\"", ticket.title))
+        }
         Err(error) => Ok(format!(
             "Started \"{}\". Clarify has not started yet: {error}",
             ticket.title
         )),
     }
+}
+
+/// The ticket's `when_unsure` says to decide and tell. Clarify questions have
+/// a recommended answer, so this takes it; Design, Plan and the pull request
+/// keep asking because they are approvals, not questions.
+fn decides_alone(options: &Options, ticket: &TicketId) -> bool {
+    let Ok(profile) = autopilot_engine::load_profile(&options.profile) else {
+        return false;
+    };
+    matches!(
+        autopilot_engine::effective_when_unsure(&options.data_dir, ticket, &profile),
+        Ok(autopilot_profile::WhenUnsure::DecideAndTell)
+    )
+}
+
+fn answer_with_recommended(
+    directory: &Path,
+    ticket: &TicketId,
+    request: &RequestId,
+    count: usize,
+) -> Result<(), String> {
+    autopilot_engine::answer_clarify(
+        directory,
+        ticket,
+        request,
+        &vec![Choice::Recommended; count],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
 /// Ask the chosen agent for a pipeline draft. The reply is checked by the
@@ -1094,12 +1135,31 @@ pub fn waiting_text(options: &Options, request: &RequestId) -> Option<String> {
                 action
             }
         }
-        RequestBody::Question { questions } => questions
-            .iter()
-            .map(|question| question.question.clone())
-            .collect::<Vec<_>>()
-            .join("\n"),
+        RequestBody::Question { questions } => question_lines(&questions),
     })
+}
+
+/// Each question with its options, the recommended one marked, so the owner
+/// sees what "use the recommended answers" will pick.
+fn question_lines(questions: &[autopilot_core::OpenQuestion]) -> String {
+    let mut out = String::new();
+    for (number, question) in questions.iter().enumerate() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&(number + 1).to_string());
+        out.push_str(". ");
+        out.push_str(&question.question);
+        for (index, option) in question.options.iter().enumerate() {
+            out.push_str(if index == question.recommended {
+                "\n     ● recommended: "
+            } else {
+                "\n     ○ "
+            });
+            out.push_str(option);
+        }
+    }
+    out
 }
 
 /// What a waiting request is, for the Today page.
@@ -1182,4 +1242,25 @@ pub fn review(
         let _ = sender.send(Message::Review(outcome));
         context.request_repaint();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::question_lines;
+    use autopilot_core::OpenQuestion;
+
+    // Invariant: the owner sees every option and which one the button picks.
+    // A change that lists only the questions (the old text) fails this, and no
+    // other test reads the waiting text.
+    #[test]
+    fn a_question_shows_its_options_and_marks_the_recommended_one() {
+        let text = question_lines(&[OpenQuestion {
+            question: "Which top bar?".into(),
+            options: vec!["Remove it".into(), "Slim it".into()],
+            recommended: 1,
+        }]);
+        assert!(text.contains("1. Which top bar?"));
+        assert!(text.contains("○ Remove it"));
+        assert!(text.contains("● recommended: Slim it"));
+    }
 }
