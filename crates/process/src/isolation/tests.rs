@@ -165,7 +165,10 @@ fn the_real_boundary_passes_the_probe_on_a_linux_host() {
         .expect("target dir")
         .join("autopilot-process-guardian");
     assert!(guardian.is_file(), "build the workspace first");
-    let directory = tempfile::tempdir().expect("temp dir");
+    // Under the home folder, like a real data directory: `/tmp` is readable by
+    // design, so a scene there would not show the home-folder rule.
+    let home = std::env::var_os("HOME").expect("HOME");
+    let directory = tempfile::tempdir_in(home).expect("temp dir");
     let wsl = Wsl::discover_local(directory.path().join("settings"), guardian).expect("discover");
     assert_eq!(wsl.host(), Host::Linux);
     super::validate(wsl, directory.path()).expect("the boundary holds");

@@ -79,7 +79,6 @@ fn the_settings_open_only_what_the_boundary_names() {
             "/home",
             "/root",
             "/srv",
-            "/tmp",
             "/home/u/.cargo/credentials.toml"
         ])
     );

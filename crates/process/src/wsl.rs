@@ -52,7 +52,7 @@ pub const RUST_ROOTS: &[&str] = &[".cargo", ".rustup"];
 
 /// Folders hidden from every sandboxed command unless a boundary opens a path
 /// inside them.
-const HIDDEN_ROOTS: &[&str] = &["/mnt", "/media", "/home", "/root", "/srv", "/tmp"];
+const HIDDEN_ROOTS: &[&str] = &["/mnt", "/media", "/home", "/root", "/srv"];
 
 /// A file under a tool prefix that holds a credential. It is hidden even when
 /// its prefix is readable.
@@ -207,8 +207,10 @@ impl Wsl {
         let hide = linux_paths(&boundary.hide)?;
         let protect = linux_paths(&boundary.protect)?;
         // Where a person's own files live: other drives (`/mnt`, `/media`), every
-        // home folder, root's, service data and scratch space. System folders
-        // (`/usr`, `/etc`, `/lib`) stay readable because programs need them.
+        // home folder, root's and service data. System folders (`/usr`, `/etc`,
+        // `/lib`) stay readable because programs need them, and so does `/tmp`:
+        // the sandbox's own proxy socket lives there, and hiding it cuts off the
+        // one host an agent may reach.
         let mut deny_read: Vec<String> =
             HIDDEN_ROOTS.iter().map(|root| (*root).to_owned()).collect();
         let covered = deny_read
