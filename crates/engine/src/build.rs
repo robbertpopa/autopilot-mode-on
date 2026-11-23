@@ -12,7 +12,7 @@ use std::{
 
 use autopilot_agent::{Agent, AgentEvent, BuildRequest as AgentBuild, SessionUse};
 use autopilot_checks::{
-    Change, Check, Context, Environment, Kept, Key, Toolbox, plain_directory, run_all,
+    Change, Check, Context, Environment, Kept, Key, Toolbox, Validated, plain_directory, run_all,
     standard_checks,
 };
 use autopilot_core::{
@@ -33,12 +33,16 @@ use crate::{DATABASE, Error, control, event, lock_run, plan, timestamp};
 const BUILD: Option<Step> = Some(Step::BuildCheck);
 pub(crate) const STUCK_REQUEST: &str = "build_check-stuck";
 
-/// Proof that the agent runs in a fixture boundary. A real agent edits a real
-/// repository with shell access, which S6 has not yet shown how to contain on
-/// this platform, so there is deliberately no other way to run a build.
-#[derive(Clone, Copy, Debug)]
+/// Proof of where the agent and the checks run. A real agent edits a real
+/// repository with shell access, so the only ways to run a build are the
+/// fixture agent or a boundary that passed its escape probe on this machine.
+///
+/// With [`Isolation::Wsl`] the caller must also have built the agent with the
+/// same boundary: the checks here run inside it, but the agent is the caller's.
+#[derive(Clone, Debug)]
 pub enum Isolation {
     Fixture,
+    Wsl(Validated),
 }
 
 pub struct BuildSetup<'a> {
@@ -88,6 +92,7 @@ struct BuildRound<'a, A: Agent> {
     plan: &'a Plan,
     plan_hash: String,
     base: String,
+    toolbox: std::sync::Arc<Toolbox>,
     checks: Vec<Box<dyn Check>>,
     kept: Kept,
     session: Option<SessionId>,
@@ -247,6 +252,12 @@ impl<A: Agent> Round for BuildRound<'_, A> {
             .collect();
         let tree = self.manager.fingerprint(&self.ticket.id)?.to_string();
         let key = Key::new(&self.base, &tree, &self.plan_hash);
+        // Checks have no network, so what a Rust project needs is fetched first,
+        // under a role that reaches only the crate registry. A failure here is a
+        // fault of the machine, not something the agent can fix.
+        self.toolbox
+            .prepare(&self.worktree, &self.cancel)
+            .map_err(Error::NotReady)?;
         let context = Context {
             worktree: &self.worktree,
             plan: self.plan,
@@ -255,6 +266,18 @@ impl<A: Agent> Round for BuildRound<'_, A> {
         };
         Ok(run_all(&self.checks, &context, &key, &mut self.kept)?)
     }
+}
+
+/// Scratch space for the checks of one ticket, outside the worktree so it never
+/// shows up in a diff. The folder name is a hash, so no ticket id can name a
+/// path.
+fn scratch_folder(directory: &Path, ticket: &TicketId) -> PathBuf {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    ticket.hash(&mut hasher);
+    directory
+        .join("check-tmp")
+        .join(format!("{:016x}", hasher.finish()))
 }
 
 /// The request a stuck build shows, rebuilt from the log so a lost file comes
@@ -374,7 +397,7 @@ pub fn run_build(
     ticket: &Ticket,
     agent: &impl Agent,
     setup: &BuildSetup<'_>,
-    _isolation: Isolation,
+    isolation: Isolation,
 ) -> Result<BuildOutcome, Error> {
     let _owner = lock_run(directory)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
@@ -419,12 +442,20 @@ pub fn run_build(
     let repository = Repository::new(git, setup.guardian.clone(), setup.repository.to_path_buf())?;
     let manager = WorktreeManager::new(repository, setup.worktrees)?;
     let owned = manager.create(&ticket.id, setup.base_branch)?;
-    let toolbox = Toolbox::with_guardian(
-        setup.profile,
-        setup.guardian.clone(),
-        Environment::from_vars(env::vars_os()),
-        &env::var_os("PATH").unwrap_or_default(),
-    );
+    let toolbox = match isolation {
+        Isolation::Fixture => Toolbox::with_guardian(
+            setup.profile,
+            setup.guardian.clone(),
+            Environment::from_vars(env::vars_os()),
+            &env::var_os("PATH").unwrap_or_default(),
+        ),
+        Isolation::Wsl(boundary) => Toolbox::sandboxed_with_guardian(
+            setup.profile,
+            setup.guardian.clone(),
+            boundary,
+            scratch_folder(directory, &ticket.id),
+        ),
+    };
     // A project adds protected paths and lowers budgets; it never removes any.
     let scoped = setup
         .profile
@@ -448,6 +479,7 @@ pub fn run_build(
         plan: &plan,
         plan_hash,
         base: owned.base.as_str().to_owned(),
+        toolbox,
         checks,
         kept: Kept::default(),
         session: latest_session(&history),

@@ -8,7 +8,9 @@ mod sessions;
 mod stream;
 
 use std::{
-    env as process_env, io,
+    env as process_env,
+    fmt::Write as _,
+    io,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -18,12 +20,13 @@ use autopilot_agent::{
     Agent, AgentContext, AgentError, AgentRun, BuildRequest, SessionUse, StepRequest, Stopped,
 };
 use autopilot_core::{Money, Plan, Step, Understanding};
-use autopilot_process::{CommandSpec, Limits, Outcome, Runner};
+use autopilot_process::{CommandSpec, Limits, Outcome, Runner, isolation::Role, wsl::linux_path};
 use autopilot_profile::Auth;
 
 pub use auth::PreflightError;
+pub use autopilot_process::isolation::Validated;
 pub use command::ClaudeConfig;
-pub use env::{API_KEY_SOURCE, EnvError, build_env, child_env};
+pub use env::{API_KEY_SOURCE, EnvError, SANDBOX_SECRETS, build_env, child_env, sandbox_env};
 
 // The cap covers a whole stream, not one frame. Real runs are far below it.
 const STREAM_BYTES: usize = 16 * 1024 * 1024;
@@ -42,8 +45,28 @@ pub struct BuildConfig {
     pub data_dir: PathBuf,
 }
 
+/// Find the WSL distro and run the escape probe in `folder`. The boundary is
+/// returned only if every row held.
+///
+/// # Errors
+/// Returns an error if the distro is not ready or any row of the probe failed.
+pub fn sandbox_boundary(distro: &str, folder: &std::path::Path) -> io::Result<Validated> {
+    let wsl = autopilot_process::wsl::Wsl::discover(distro, folder.to_path_buf())?;
+    autopilot_process::isolation::validate(wsl, folder)
+}
+
+/// Where build turns run: inside a boundary that passed its probe. Each ticket
+/// gets its own Claude Code config folder under `config_root`, which holds that
+/// ticket's sessions and nothing else.
+#[derive(Clone, Debug)]
+pub struct Sandbox {
+    pub boundary: Validated,
+    pub config_root: PathBuf,
+}
+
 pub struct ClaudeAgent {
     config: ClaudeConfig,
+    sandbox: Option<Sandbox>,
     executable: PathBuf,
     guardian: PathBuf,
     build: Option<BuildConfig>,
@@ -64,7 +87,36 @@ impl ClaudeAgent {
         };
         Ok(Self {
             config,
+            sandbox: None,
             executable,
+            guardian,
+            build: None,
+            workspace: None,
+        })
+    }
+
+    /// An agent whose build turns run inside the validated Linux boundary.
+    /// Only API-key mode exists there: a subscription sign-in would have to be
+    /// readable by the agent, which the boundary does not allow.
+    ///
+    /// # Errors
+    /// Returns an error if the configuration is not API-key mode.
+    pub fn sandboxed(
+        config: ClaudeConfig,
+        guardian: PathBuf,
+        sandbox: Sandbox,
+    ) -> io::Result<Self> {
+        if config.auth != Auth::Api {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Build in the sandbox needs API-key mode; a subscription sign-in cannot be kept out of the agent's reach",
+            ));
+        }
+        Ok(Self {
+            config,
+            sandbox: Some(sandbox),
+            // Looked up on the distro's PATH when the turn starts.
+            executable: PathBuf::from("claude"),
             guardian,
             build: None,
             workspace: None,
@@ -112,6 +164,62 @@ impl ClaudeAgent {
         let ok = matches!(&output.outcome, Outcome::Exited(status) if status.success());
         Ok(auth::check(&output.stdout, ok, self.config.auth)?)
     }
+}
+
+impl ClaudeAgent {
+    /// The command of one build turn inside the boundary, already wrapped.
+    fn sandboxed_turn(
+        &self,
+        sandbox: &Sandbox,
+        request: &BuildRequest<'_>,
+        session: &command::SessionArg,
+        budget: Option<&str>,
+    ) -> Result<CommandSpec, AgentError> {
+        let config = sandbox
+            .config_root
+            .join(ticket_folder(request.ticket.id.as_str())?);
+        let tmp = config.join("tmp");
+        let env = sandbox_env(
+            process_env::vars_os(),
+            &linux_path(&config)?,
+            &linux_path(&tmp)?,
+        )?;
+        let spec = CommandSpec {
+            program: self.executable.clone(),
+            args: command::build_args(&self.config, "{}", session, request.turns_left, budget),
+            env,
+            cwd: Some(request.worktree.to_path_buf()),
+        };
+        let role = Role::Agent {
+            worktree: request.worktree.to_path_buf(),
+            config,
+        };
+        Ok(sandbox.boundary.wrap(&role, &spec, SANDBOX_SECRETS)?)
+    }
+}
+
+/// A folder name for a ticket: the id itself when it is plain, otherwise its
+/// bytes in hex, so no id can name a parent or a second folder.
+fn ticket_folder(id: &str) -> io::Result<String> {
+    let plain = !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+    if plain {
+        return Ok(id.to_owned());
+    }
+    if id.is_empty() || id.len() > 100 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a ticket id must be 1 to 100 bytes",
+        ));
+    }
+    let mut folder = String::new();
+    for byte in id.bytes() {
+        write!(folder, "{byte:02x}").map_err(io::Error::other)?;
+    }
+    Ok(folder)
 }
 
 impl ClaudeAgent {
@@ -233,17 +341,22 @@ impl Agent for ClaudeAgent {
         let budget = request
             .budget_left
             .map(|left| format!("{:.6}", dollars(left.as_microusd())));
-        let spec = CommandSpec {
-            program: self.executable.clone(),
-            args: command::build_args(
-                &self.config,
-                &settings,
-                &session,
-                request.turns_left,
-                budget.as_deref(),
-            ),
-            env: build_env(self.config.auth, process_env::vars_os())?,
-            cwd: Some(request.worktree.to_path_buf()),
+        let spec = match &self.sandbox {
+            None => CommandSpec {
+                program: self.executable.clone(),
+                args: command::build_args(
+                    &self.config,
+                    &settings,
+                    &session,
+                    request.turns_left,
+                    budget.as_deref(),
+                ),
+                env: build_env(self.config.auth, process_env::vars_os())?,
+                cwd: Some(request.worktree.to_path_buf()),
+            },
+            // The deny hook is a Windows program and cannot run in the
+            // boundary; the boundary itself is what stops a push or a write.
+            Some(sandbox) => self.sandboxed_turn(sandbox, &request, &session, budget.as_deref())?,
         };
         let prompt = request.prompt.as_bytes().to_vec();
         let runner = Runner::new(self.guardian.clone());
@@ -653,6 +766,24 @@ fn check_finish(
 mod tests {
     use super::*;
     use stream::Finish;
+
+    // Invariant: a ticket id names one folder, never a parent or a nested
+    // path, because the folder holds the ticket's sessions and is writable by
+    // the agent. A change that breaks it: using the id as it is.
+    #[test]
+    fn a_ticket_id_always_names_one_plain_folder() {
+        assert_eq!(ticket_folder("T-12_a").unwrap(), "T-12_a");
+        for odd in ["..", "a/b", r"a", "a b", "é"] {
+            let folder = ticket_folder(odd).unwrap();
+            assert!(
+                folder.chars().all(|c| c.is_ascii_hexdigit()),
+                "{odd} -> {folder}"
+            );
+        }
+        assert!(ticket_folder("").is_err());
+        assert!(ticket_folder(&"x".repeat(101)).is_err());
+        assert_ne!(ticket_folder("a/b").unwrap(), ticket_folder("a_b").unwrap());
+    }
 
     #[cfg(unix)]
     fn status(code: i32) -> std::process::ExitStatus {
