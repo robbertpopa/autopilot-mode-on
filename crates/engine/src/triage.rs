@@ -102,9 +102,26 @@ fn parse(text: &str) -> Result<Triage, String> {
     if end < start {
         return Err("the answer has no JSON object".into());
     }
-    let triage: Triage = serde_json::from_str(&text[start..=end]).map_err(|e| e.to_string())?;
+    let mut triage: Triage = serde_json::from_str(&text[start..=end]).map_err(|e| e.to_string())?;
+    // A model that writes a long explanation is still giving a valid choice:
+    // the models and efforts are what is checked. Cutting the prose is safe;
+    // an empty one is still refused.
+    triage.reasoning = shorten(&triage.reasoning, MAX_REASONING);
+    for advice in &mut triage.steps {
+        advice.why = shorten(&advice.why, MAX_WHY);
+    }
     check(&triage)?;
     Ok(triage)
+}
+
+fn shorten(text: &str, limit: usize) -> String {
+    let text = text.trim();
+    if text.chars().count() <= limit {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(limit.saturating_sub(1)).collect();
+    cut.push('…');
+    cut
 }
 
 /// Return the kept decision for a ticket, or ask `orchestrator` once, check its
@@ -193,6 +210,10 @@ mod tests {
         assert!(bad("\"plan\"", "\"design\""));
         assert!(bad("Touches auth and storage.", "  "));
         assert!(parse("no json here").is_err());
+        // Long prose is cut, not refused: this is what stopped a real ticket.
+        let long = "x".repeat(MAX_REASONING + 50);
+        let cut = parse(&GOOD.replace("Touches auth and storage.", &long)).unwrap();
+        assert_eq!(cut.reasoning.chars().count(), MAX_REASONING);
         assert!(parse("{\"complexity\":\"high\"}").is_err());
     }
 }
