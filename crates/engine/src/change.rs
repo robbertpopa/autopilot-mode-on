@@ -176,16 +176,25 @@ fn clause(text: &str, profile: &Profile) -> Result<Proposal, String> {
             after: (!off).to_string(),
         });
     }
+    Err(not_understood(text))
+}
+
+/// Why a clause was not read, and where to go instead.
+fn not_understood(text: &str) -> String {
     if ["continue", "proceed", "start", "go on", "run", "resume"]
         .iter()
         .any(|word| text.contains(word))
     {
-        return Err(
-            "not understood. This box changes settings; it does not start work. Real Build runs wait for the containment spike (S6)"
-                .into(),
-        );
+        return "not understood. This box changes settings; it does not start work. Real Build runs wait for the containment spike (S6)".into();
     }
-    Err("not understood. Try \"use opus for the plan\", \"effort high for design\" or \"don't ask after plan\"".into())
+    let asks = text.contains('?')
+        || ["why", "what", "how", "is ", "can ", "should "]
+            .iter()
+            .any(|word| text.starts_with(word));
+    if asks {
+        return "not understood. That looks like a question. This box changes settings; ask questions in \"Ask about this step\" on the step's page".into();
+    }
+    "not understood. Try \"use opus for the plan\", \"effort high for design\" or \"don't ask after plan\"".into()
 }
 
 /// Read a request. Settings that already have the asked value are left out.
@@ -330,6 +339,8 @@ mod tests {
         assert!(error.contains("not understood"));
         let error = propose("continue working", &profile()).unwrap_err();
         assert!(error.contains("does not start work"), "{error}");
+        let error = propose("what does this do?", &profile()).unwrap_err();
+        assert!(error.contains("Ask about this step"), "{error}");
         assert!(propose("   ", &profile()).is_err());
     }
 

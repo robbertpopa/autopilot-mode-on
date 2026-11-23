@@ -126,6 +126,13 @@ pub enum Action {
         ticket: TicketId,
         question: String,
     },
+    /// The owner's question about one step, answered by a small read-only
+    /// model, or a stronger one when the ticket or the question is large.
+    Chat {
+        ticket: TicketId,
+        step: Step,
+        question: String,
+    },
     /// Make the design (static mockups) for a ticket that changes a screen,
     /// or skip the step when it needs none.
     MakeDesign(TicketId),
@@ -165,6 +172,7 @@ impl Action {
             Self::Start { .. } => "Reading your request",
             Self::Orchestrate(_) => "The orchestrator is choosing models and effort",
             Self::Advise { .. } => "Asking the advisor",
+            Self::Chat { .. } => "Answering your question about this step",
             Self::MakePlan(_) | Self::RerunPlan(_) => "Making the plan",
             Self::MakeDesign(_) | Self::RerunDesign(_) => "Making the design",
             Self::RunCustom { .. } => "Running your step",
@@ -725,6 +733,64 @@ fn advise(options: &Options, ticket: &TicketId, question: &str) -> Result<String
     .map_err(|error| error.to_string())
 }
 
+/// The model for a step's chat: the cheap one by default, the stronger one
+/// when the orchestrator judged the ticket high in complexity or the question
+/// is long enough to need real reading.
+pub(crate) fn chat_model(
+    complexity: Option<autopilot_core::Complexity>,
+    question: &str,
+) -> &'static str {
+    let hard =
+        complexity == Some(autopilot_core::Complexity::High) || question.chars().count() > 300;
+    if hard { "sonnet" } else { "haiku" }
+}
+
+/// Answer one question about one step. The cap comes from the profile's
+/// `[advisor]` section; the answer is kept under the step.
+fn chat(
+    options: &Options,
+    ticket: &TicketId,
+    step: Step,
+    question: &str,
+) -> Result<String, String> {
+    if AgentChoice::read(&options.data_dir) != AgentChoice::Claude {
+        return Err("the chat needs the Claude agent".to_owned());
+    }
+    let profile =
+        autopilot_engine::load_profile(&options.profile).map_err(|error| error.to_string())?;
+    let history =
+        autopilot_engine::watch(&options.data_dir, ticket, 0).map_err(|error| error.to_string())?;
+    let view = autopilot_engine::ticket_view(&history).map_err(|error| error.to_string())?;
+    let mut config = profile_config(options, Step::Understand);
+    chat_model(
+        view.triage.as_ref().map(|triage| triage.complexity),
+        question,
+    )
+    .clone_into(&mut config.model);
+    config.effort = None;
+    let folder = ticket_folder(options, ticket);
+    let agent = claude_agent(config, folder.as_deref())?;
+    let words = autopilot_engine::ticket_words(ticket, &history)
+        .map(|words| format!("{}\n\n{}", words.title, words.description))
+        .map_err(|error| error.to_string())?;
+    let output = view
+        .outputs
+        .iter()
+        .find(|(kept, _)| *kept == step)
+        .map(|(_, text)| text.as_str());
+    let context = autopilot_engine::chat_context(&words, &history, output, step);
+    autopilot_engine::chat_ticket(
+        &options.data_dir,
+        ticket,
+        step,
+        question,
+        &context,
+        profile.advisor.chat_calls,
+        |prompt| agent.advise(prompt).map_err(|error| error.to_string()),
+    )
+    .map_err(|error| error.to_string())
+}
+
 /// Run the orchestrator before a step when it is on and has not decided yet.
 /// Its failure never stops the step: the profile's settings stay in force.
 fn orchestrated_first(options: &Options, ticket: &TicketId) {
@@ -953,6 +1019,11 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
         }
         Action::Orchestrate(ticket) => orchestrate(options, ticket),
         Action::Advise { ticket, question } => advise(options, ticket, question),
+        Action::Chat {
+            ticket,
+            step,
+            question,
+        } => chat(options, ticket, *step, question),
         Action::RerunPlan(ticket) => {
             let folder = ticket_folder(options, ticket);
             let agent = chosen_agent(options, Step::Plan, Some(ticket), folder.as_deref())?;

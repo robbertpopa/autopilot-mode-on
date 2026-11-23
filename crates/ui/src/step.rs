@@ -366,6 +366,8 @@ impl App {
             }
         });
         ui.add_space(8.0);
+        self.step_chat(ui, view, step);
+        ui.add_space(8.0);
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(theme::muted("Control"));
@@ -479,4 +481,47 @@ fn serde_json_criteria(plan: &str) -> Result<Vec<String>, ()> {
         .map(|rest| rest.trim_end_matches(',').trim_end_matches('"').to_owned())
         .collect();
     if texts.is_empty() { Err(()) } else { Ok(texts) }
+}
+
+impl App {
+    /// Ask about this step, and read the earlier questions and answers.
+    fn step_chat(&mut self, ui: &mut egui::Ui, view: &TicketView, step: Step) {
+        if self.agent != crate::backend::AgentChoice::Claude {
+            return;
+        }
+        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(theme::muted("Ask about this step"));
+            for (asked, question, answer) in &view.chat {
+                if *asked == step {
+                    ui.label(RichText::new(question).strong());
+                    ui.label(answer);
+                    ui.add_space(6.0);
+                }
+            }
+            ui.add(
+                egui::TextEdit::multiline(&mut self.chat_text)
+                    .hint_text("Why was this chosen? What could go wrong?")
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY),
+            );
+            let ready = !self.chat_text.trim().is_empty() && !self.busy;
+            if ui
+                .add_enabled(ready, egui::Button::new("Ask"))
+                .on_hover_text(
+                    "A small read-only model answers from this step's result. It changes nothing.",
+                )
+                .clicked()
+            {
+                let question = self.chat_text.trim().to_owned();
+                self.chat_text.clear();
+                self.act(Action::Chat {
+                    ticket: view.id.clone(),
+                    step,
+                    question,
+                });
+            }
+            self.busy_inline(ui);
+        });
+    }
 }

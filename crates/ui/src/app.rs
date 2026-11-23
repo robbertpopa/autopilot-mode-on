@@ -92,6 +92,8 @@ pub struct App {
     pub(crate) draft_text: String,
     /// The question typed for the advisor on the open ticket.
     pub(crate) advise_text: String,
+    /// What the owner is typing in a step's chat, by step.
+    pub(crate) chat_text: String,
     /// The pipeline the agent box is changing, or none for a new one.
     pub(crate) draft_editing: Option<String>,
     /// The step row open on the Pipelines page.
@@ -220,6 +222,7 @@ impl App {
             pipeline_notice: None,
             draft_text: String::new(),
             advise_text: String::new(),
+            chat_text: String::new(),
             draft_editing: None,
             step_open: None,
             custom_edit: None,

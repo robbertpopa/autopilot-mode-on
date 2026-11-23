@@ -88,6 +88,27 @@ mod tests {
         let _ = context.run(input, |context| app.ui(context));
     }
 
+    // Invariant: a step's chat uses the cheap model unless the ticket is high
+    // in complexity or the question is long. A change that always chose the
+    // strong model would spend on every short question.
+    #[test]
+    fn the_chat_uses_the_cheap_model_unless_the_question_is_hard() {
+        use autopilot_core::Complexity;
+        assert_eq!(backend::chat_model(None, "why?"), "haiku");
+        assert_eq!(
+            backend::chat_model(Some(Complexity::Medium), "why?"),
+            "haiku"
+        );
+        assert_eq!(
+            backend::chat_model(Some(Complexity::High), "why?"),
+            "sonnet"
+        );
+        assert_eq!(
+            backend::chat_model(Some(Complexity::Low), &"x".repeat(301)),
+            "sonnet"
+        );
+    }
+
     // Invariant: every screen builds for every ticket state (running, waiting
     // for the owner, failed) and for an empty window, without panicking.
     #[test]
