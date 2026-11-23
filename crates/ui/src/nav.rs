@@ -135,34 +135,44 @@ fn account_icon(ui: &mut egui::Ui, row: &Row, pending: bool) -> bool {
     theme::named(response.on_hover_text(text), row.name).clicked()
 }
 
-/// A gear drawn as an outline with eight square teeth and a round hole,
-/// because the default font has no gear glyph. Rays around a circle read as a
-/// sun, so the teeth are joined into one outline.
+/// A filled gear with a round hole, because the default font has no gear
+/// glyph. The outline is star-shaped around its centre, so a triangle fan
+/// fills it without any polygon tessellation.
 fn gear_button(ui: &mut egui::Ui) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
-    let color = theme::TEXT_SOFT();
+    let color = if response.hovered() {
+        theme::TEXT()
+    } else {
+        theme::TEXT_SOFT()
+    };
     let center = rect.center();
-    let (body, tip) = (8.0_f32, 11.5_f32);
+    let (body, tip) = (7.2_f32, 10.0_f32);
     let tooth = std::f32::consts::FRAC_PI_4;
     let mut outline = Vec::new();
     for step in 0_u8..8 {
         let middle = f32::from(step) * tooth;
-        // Each tooth covers 0.3 of its slice at the tip, 0.5 at the base.
+        // Wide at the base, narrower at the tip, so the teeth look cut.
         for (angle, radius) in [
-            (middle - tooth * 0.25, body),
-            (middle - tooth * 0.15, tip),
-            (middle + tooth * 0.15, tip),
-            (middle + tooth * 0.25, body),
+            (middle - tooth * 0.30, body),
+            (middle - tooth * 0.16, tip),
+            (middle + tooth * 0.16, tip),
+            (middle + tooth * 0.30, body),
         ] {
             outline.push(center + egui::vec2(angle.cos(), angle.sin()) * radius);
         }
     }
+    let mut mesh = egui::epaint::Mesh::default();
+    mesh.colored_vertex(center, color);
+    for point in &outline {
+        mesh.colored_vertex(*point, color);
+    }
+    let count = u32::try_from(outline.len()).unwrap_or(0);
+    for index in 0..count {
+        mesh.add_triangle(0, 1 + index, 1 + (index + 1) % count);
+    }
     let painter = ui.painter();
-    painter.add(egui::Shape::closed_line(
-        outline,
-        Stroke::new(1.5_f32, color),
-    ));
-    painter.circle_stroke(center, 3.5, Stroke::new(1.5_f32, color));
+    painter.add(egui::Shape::mesh(mesh));
+    painter.circle_filled(center, 3.2, theme::SIDEBAR());
     theme::named(response.on_hover_text("Settings"), "Settings")
 }
 
