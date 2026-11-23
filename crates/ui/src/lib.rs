@@ -549,6 +549,42 @@ mod tests {
         frame(&mut app, &context);
     }
 
+    // Invariant: adding a project scans it once, the page shows the saved card,
+    // a second scan replaces it, and the card is kept in the data folder: the
+    // project folder is left with only the files it already had. A scan that
+    // wrote into the folder would put the card into a diff or a pull request.
+    #[test]
+    fn adding_a_project_scans_it_and_shows_a_card_outside_the_folder() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        let project = directory.path().join("work").join("app");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("go.mod"), "module x").unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.mode = Mode::Projects;
+        app.add_project(&project);
+        let card = app.card_text.clone().unwrap();
+        assert!(card.contains("Stack: Go"), "{card}");
+        assert_eq!(app.card_notice.as_ref().map(|n| n.0), Some(true));
+        assert_eq!(std::fs::read_dir(&project).unwrap().count(), 1);
+        frame(&mut app, &context);
+        std::fs::write(project.join("Cargo.toml"), "").unwrap();
+        app.scan_project();
+        assert!(app.card_text.clone().unwrap().contains("Rust"));
+        // Choosing the project again reads the saved card, not the folder.
+        let path = app.project_selected.clone().unwrap();
+        app.card_text = None;
+        app.select_project(&path);
+        assert!(app.card_text.is_some());
+        frame(&mut app, &context);
+    }
+
     // Invariant: a pipeline can be copied from a built-in, its steps switched,
     // and an impossible order is refused with the stored file unchanged; a
     // ticket can move to another pipeline while the step that would change has
