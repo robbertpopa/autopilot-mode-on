@@ -99,6 +99,17 @@ Real `claude` 2.1.330 under the same `srt` rules, API-key mode with the dedicate
 - Needed to start: a writable temp folder (`CLAUDE_CODE_TMPDIR`), read access to the Node and `claude` install folders, and a config folder holding no sign-in.
 - Spend so far in S6: about $0.003.
 
+### Product shape: worktree on drvfs, Windows interop, check runner (2026-11-23)
+
+The first matrix used a worktree on the distro's ext4 disk. The product keeps worktrees on `D:`, so the same rows were run with the worktree under `/mnt/d` and `denyRead` on `/mnt` and the home folder (`tools/s6-probe/drvfs-interop.sh`). Every row held: write outside the worktree, sibling reads, other Windows drives, `.git/config`, hooks, push to a local bare remote, loopback, an unlisted domain. The worktree and `api.anthropic.com` stayed usable.
+
+Windows interop is the escape a WSL boundary is most likely to miss. A control run first showed the test can see one: a `cmd.exe` copied into the worktree, run outside the sandbox, wrote a file on `D:`. Inside the sandbox the same executable, `cmd.exe` by absolute path and through `PATH`, and `/init` all failed, and nothing landed on `D:`. The sandbox cannot even create a Unix socket (`PermissionError`), so the WSL interop socket in `/run/WSL` is out of reach (`tools/s6-probe/interop-control.sh`). The distro's `/etc/wsl.conf` was left unchanged (interop enabled).
+
+Check runner (`tools/s6-probe/cargo-gate.sh`): Rust 1.99.1 from the official `rustup-init` binary, a crate with one dependency.
+- `cargo fetch` runs on the host, outside the sandbox. Inside it `cargo test --offline` built and passed with the network empty, with the target folder on drvfs and on ext4. `index.crates.io` was unreachable from inside.
+- It needs read access to `CARGO_HOME` and `RUSTUP_HOME`, and a writable temp folder: `srt` sets `TMPDIR` to a `/tmp/claude` that does not exist, so the command must `export TMPDIR` to a writable folder first (rustdoc fails without it).
+- Only a one-dependency crate ran; build speed of a large project on drvfs is not measured.
+
 Limits of this evidence:
 - The `git push` denial is by filesystem rule (the bare remote lies outside the readable set), not by a network rule. A push to a remote over the network is covered by the domain list, which was not exercised with a real Git host.
 - `gh` is not installed in the distro, so that row shows only that the binary is absent. Token separation rests on the scrubbed environment.
