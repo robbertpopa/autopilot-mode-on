@@ -74,7 +74,7 @@ pub struct CheckRun {
 /// Returns an error when a check could not run at all; the checks before it
 /// keep their kept results.
 pub fn run_all(
-    checks: &[Box<dyn Check>],
+    checks: &[Box<dyn Check + '_>],
     context: &Context<'_>,
     key: &Key,
     kept: &mut Kept,

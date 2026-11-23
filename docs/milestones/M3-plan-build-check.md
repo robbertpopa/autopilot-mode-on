@@ -27,3 +27,7 @@ A real small ticket on a sample repository goes from an approved plan to green c
 
 ## Exit criteria
 A small real ticket on a sample repo reaches green checks, with at least one refine round exercised, driven from the CLI.
+
+## Exit evidence (2026-11-23)
+
+Two small tickets on a sample Rust crate went from an approved plan to green checks from the CLI with the real agent inside the WSL2 boundary (`docs/spikes/S6-containment.md#result`). Neither needed a refine round with the real model; refinement inside the sandbox is covered by `a_rust_build_is_checked_inside_the_sandbox_and_refined` (fake agent, real cargo, ignored, needs the distro). The agent review (check 5) ran on the second ticket.

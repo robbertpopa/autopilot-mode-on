@@ -78,13 +78,7 @@ impl ClaudeAgent {
     /// # Errors
     /// Returns an error if no native Claude Code executable can be found.
     pub fn new(config: ClaudeConfig, guardian: PathBuf) -> io::Result<Self> {
-        let executable = match &config.executable {
-            Some(path) => {
-                command::check_executable(path)?;
-                path.clone()
-            }
-            None => command::resolve_executable(&process_env::var_os("PATH").unwrap_or_default())?,
-        };
+        let executable = host_executable(&config)?;
         Ok(Self {
             config,
             sandbox: None,
@@ -112,11 +106,13 @@ impl ClaudeAgent {
                 "Build in the sandbox needs API-key mode; a subscription sign-in cannot be kept out of the agent's reach",
             ));
         }
+        // The calls that run on the host (the reviewer, the one-shot steps) need
+        // the host's own program; a build turn names the distro's in `sandboxed_turn`.
+        let executable = host_executable(&config)?;
         Ok(Self {
             config,
             sandbox: Some(sandbox),
-            // Looked up on the distro's PATH when the turn starts.
-            executable: PathBuf::from("claude"),
+            executable,
             guardian,
             build: None,
             workspace: None,
@@ -185,7 +181,8 @@ impl ClaudeAgent {
             &linux_path(&tmp)?,
         )?;
         let spec = CommandSpec {
-            program: self.executable.clone(),
+            // The distro's own program, found on its PATH; `self.executable` is the host's.
+            program: PathBuf::from("claude"),
             args: command::build_args(&self.config, "{}", session, request.turns_left, budget),
             env,
             cwd: Some(request.worktree.to_path_buf()),
@@ -195,6 +192,16 @@ impl ClaudeAgent {
             config,
         };
         Ok(sandbox.boundary.wrap(&role, &spec, SANDBOX_SECRETS)?)
+    }
+}
+
+fn host_executable(config: &ClaudeConfig) -> io::Result<PathBuf> {
+    match &config.executable {
+        Some(path) => {
+            command::check_executable(path)?;
+            Ok(path.clone())
+        }
+        None => command::resolve_executable(&process_env::var_os("PATH").unwrap_or_default()),
     }
 }
 

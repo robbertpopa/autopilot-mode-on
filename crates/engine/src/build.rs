@@ -30,6 +30,8 @@ use autopilot_store::{SqliteStore, Store};
 
 use crate::{DATABASE, Error, control, event, lock_run, plan, timestamp};
 
+mod review;
+
 const BUILD: Option<Step> = Some(Step::BuildCheck);
 pub(crate) const STUCK_REQUEST: &str = "build_check-stuck";
 
@@ -53,6 +55,9 @@ pub struct BuildSetup<'a> {
     pub git: PathBuf,
     pub guardian: PathBuf,
     pub profile: &'a Profile,
+    /// Add the agent review (check 5) after the checks that run code. The agent
+    /// needs `start_custom`, so a fixture agent leaves it off.
+    pub review: bool,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -93,6 +98,7 @@ struct BuildRound<'a, A: Agent> {
     plan_hash: String,
     base: String,
     toolbox: std::sync::Arc<Toolbox>,
+    review: bool,
     checks: Vec<Box<dyn Check>>,
     kept: Kept,
     session: Option<SessionId>,
@@ -264,7 +270,21 @@ impl<A: Agent> Round for BuildRound<'_, A> {
             changes: &changes,
             cancel: &self.cancel,
         };
-        Ok(run_all(&self.checks, &context, &key, &mut self.kept)?)
+        let mut runs = run_all(&self.checks, &context, &key, &mut self.kept)?;
+        // The review reads a diff and costs a call, so it waits for every check
+        // that runs code to pass.
+        if self.review && !runs.is_empty() && runs.iter().all(|run| run.report.passed()) {
+            let review = review::AgentReview {
+                agent: self.agent,
+                journal: Rc::clone(&self.journal),
+                ticket: self.ticket,
+                plan: self.plan,
+                patch: self.manager.committed_patch(&self.ticket.id)?,
+            };
+            let reviewers: [Box<dyn Check + '_>; 1] = [Box::new(review)];
+            runs.extend(run_all(&reviewers, &context, &key, &mut self.kept)?);
+        }
+        Ok(runs)
     }
 }
 
@@ -480,6 +500,7 @@ pub fn run_build(
         plan_hash,
         base: owned.base.as_str().to_owned(),
         toolbox,
+        review: setup.review,
         checks,
         kept: Kept::default(),
         session: latest_session(&history),

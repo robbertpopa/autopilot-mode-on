@@ -48,6 +48,33 @@ impl Repository {
     }
 }
 
+impl Repository {
+    /// The unified diff between two commits, for a reader that judges what the
+    /// agent wrote. Binary changes appear as Git prints them, without content.
+    ///
+    /// # Errors
+    /// Returns an error if Git fails or the patch exceeds the bounded read, so a
+    /// review never judges a partial diff.
+    pub fn patch(&self, base: &ObjectId, head: &ObjectId) -> Result<String, Error> {
+        let output = self.read_git(
+            "diff",
+            &[
+                "--unified=3",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-relative",
+                "--no-renames",
+                "--ignore-submodules=none",
+                base.as_str(),
+                head.as_str(),
+                "--",
+            ],
+        )?;
+        Ok(String::from_utf8_lossy(&output).into_owned())
+    }
+}
+
 /// The lines a diff adds to one file, without the leading `+`.
 #[derive(Debug, Eq, PartialEq)]
 pub struct FileAdditions {
