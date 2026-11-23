@@ -105,6 +105,9 @@ pub struct App {
     /// never per frame.
     pub(crate) card_text: Option<String>,
     pub(crate) card_notice: Option<(bool, String)>,
+    /// What a scan of the selected project offers as checks, taken when it is
+    /// chosen or scanned.
+    pub(crate) card_commands: Vec<autopilot_engine::DetectedCommand>,
     /// A snapshot has arrived, so an empty list means no tickets, not no data yet.
     pub(crate) loaded: bool,
     pub(crate) ask_edits: std::collections::BTreeMap<Step, bool>,
@@ -225,6 +228,7 @@ impl App {
             rules_notice: None,
             card_text: None,
             card_notice: None,
+            card_commands: Vec::new(),
             loaded: false,
             ask_edits: std::collections::BTreeMap::new(),
             design_step: Step::BuildCheck,

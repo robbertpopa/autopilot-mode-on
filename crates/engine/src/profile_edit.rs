@@ -17,6 +17,10 @@ pub enum ProfileEditError {
     /// The change would make the profile invalid. Nothing was written.
     #[error("{0}")]
     Invalid(#[from] ProfileDiagnostic),
+    /// The request was not made from something the scan found, or would
+    /// replace a check the owner already has. Nothing was written.
+    #[error("{0}")]
+    Refused(String),
 }
 
 /// One setting of one step.
@@ -370,6 +374,65 @@ fn limits(table: &mut Table) -> Result<&mut Table, ProfileEditError> {
     child_table(table, "limits")
 }
 
+/// Add a command the scan found as a check in `profile.toml`. The command is
+/// matched against a fresh scan of the workspace, so only a command the scan
+/// itself offers can be added, never text a client supplies. A check the owner
+/// already has under that name is never replaced.
+///
+/// # Errors
+/// Returns an error when the scan does not offer the command, the name is
+/// taken, the file cannot be read or written, or the result is invalid.
+pub fn add_detected_check(
+    path: &Path,
+    workspace: &str,
+    command: &str,
+) -> Result<Profile, ProfileEditError> {
+    let card = crate::scan_workspace(Path::new(&autopilot_profile::normalize_path(workspace)));
+    let Some(found) = card.commands.iter().find(|found| found.command == command) else {
+        return Err(ProfileEditError::Refused(
+            "the scan does not offer that command".into(),
+        ));
+    };
+    // Detected commands are plain words, so splitting on spaces is exact.
+    let mut words = found.command.split(' ');
+    let Some(executable) = words.next() else {
+        return Err(ProfileEditError::Refused("the command is empty".into()));
+    };
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
+    let mut document: DocumentMut = source
+        .parse()
+        .map_err(|error: toml_edit::TomlError| ProfileEditError::Syntax(error.to_string()))?;
+    let checks = child_table(document.as_table_mut(), "checks")?;
+    checks.set_implicit(true);
+    if checks.contains_key(found.kind) {
+        return Err(ProfileEditError::Refused(format!(
+            "a check named {} is already set; edit it in profile.toml",
+            found.kind
+        )));
+    }
+    let table = child_table(checks, found.kind)?;
+    table["executable"] = value(executable);
+    let mut args = toml_edit::Array::new();
+    for word in words {
+        args.push(word);
+    }
+    table["args"] = value(args);
+    let text = document.to_string();
+    let profile = Profile::parse(path, &text)?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, text)?;
+    Ok(profile)
+}
+
 fn child_table<'a>(parent: &'a mut Table, key: &str) -> Result<&'a mut Table, ProfileEditError> {
     if !parent.contains_key(key) {
         parent.insert(key, Item::Table(Table::new()));
@@ -635,5 +698,40 @@ mod custom_step_edit_tests {
         assert!(profile.custom_step(step).is_none());
         assert_eq!(profile.pipeline("careful").unwrap().custom_steps(), []);
         assert!(!fs::read_to_string(&path).unwrap().contains("custom_1"));
+    }
+
+    // Invariant: only a command the scan offers becomes a check, it is written
+    // as an executable and its arguments, and a check the owner already has is
+    // kept. Accepting any string would let a client add a command the project
+    // never suggested; replacing would overwrite the owner's own check.
+    #[test]
+    fn a_detected_command_becomes_a_check_and_never_replaces_one() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = directory.path().join("app");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(workspace.join("Cargo.toml"), "").unwrap();
+        let path = directory.path().join("profile.toml");
+        let name = workspace.to_string_lossy().into_owned();
+        let profile = add_detected_check(&path, &name, "cargo test").unwrap();
+        let check = &profile.checks["test"];
+        assert_eq!(check.executable, "cargo");
+        assert_eq!(check.args, ["test"]);
+        let lint = "cargo clippy --all-targets -- -D warnings";
+        let profile = add_detected_check(&path, &name, lint).unwrap();
+        assert_eq!(
+            profile.checks["lint"].args,
+            ["clippy", "--all-targets", "--", "-D", "warnings"]
+        );
+        let again = add_detected_check(&path, &name, "cargo test");
+        assert!(
+            matches!(again, Err(ProfileEditError::Refused(_))),
+            "{again:?}"
+        );
+        let other = add_detected_check(&path, &name, "rm -rf /");
+        assert!(
+            matches!(other, Err(ProfileEditError::Refused(_))),
+            "{other:?}"
+        );
+        assert_eq!(load_profile(&path).unwrap().checks.len(), 2);
     }
 }
