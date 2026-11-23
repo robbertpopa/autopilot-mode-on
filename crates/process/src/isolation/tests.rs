@@ -189,7 +189,7 @@ fn each_role_opens_only_what_it_is_for() {
         .collect();
     assert!(reads.contains(&"/home/u/.cargo".to_owned()));
     assert!(reads.contains(&"/home/u/node".to_owned()));
-    assert!(check.domains.is_empty());
+    assert_eq!(check.domains, Vec::<String>::new());
 }
 
 // Needs the real distro; see `wsl_runs_a_wrapped_command_under_the_boundary`.
