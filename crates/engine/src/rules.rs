@@ -187,17 +187,26 @@ pub fn include_in_prompt(
     prompt: &mut String,
 ) -> Result<u64, Error> {
     use autopilot_store::Store;
-    let Some((block, logged)) = prompt_block(directory, workspace) else {
-        return Ok(last);
-    };
-    *prompt = format!("{prompt}\n{block}");
-    let new = crate::event(
-        crate::timestamp()?,
-        Some(step),
-        Event::AgentActivity { summary: logged },
-    );
-    let committed = store.append(ticket, last, &[new])?;
-    Ok(committed.last().map_or(last, |record| record.seq))
+    let mut last = last;
+    // The project card goes in beside the rules: both are the project's own
+    // context, and each leaves only its size and hash in the log.
+    for part in [
+        prompt_block(directory, workspace),
+        crate::know::prompt_block(directory, workspace),
+    ] {
+        let Some((block, logged)) = part else {
+            continue;
+        };
+        *prompt = format!("{prompt}\n{block}");
+        let new = crate::event(
+            crate::timestamp()?,
+            Some(step),
+            Event::AgentActivity { summary: logged },
+        );
+        let committed = store.append(ticket, last, &[new])?;
+        last = committed.last().map_or(last, |record| record.seq);
+    }
+    Ok(last)
 }
 
 #[cfg(test)]
