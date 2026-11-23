@@ -24,6 +24,7 @@ fn why_it_ran(step: Step) -> &'static str {
         Step::Design => "It runs only when the ticket changes the user interface.",
         Step::BuildCheck => "Your approved plan started it. Build ⟲ Check always runs.",
         Step::PullRequest => "It runs when every check has passed.",
+        Step::Custom(_) => "You added it to this pipeline. It runs after Build ⟲ Check.",
     }
 }
 

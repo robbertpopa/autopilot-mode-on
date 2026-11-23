@@ -207,7 +207,7 @@ fn settle(
             store.append(ticket, last, &[event(at, DESIGN, failed)])?;
             Err(Error::Agent(error))
         }
-        Pumped::Understanding(_) | Pumped::Plan(_) => Err(Error::NotReady(
+        Pumped::Understanding(_) | Pumped::Plan(_) | Pumped::Custom(_) => Err(Error::NotReady(
             "the agent answered Design with another step's result".into(),
         )),
     }

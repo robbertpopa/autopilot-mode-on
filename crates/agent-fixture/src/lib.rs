@@ -99,6 +99,27 @@ impl Agent for FixtureAgent {
     /// A canned pipeline draft for the practice agent. It starts from bug-fix,
     /// switches off Clarify when the description says the change is small, and
     /// reads nothing else from the description.
+    /// A canned report for the practice agent. A prompt that says "fail" gets
+    /// a report that found something, so both paths can be tried.
+    fn start_custom(
+        &self,
+        request: autopilot_agent::CustomRequest<'_>,
+    ) -> Result<AgentRun, AgentError> {
+        let name = request.name.to_owned();
+        let found = request.prompt.to_lowercase().contains("fail");
+        Ok(AgentRun::spawn_custom(move |context| {
+            context.message(format!("practice {name}"));
+            Ok(autopilot_core::CustomOutcome {
+                summary: if found {
+                    format!("{name}: practice found one thing to look at.")
+                } else {
+                    format!("{name}: practice found nothing to report.")
+                },
+                ok: !found,
+            })
+        })?)
+    }
+
     fn start_draft(&self, request: DraftRequest<'_>) -> Result<AgentRun, AgentError> {
         let small = request.description.to_lowercase().contains("small");
         Ok(AgentRun::spawn_draft(move |context| {

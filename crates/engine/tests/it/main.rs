@@ -1365,3 +1365,193 @@ fn reviewing_twice_announces_a_finding_once() {
         1
     );
 }
+
+mod custom_steps {
+    use super::*;
+    use autopilot_core::{CustomOutcome, Step};
+    use autopilot_pipeline::StepState;
+    use autopilot_profile::{CustomStep, Profile};
+    use autopilot_store::{SqliteStore, Store};
+
+    /// Answers a custom step with the given report and records the prompt it got.
+    struct Reviewer {
+        outcome: CustomOutcome,
+        prompts: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Agent for Reviewer {
+        fn start(&self, _request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+            Err(io::Error::other("reviewer only runs custom steps").into())
+        }
+
+        fn start_custom(
+            &self,
+            request: autopilot_agent::CustomRequest<'_>,
+        ) -> Result<AgentRun, AgentError> {
+            self.prompts
+                .lock()
+                .unwrap()
+                .push(format!("{} | {}", request.name, request.prompt));
+            let outcome = self.outcome.clone();
+            Ok(AgentRun::spawn_custom(move |_| Ok(outcome))?)
+        }
+    }
+
+    fn reviewer(ok: bool, summary: &str) -> Reviewer {
+        Reviewer {
+            outcome: CustomOutcome {
+                summary: summary.into(),
+                ok,
+            },
+            prompts: Arc::default(),
+        }
+    }
+
+    fn definition() -> CustomStep {
+        CustomStep {
+            name: "Security review".into(),
+            prompt: "Look for unsafe input handling.".into(),
+        }
+    }
+
+    /// A ticket whose Build and Check passed, so a custom step may run.
+    fn built(id: &str) -> (tempfile::TempDir, Ticket) {
+        let (data, ticket) = ready_to_plan(id);
+        let mut store = SqliteStore::open(data.path().join("events.sqlite3")).unwrap();
+        let last = store.events(&ticket.id, 0).unwrap().last().unwrap().seq;
+        let at = |kind| autopilot_core::NewEvent {
+            at_ms: 1,
+            step: Some(Step::BuildCheck),
+            kind,
+        };
+        let started = Event::StepStarted {
+            attempt: "build-1".to_owned().into(),
+            session: None,
+        };
+        store
+            .append(&ticket.id, last, &[at(started), at(Event::StepFinished)])
+            .unwrap();
+        (data, ticket)
+    }
+
+    fn state(data: &std::path::Path, ticket: &Ticket) -> autopilot_pipeline::TicketState {
+        fold_of(data, &ticket.id)
+    }
+
+    // Invariant: a custom step runs only on a build that passed, records
+    // exactly what the agent reported, and finishes without asking when its
+    // settings say so. Without the gate a review could judge code that failed.
+    #[test]
+    fn a_custom_step_needs_a_passed_build_and_keeps_its_report() {
+        let (data, ticket) = ready_to_plan("custom-gate");
+        let agent = reviewer(true, "Nothing unsafe found.");
+        let step = Step::Custom(1);
+        let early =
+            autopilot_engine::run_custom(data.path(), &ticket, step, &definition(), false, &agent);
+        assert!(matches!(early, Err(Error::NotReady(_))));
+        assert!(agent.prompts.lock().unwrap().is_empty());
+
+        let (data, ticket) = built("custom-run");
+        let outcome =
+            autopilot_engine::run_custom(data.path(), &ticket, step, &definition(), false, &agent)
+                .unwrap();
+        assert!(outcome.ok);
+        assert_eq!(state(data.path(), &ticket).step(step), &StepState::Passed);
+        let history = watch(data.path(), &ticket.id, 0).unwrap();
+        assert_eq!(
+            autopilot_engine::custom_outcome(&history, step)
+                .unwrap()
+                .summary,
+            "Nothing unsafe found."
+        );
+        // The owner's own words reached the agent.
+        assert_eq!(
+            agent.prompts.lock().unwrap()[0],
+            "Security review | Look for unsafe input handling."
+        );
+        // A step that passed does not run twice.
+        assert!(
+            autopilot_engine::run_custom(data.path(), &ticket, step, &definition(), false, &agent)
+                .is_err()
+        );
+    }
+
+    // Invariant: a step that asks after itself holds the ticket until the
+    // owner answers, and a report that found something is a forced question
+    // so it can never become a standing allowance.
+    #[test]
+    fn a_custom_step_that_asks_waits_and_a_finding_is_forced() {
+        let (data, ticket) = built("custom-ask");
+        let agent = reviewer(false, "One query is built from user input.");
+        let step = Step::Custom(2);
+        autopilot_engine::run_custom(data.path(), &ticket, step, &definition(), true, &agent)
+            .unwrap();
+        assert!(matches!(
+            state(data.path(), &ticket).step(step),
+            StepState::Asking(_)
+        ));
+        let request = Inbox::in_data_dir(data.path())
+            .requests()
+            .unwrap()
+            .remove(0);
+        match request.body {
+            autopilot_pipeline::inbox::RequestBody::Approval { action, forced } => {
+                assert!(forced);
+                assert!(action.contains("Security review"), "{action}");
+            }
+            other @ autopilot_pipeline::inbox::RequestBody::Question { .. } => {
+                panic!("expected an approval, got {other:?}")
+            }
+        }
+        assert_eq!(approve(data.path(), &ticket.id, false).unwrap(), 1);
+        assert_eq!(state(data.path(), &ticket).step(step), &StepState::Passed);
+    }
+
+    // Invariant: a report that must not be kept (empty, or with control
+    // characters) fails the step and writes no result, so the window never
+    // shows text it should not.
+    #[test]
+    fn a_report_that_must_not_be_kept_fails_the_step() {
+        let (data, ticket) = built("custom-bad");
+        let agent = reviewer(true, "  ");
+        let step = Step::Custom(1);
+        let result =
+            autopilot_engine::run_custom(data.path(), &ticket, step, &definition(), false, &agent);
+        assert!(result.is_err());
+        assert!(matches!(
+            state(data.path(), &ticket).step(step),
+            StepState::Failed(_)
+        ));
+        let history = watch(data.path(), &ticket.id, 0).unwrap();
+        assert!(autopilot_engine::custom_outcome(&history, step).is_none());
+    }
+
+    // Invariant: a pipeline that runs a custom step makes the ticket wait for
+    // it, one that does not leaves the step skipped, and the choice is kept
+    // in the history. Without this the pull request could open before the
+    // review the owner asked for.
+    #[test]
+    fn choosing_a_pipeline_decides_whether_the_custom_step_is_skipped() {
+        let source = "[custom_steps.custom_1]\nname = \"Security review\"\nprompt = \"Look.\"\n\n[pipelines.careful]\nbased_on = \"full\"\non = [\"custom_1\"]\n";
+        let profile = Profile::parse("p.toml", source).unwrap();
+        let step = Step::Custom(1);
+
+        let (data, ticket) = ready_to_plan("custom-careful");
+        autopilot_engine::choose_pipeline(data.path(), &ticket.id, &profile, "careful").unwrap();
+        assert_eq!(state(data.path(), &ticket).step(step), &StepState::Idle);
+        let history = watch(data.path(), &ticket.id, 0).unwrap();
+        assert_eq!(autopilot_engine::chosen_custom_steps(&history), [step]);
+
+        let (data, ticket) = ready_to_plan("custom-plain");
+        autopilot_engine::choose_pipeline(data.path(), &ticket.id, &profile, "full").unwrap();
+        assert!(matches!(
+            state(data.path(), &ticket).step(step),
+            StepState::Skipped(_)
+        ));
+        let history = watch(data.path(), &ticket.id, 0).unwrap();
+        assert_eq!(autopilot_engine::chosen_custom_steps(&history), []);
+        // The skipped step is not shown on the ticket.
+        let view = autopilot_engine::ticket_view(&history).unwrap();
+        assert!(view.step(step).is_none());
+    }
+}

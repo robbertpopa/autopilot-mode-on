@@ -186,6 +186,9 @@ pub const fn step_name(step: Step) -> &'static str {
         Step::Plan => "Plan",
         Step::BuildCheck => "Build ⟲ Check",
         Step::PullRequest => "Pull request",
+        // The owner's own name is in the profile; this is the fallback when
+        // only the step is known.
+        Step::Custom(_) => "Custom step",
     }
 }
 
@@ -334,8 +337,15 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     }
 
     let lines = summary::from_history(history);
-    let steps = Step::ALL
+    let steps = Step::EVERY
         .into_iter()
+        // A custom step is in the ticket's view once it has done anything.
+        .filter(|step| {
+            !step.is_custom()
+                || !matches!(state.step(*step), StepState::Idle)
+                    && !matches!(state.step(*step), StepState::Skipped(why)
+                        if why.starts_with(crate::pipelines::OFF_PREFIX))
+        })
         .map(|step| {
             let (step_api, step_sub) = per_step
                 .iter()

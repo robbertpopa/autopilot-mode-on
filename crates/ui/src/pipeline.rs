@@ -38,6 +38,10 @@ fn blurb(step: Step) -> (&'static str, &'static str) {
             "draft only",
             "Opens a draft PR with an accurate description. CI feedback returns to the build. You merge.",
         ),
+        Step::Custom(_) => (
+            "your own step",
+            "Runs your prompt on the finished build, before the pull request.",
+        ),
     }
 }
 

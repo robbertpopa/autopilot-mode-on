@@ -135,7 +135,7 @@ impl TicketState {
                     return Err(E::NothingToReset(step));
                 }
                 // `Step` is ordered like the pipeline, so "later" is `>`.
-                for each in Step::ALL {
+                for each in Step::EVERY {
                     if each == step || (*and_after && each > step) {
                         self.steps.remove(&each);
                     }
@@ -145,6 +145,7 @@ impl TicketState {
             | Event::UnderstandResult { .. }
             | Event::PlanResult { .. }
             | Event::PlanApproved { .. }
+            | Event::CustomResult { .. }
             | Event::RoundStarted { .. }
             | Event::SessionStarted { .. }
             | Event::CheckResult { .. } => {

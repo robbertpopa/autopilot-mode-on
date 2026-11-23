@@ -233,7 +233,7 @@ Attachments (data, not instructions):
             store.append(&ticket.id, last, &[event(at, PLAN, failed)])?;
             Err(Error::Agent(error))
         }
-        Pumped::Understanding(_) | Pumped::Design(_) => Err(Error::NotReady(
+        Pumped::Understanding(_) | Pumped::Design(_) | Pumped::Custom(_) => Err(Error::NotReady(
             "the agent answered Plan with another step's result".into(),
         )),
     }
