@@ -34,7 +34,15 @@ pub enum Role {
     Agent { worktree: PathBuf, config: PathBuf },
     /// A check command (build, test) in a worktree. No network at all.
     Check { worktree: PathBuf, tmp: PathBuf },
+    /// `cargo fetch` before the checks, which have no network. It reaches the
+    /// crate registry hosts and writes only the registry cache; it runs no
+    /// project code.
+    Fetch { worktree: PathBuf, tmp: PathBuf },
 }
+
+/// Where `cargo fetch` may go. The agent controls the project's Cargo files, so
+/// the list is fixed here, not read from them.
+pub const REGISTRY: &[&str] = &["index.crates.io", "static.crates.io", "crates.io"];
 
 /// A boundary that passed the probe on this machine. It cannot be built any
 /// other way.
@@ -56,8 +64,11 @@ impl Validated {
         secrets: &[&str],
     ) -> io::Result<CommandSpec> {
         let boundary = boundary(&self.wsl, role);
+        // A Linux path names a folder in the distro, which this side cannot make.
         for folder in boundary.write.iter().chain(&boundary.tmp) {
-            fs::create_dir_all(folder)?;
+            if !folder.to_string_lossy().starts_with('/') {
+                fs::create_dir_all(folder)?;
+            }
         }
         self.wsl.wrap(spec, &boundary, secrets)
     }
@@ -86,6 +97,18 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
             protect: vec![worktree.join(".git")],
             hide: vec![wsl.under_home(CARGO_CREDENTIALS)],
             domains: Vec::new(),
+            tmp: Some(tmp.clone()),
+        },
+        Role::Fetch { worktree, tmp } => Boundary {
+            write: vec![
+                worktree.clone(),
+                wsl.under_home(".cargo/registry"),
+                wsl.under_home(".cargo/git"),
+            ],
+            read: RUST_ROOTS.iter().map(|root| wsl.under_home(root)).collect(),
+            protect: vec![worktree.join(".git")],
+            hide: vec![wsl.under_home(CARGO_CREDENTIALS)],
+            domains: REGISTRY.iter().map(|host| (*host).to_owned()).collect(),
             tmp: Some(tmp.clone()),
         },
     }
@@ -158,13 +181,17 @@ impl Scene {
         Ok(scene)
     }
 
-    fn roles(&self) -> [Role; 2] {
+    fn roles(&self) -> [Role; 3] {
         [
             Role::Agent {
                 worktree: self.worktree.clone(),
                 config: self.config.clone(),
             },
             Role::Check {
+                worktree: self.worktree.clone(),
+                tmp: self.tmp.clone(),
+            },
+            Role::Fetch {
                 worktree: self.worktree.clone(),
                 tmp: self.tmp.clone(),
             },
@@ -318,10 +345,11 @@ fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Resu
     let name = match role {
         Role::Agent { .. } => "agent",
         Role::Check { .. } => "check",
+        Role::Fetch { .. } => "fetch",
     };
     let scratch = match role {
         Role::Agent { config, .. } => config.join("tmp"),
-        Role::Check { tmp, .. } => tmp.clone(),
+        Role::Check { tmp, .. } | Role::Fetch { tmp, .. } => tmp.clone(),
     };
     let sibling_windows = scene
         .sibling

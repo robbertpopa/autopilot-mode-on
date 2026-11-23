@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::{PROVIDER, ROWS, Role, boundary, judge};
+use super::{PROVIDER, REGISTRY, ROWS, Role, boundary, judge};
 use crate::wsl::{Wsl, parse_discovery};
 
 fn wsl() -> Wsl {
@@ -52,7 +52,7 @@ fn each_role_opens_only_what_it_is_for() {
         },
     );
     assert_eq!(agent.domains, [PROVIDER]);
-    assert_eq!(agent.protect, [PathBuf::from(r"D:\w\wt\.git")]);
+    assert_eq!(agent.protect, [PathBuf::from(r"D:\w\wt").join(".git")]);
     assert_eq!(
         agent.write,
         [PathBuf::from(r"D:\w\wt"), PathBuf::from(r"D:\w\cfg")]
@@ -73,7 +73,26 @@ fn each_role_opens_only_what_it_is_for() {
             .hide
             .contains(&PathBuf::from("/home/u/.cargo/credentials.toml"))
     );
-    assert_eq!(check.protect, [PathBuf::from(r"D:\w\wt\.git")]);
+    assert_eq!(check.protect, [PathBuf::from(r"D:\w\wt").join(".git")]);
+
+    let fetch = boundary(
+        &wsl,
+        &Role::Fetch {
+            worktree: PathBuf::from(r"D:\w\wt"),
+            tmp: PathBuf::from(r"D:\w	mp"),
+        },
+    );
+    assert_eq!(fetch.domains, REGISTRY, "only the registry hosts");
+    let writes: Vec<String> = fetch
+        .write
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        writes,
+        [r"D:\w\wt", "/home/u/.cargo/registry", "/home/u/.cargo/git"],
+        "the cache, not the whole cargo home"
+    );
 }
 
 // Needs the real distro; see `wsl_runs_a_wrapped_command_under_the_boundary`.
