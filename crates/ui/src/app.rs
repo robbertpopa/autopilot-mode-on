@@ -83,6 +83,14 @@ pub struct App {
     pub(crate) pipeline_selected: Option<String>,
     pub(crate) pipeline_notice: Option<(bool, String)>,
     pub(crate) draft_text: String,
+    /// The pipeline the agent box is changing, or none for a new one.
+    pub(crate) draft_editing: Option<String>,
+    /// The step row open on the Pipelines page.
+    pub(crate) step_open: Option<Step>,
+    /// A custom step being renamed or re-worded: its slot, name and prompt.
+    pub(crate) custom_edit: Option<(Step, String, String)>,
+    /// The "add a step" form: name and prompt.
+    pub(crate) new_step: Option<(String, String)>,
     pub(crate) draft: Option<autopilot_engine::PipelineDraft>,
     /// The owner picked the pipeline on New ticket, so the suggestion stops.
     pub(crate) pipeline_chosen: bool,
@@ -198,6 +206,10 @@ impl App {
             pipeline_selected: None,
             pipeline_notice: None,
             draft_text: String::new(),
+            draft_editing: None,
+            step_open: None,
+            custom_edit: None,
+            new_step: None,
             draft: None,
             pipeline_chosen: false,
             project_selected: None,
@@ -560,6 +572,10 @@ impl App {
 
     /// Lay out one frame.
     pub fn ui(&mut self, ctx: &egui::Context) {
+        // Every screen words a custom step with the name its owner gave it.
+        if let Ok(profile) = &self.profile {
+            autopilot_engine::name_custom_steps(profile);
+        }
         self.drain();
         self.update_clock(ctx);
         self.auto_orchestrate();

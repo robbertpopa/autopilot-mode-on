@@ -60,7 +60,10 @@ pub use design::{
     context as design_context, folder as design_folder, latest as latest_design, rerun_design,
     run_design,
 };
-pub use draft::{PipelineDraft, draft_pipeline, save_draft, validate_draft};
+pub use draft::{
+    PipelineDraft, draft_pipeline, draft_pipeline_for, save_draft, validate_draft,
+    validate_draft_for,
+};
 pub use explain::{explain_step, kept as explanation_kept, prompt as explain_prompt};
 pub use metrics::{PipelineMetrics, StepMetrics, UsageLine, metrics_of, pipeline_metrics};
 pub use overlap::{TicketOverlap, find_overlaps};
@@ -70,7 +73,8 @@ pub use pipelines::{
 pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use profile_edit::{
     ProfileEditError, ProjectField, ReviewField, StepField, add_pipeline, edit_project,
-    edit_review, edit_step, free_custom_slot, load_profile, remove_custom_step, set_custom_step,
+    edit_review, edit_step, free_custom_slot, load_profile, remove_custom_step, save_pipeline,
+    set_custom_step,
 };
 pub use proposals::{Suggestion, dismiss_proposal, proposals_for};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
@@ -92,7 +96,8 @@ pub use tuning::{
 };
 pub use view::{
     AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,
-    TimelineLine, dollars, load_ticket, spent_since, step_name, ticket_view, tickets,
+    TimelineLine, dollars, load_ticket, name_custom_steps, spent_since, step_name, ticket_view,
+    tickets,
 };
 pub use workspace::{
     canonical as canonical_folder, of as workspace_of, record as record_workspace,

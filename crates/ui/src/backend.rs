@@ -127,6 +127,11 @@ pub enum Action {
     RerunDesign(TicketId),
     /// Show the saved mockups in the system file manager.
     OpenDesign(TicketId),
+    /// Run one of the owner's own steps once the build has passed.
+    RunCustom {
+        ticket: TicketId,
+        step: Step,
+    },
     /// Explain a step's result in plain words, once; the answer is kept.
     Explain {
         ticket: TicketId,
@@ -155,6 +160,7 @@ impl Action {
             Self::Orchestrate(_) => "The orchestrator is choosing models and effort",
             Self::MakePlan(_) | Self::RerunPlan(_) => "Making the plan",
             Self::MakeDesign(_) | Self::RerunDesign(_) => "Making the design",
+            Self::RunCustom { .. } => "Running your step",
             Self::RerunUnderstand(_) => "Reading the request again",
             Self::Explain { .. } => "Explaining in plain words",
             _ => "Working",
@@ -428,6 +434,16 @@ impl autopilot_agent::Agent for Chosen {
         match self {
             Self::Practice(agent) => agent.start_design(request),
             Self::Claude(agent) => agent.start_design(request),
+        }
+    }
+
+    fn start_custom(
+        &self,
+        request: autopilot_agent::CustomRequest<'_>,
+    ) -> Result<autopilot_agent::AgentRun, autopilot_agent::AgentError> {
+        match self {
+            Self::Practice(agent) => agent.start_custom(request),
+            Self::Claude(agent) => agent.start_custom(request),
         }
     }
 
@@ -857,6 +873,31 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                 .map(|_| "New design ready".to_owned())
                 .map_err(|error| error.to_string())
         }
+        Action::RunCustom { ticket, step } => {
+            let profile = autopilot_engine::load_profile(&options.profile)
+                .map_err(|error| error.to_string())?;
+            let definition = profile
+                .custom_step(*step)
+                .ok_or_else(|| format!("{} is not defined in the profile", step.as_str()))?;
+            let ask_after = profile
+                .step(*step)
+                .is_some_and(|settings| settings.ask_after);
+            let folder = ticket_folder(options, ticket);
+            let agent = chosen_agent(options, *step, Some(ticket), folder.as_deref())?;
+            let history =
+                autopilot_engine::watch(directory, ticket, 0).map_err(|error| error.to_string())?;
+            let words = autopilot_engine::ticket_words(ticket, &history)
+                .map_err(|error| error.to_string())?;
+            autopilot_engine::run_custom(directory, &words, *step, definition, ask_after, &agent)
+                .map(|outcome| {
+                    if outcome.ok {
+                        format!("{} found nothing to stop the ticket", definition.name)
+                    } else {
+                        format!("{} found something to look at", definition.name)
+                    }
+                })
+                .map_err(|error| error.to_string())
+        }
         Action::OpenDesign(ticket) => {
             let folder = autopilot_engine::design_folder(directory, ticket);
             if !folder.is_dir() {
@@ -954,11 +995,12 @@ fn start(
 pub(crate) fn draft_pipeline(
     options: &Options,
     description: &str,
+    editing: Option<&str>,
 ) -> Result<autopilot_engine::PipelineDraft, String> {
     let profile =
         autopilot_engine::load_profile(&options.profile).map_err(|error| error.to_string())?;
     let agent = chosen_agent(options, Step::Understand, None, None)?;
-    autopilot_engine::draft_pipeline(&profile, description, &agent)
+    autopilot_engine::draft_pipeline_for(&profile, description, editing, &agent)
         .map_err(|error| error.to_string())
 }
 

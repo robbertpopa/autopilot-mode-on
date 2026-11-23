@@ -36,6 +36,10 @@ pub struct DraftRequest<'a> {
     pub description: &'a str,
     /// The pipelines that already exist, so the draft can start from one.
     pub known: &'a [String],
+    /// What the owner is changing, in plain text: the pipeline being edited
+    /// with its steps, and the custom steps already defined. Empty for a new
+    /// pipeline. It is data for the agent, like the description.
+    pub current: &'a str,
 }
 
 /// One custom step: the owner's own prompt, run on what the ticket has so far.

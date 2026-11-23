@@ -646,7 +646,7 @@ mod tests {
         let mut app = App::new(&context, options.clone(), false);
         app.mode = Mode::Pipelines;
         app.draft_text = "a small change that needs no questions".into();
-        let draft = backend::draft_pipeline(&options, &app.draft_text).unwrap();
+        let draft = backend::draft_pipeline(&options, &app.draft_text, None).unwrap();
         assert_eq!(draft.name, "practice-draft");
         assert_eq!(
             draft.pipeline.mode(Step::Clarify),
@@ -659,6 +659,47 @@ mod tests {
         assert!(saved.pipeline("practice-draft").is_some());
         let reread = autopilot_engine::load_profile(&options.profile).unwrap();
         assert!(reread.pipeline("practice-draft").is_some());
+    }
+
+    // Invariant: the agent can add a step the owner never typed, and the draft
+    // can be changed afterwards. The step is saved with the pipeline, shows
+    // by the name the owner sees, and the page still builds with it. Without
+    // this, "add a security review" would stay a thing only the CLI could do.
+    #[test]
+    fn the_agent_adds_a_custom_step_and_the_page_shows_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.mode = Mode::Pipelines;
+        let draft = backend::draft_pipeline(&options, "add a security review", None).unwrap();
+        assert_eq!(draft.new_steps.len(), 1);
+        assert!(!options.profile.exists(), "a draft stores nothing");
+        app.draft = Some(draft.clone());
+        frame(&mut app, &context);
+        let saved = autopilot_engine::save_draft(&options.profile, &draft).unwrap();
+        let step = Step::Custom(1);
+        assert!(saved.custom_step(step).is_some());
+        assert!(saved.pipeline(&draft.name).unwrap().custom_steps() == [step]);
+        app.profile = Ok(saved);
+        app.pipeline_selected = Some(draft.name.clone());
+        app.step_open = Some(step);
+        frame(&mut app, &context);
+        assert_eq!(
+            autopilot_engine::step_name(step),
+            app.profile
+                .as_ref()
+                .unwrap()
+                .custom_step(step)
+                .unwrap()
+                .name
+        );
     }
 
     // Invariant: a plan can be sent back with a note (the step stops as

@@ -15,7 +15,7 @@ const TURNS: [u32; 6] = [10, 20, 30, 60, 100, 200];
 const ROUNDS: [u32; 5] = [1, 2, 3, 5, 8];
 const BUDGETS: [u64; 6] = [50_000, 100_000, 200_000, 500_000, 1_000_000, 2_000_000];
 
-fn blurb(step: Step) -> (&'static str, &'static str) {
+pub(crate) fn blurb(step: Step) -> (&'static str, &'static str) {
     match step {
         Step::Understand => (
             "always runs",
@@ -235,7 +235,7 @@ impl App {
         }
     }
 
-    fn settings_fields(
+    pub(crate) fn settings_fields(
         &self,
         ui: &mut egui::Ui,
         step: Step,

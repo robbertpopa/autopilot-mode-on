@@ -224,14 +224,31 @@ pub fn add_pipeline(
     off: &[Step],
     rounds: Option<u32>,
 ) -> Result<Profile, ProfileEditError> {
-    let source = match fs::read_to_string(path) {
-        Ok(source) => source,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error.into()),
-    };
-    let mut document: DocumentMut = source
-        .parse()
-        .map_err(|error: toml_edit::TomlError| ProfileEditError::Syntax(error.to_string()))?;
+    save_pipeline(path, name, based_on, (on, if_needed, off), rounds, &[])
+}
+
+/// Save a pipeline together with the custom steps it introduces, in one
+/// write, so a pipeline never points at a step that was not saved.
+///
+/// # Errors
+/// Returns an error for an unreadable file, or the diagnostic when the result
+/// is invalid. The file is left as it was in that case.
+pub fn save_pipeline(
+    path: &Path,
+    name: &str,
+    based_on: &str,
+    (on, if_needed, off): (&[Step], &[Step], &[Step]),
+    rounds: Option<u32>,
+    new_steps: &[(Step, autopilot_profile::CustomStep)],
+) -> Result<Profile, ProfileEditError> {
+    let mut document = open_document(path)?;
+    for (step, definition) in new_steps {
+        let custom = child_table(document.as_table_mut(), "custom_steps")?;
+        custom.set_implicit(true);
+        let table = child_table(custom, step.as_str())?;
+        table["name"] = value(definition.name.as_str());
+        table["prompt"] = value(definition.prompt.as_str());
+    }
     let pipelines = child_table(document.as_table_mut(), "pipelines")?;
     pipelines.set_implicit(true);
     let table = child_table(pipelines, name)?;
@@ -245,17 +262,11 @@ pub fn add_pipeline(
     }
     if let Some(rounds) = rounds {
         table["rounds"] = value(i64::from(rounds));
+    } else {
+        // Saving over a pipeline must not keep a cap the new one dropped.
+        table.remove("rounds");
     }
-    let text = document.to_string();
-    let profile = Profile::parse(path, &text)?;
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, text)?;
-    Ok(profile)
+    write_checked(path, &document)
 }
 
 /// The first free custom slot, or `None` when all of them are used.

@@ -357,6 +357,17 @@ impl Profile {
         merged
     }
 
+    /// This profile with more custom steps defined, to check a pipeline that
+    /// would use them before anything is written.
+    #[must_use]
+    pub fn with_custom_steps(&self, added: &[(Step, CustomStep)]) -> Self {
+        let mut staged = self.clone();
+        for (step, definition) in added {
+            staged.custom_steps.insert(*step, definition.clone());
+        }
+        staged
+    }
+
     /// The custom steps the owner defined, by slot.
     #[must_use]
     pub const fn custom_steps(&self) -> &BTreeMap<Step, CustomStep> {
