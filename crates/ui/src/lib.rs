@@ -1202,7 +1202,7 @@ effort = \"high\"
         assert!(!app.busy, "Shift+Enter started a ticket");
         assert_eq!(app.mode, Mode::NewTicket);
         assert!(
-            app.home.description.contains("\n"),
+            app.home.description.contains('\n'),
             "{:?}",
             app.home.description
         );
