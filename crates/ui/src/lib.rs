@@ -1230,6 +1230,8 @@ effort = \"high\"
             ticket: None,
         };
         backend::AgentChoice::Practice.save(&options.data_dir);
+        // Clarify must hold the ticket here, so this test asks explicitly.
+        std::fs::write(&options.profile, "when_unsure = \"ask\"\n").unwrap();
         perform(
             &options,
             &Action::Start {
@@ -1311,6 +1313,40 @@ effort = \"high\"
         );
         assert!(refused.is_err());
         assert_eq!(read(&options).tickets.len(), 1);
+    }
+
+    // Invariant: the words the owner typed reach the view whole, so the ticket
+    // page can show them. A view that kept only the title (cut to one line)
+    // fails this; nothing else reads the description back.
+    #[test]
+    fn the_typed_prompt_is_kept_whole_in_the_view() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        let words = "Remove the top bar.\nKeep the logo, and say why.";
+        perform(
+            &options,
+            &Action::Start {
+                title: "Remove the top bar".into(),
+                description: words.into(),
+                attachments: Vec::new(),
+                workspace: None,
+                pipeline: None,
+            },
+        )
+        .unwrap();
+        let view = read(&options).tickets[0].clone();
+        assert_eq!(view.description, words);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        app.open(&view.id);
+        frame(&mut app, &context);
     }
 
     // Invariant: with `when_unsure = "decide_and_tell"` a started ticket does not

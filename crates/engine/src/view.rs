@@ -121,6 +121,8 @@ pub struct AttachmentView {
 pub struct TicketView {
     pub id: TicketId,
     pub title: String,
+    /// The owner's words as typed, so the page can show the prompt.
+    pub description: String,
     pub badge: Badge,
     pub steps: Vec<StepView>,
     pub rounds: Vec<RoundView>,
@@ -397,9 +399,17 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         _ => None,
     });
     let badge = badge(&steps, state.is_done());
+    let description = history
+        .iter()
+        .find_map(|record| match &record.event.kind {
+            Event::Described { text } => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
     Ok(TicketView {
         id: first.ticket.clone(),
         title,
+        description,
         badge,
         steps,
         rounds,

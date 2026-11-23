@@ -28,6 +28,28 @@ fn mark(state: &StepState) -> (&'static str, Color32) {
     }
 }
 
+/// What the owner asked, in full. The title is cut to one line, so without
+/// this the original request cannot be read again.
+fn prompt_card(ui: &mut egui::Ui, view: &TicketView) {
+    if view.description.trim().is_empty() {
+        return;
+    }
+    theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        egui::CollapsingHeader::new(RichText::new("YOUR PROMPT").monospace().size(11.0).strong())
+            .id_salt(("prompt", view.id.as_str()))
+            .default_open(true)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(180.0)
+                    .show(ui, |ui| {
+                        ui.add(egui::Label::new(view.description.as_str()).selectable(true));
+                    });
+            });
+    });
+    ui.add_space(10.0);
+}
+
 /// The step the ticket is on: the first one that has not finished or been
 /// skipped. `None` when everything is done.
 pub(crate) fn current_step(view: &TicketView) -> Option<&autopilot_engine::StepView> {
@@ -298,6 +320,7 @@ impl App {
             );
         });
         ui.add_space(12.0);
+        prompt_card(ui, &view);
         self.next_card(ui, &view);
         self.overlap_notice(ui, &view);
         self.orchestrator_card(ui, &view);
