@@ -2,7 +2,7 @@
 
 # Work streams: what is built, what is left, how to split it
 
-Written 2026-11-24 for an orchestrator that runs four agents side by side. Read [AGENTS.md](../../AGENTS.md) first, then this file, then the one stream file you were given. The streams own different crates, so they can run in parallel without editing the same files. Where they cannot avoid a shared file, the rules at the end say how to behave.
+Written 2026-11-24 for an orchestrator that runs four agents side by side; how to run them is in [ORCHESTRATOR.md](ORCHESTRATOR.md). Read [AGENTS.md](../../AGENTS.md) first, then this file, then the one stream file you were given. The streams own different crates, so they can run in parallel without editing the same files. Where they cannot avoid a shared file, the rules at the end say how to behave.
 
 | Stream | File | Owns | Goal |
 |---|---|---|---|
