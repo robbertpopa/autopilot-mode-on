@@ -164,6 +164,7 @@ impl App {
         self.card_text = autopilot_engine::read_card(&self.options.data_dir, path)
             .ok()
             .flatten();
+        self.card_commands = autopilot_engine::scan_workspace(std::path::Path::new(path)).commands;
     }
 
     pub(crate) fn revert_rules(&mut self) {
@@ -205,6 +206,7 @@ impl App {
                     .ok()
                     .flatten();
                 let found = card.commands.len();
+                self.card_commands = card.commands;
                 self.card_notice = Some((
                     true,
                     format!("scanned, {} bytes, {found} commands found", info.bytes),
@@ -275,6 +277,48 @@ impl App {
         self.rules_editor(ui);
     }
 
+    /// Add one command the scan offered to `[checks]`. The engine checks it
+    /// against a fresh scan and refuses a name the owner already uses.
+    pub(crate) fn add_detected_check(&mut self, command: &str) {
+        let Some(path) = self.project_selected.clone() else {
+            return;
+        };
+        match autopilot_engine::add_detected_check(&self.options.profile, &path, command) {
+            Ok(profile) => {
+                self.profile = Ok(profile);
+                self.card_notice = Some((true, format!("added `{command}` to [checks]")));
+            }
+            Err(error) => self.card_notice = Some((false, error.to_string())),
+        }
+    }
+
+    fn detected_commands(&mut self, ui: &mut egui::Ui) {
+        if self.card_commands.is_empty() {
+            return;
+        }
+        let set: Vec<String> = self
+            .profile
+            .as_ref()
+            .map(|profile| profile.checks.keys().cloned().collect())
+            .unwrap_or_default();
+        let mut chosen = None;
+        ui.label(theme::muted("Detected commands, not yet checks:"));
+        for found in &self.card_commands {
+            ui.horizontal(|ui| {
+                theme::cell(ui, 60.0, found.kind);
+                ui.label(theme::mono(&found.command).size(12.0));
+                if set.iter().any(|name| name == found.kind) {
+                    theme::pill(ui, "check set", theme::GREY_FILL(), theme::GREY_TEXT());
+                } else if ui.button("Add as check").clicked() {
+                    chosen = Some(found.command.clone());
+                }
+            });
+        }
+        if let Some(command) = chosen {
+            self.add_detected_check(&command);
+        }
+    }
+
     fn card_section(&mut self, ui: &mut egui::Ui, row: &Row) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("project card").strong());
@@ -304,6 +348,7 @@ impl App {
                 ));
             }
         }
+        self.detected_commands(ui);
         let label = if self.card_text.is_some() {
             "Scan again"
         } else {
