@@ -972,3 +972,131 @@ fn the_review_is_not_asked_while_an_earlier_check_fails() {
         "one review, after the round that passed"
     );
 }
+
+const NODE_BUILD: &str = r#"
+[steps.build_check.limits]
+rounds = 3
+
+[checks.build]
+executable = "node"
+args = ["-e", "require('is-number'); if (!require('fs').existsSync('fixed.txt')) { console.error('not fixed yet'); process.exit(1); }"]
+"#;
+
+const NODE_LOCK: &str = r#"{
+  "name": "sample",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "sample",
+      "version": "1.0.0",
+      "dependencies": {
+        "is-number": "7.0.0"
+      }
+    },
+    "node_modules/is-number": {
+      "version": "7.0.0",
+      "resolved": "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz",
+      "integrity": "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=0.12.0"
+      }
+    }
+  }
+}
+"#;
+
+// Needs the WSL distro prepared with `tools/wsl` and the npm registry
+// reachable, so it stays out of the normal run:
+// `cargo test -p autopilot-engine -- --ignored an_npm_project`.
+// Invariant: a project with a lockfile gets its dependencies installed under
+// the registry-only role with install scripts off, the check then runs with
+// them and no network, and nothing the install made is committed as the
+// agent's work even though the project has no `.gitignore`. A change that
+// breaks it: running `npm ci` with scripts on or on the host, or committing
+// `node_modules` (thousands of files in a real project).
+#[test]
+#[ignore = "needs the WSL distro and the npm registry"]
+fn an_npm_project_is_installed_in_the_sandbox_and_not_committed() {
+    let repository = tempfile::tempdir().unwrap();
+    let root = repository.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    std::fs::write(
+        root.join("package.json"),
+        "{\"name\":\"sample\",\"version\":\"1.0.0\",\"dependencies\":{\"is-number\":\"7.0.0\"}}",
+    )
+    .unwrap();
+    std::fs::write(root.join("package-lock.json"), NODE_LOCK).unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-q", "-m", "first"]);
+
+    let data = tempfile::tempdir().unwrap();
+    let ticket = Ticket {
+        id: TicketId::from("b-node"),
+        title: "Build".into(),
+        description: "plain".into(),
+    };
+    run_understand(
+        data.path(),
+        &ticket,
+        &Understander {
+            needs_design: false,
+        },
+    )
+    .unwrap();
+    start_clarify(data.path(), &ticket.id).unwrap();
+    run_plan(data.path(), &ticket, &Planner).unwrap();
+    answer(data.path(), &ticket.id, Decision::Approve);
+    let world = World {
+        data,
+        repository,
+        worktrees: tempfile::tempdir().unwrap(),
+        ticket,
+    };
+
+    let boundary = autopilot_agent_claude::sandbox_boundary(
+        "Ubuntu",
+        &world.data.path().join("sandbox"),
+        &PathBuf::new(),
+    )
+    .unwrap();
+    let profile = Profile::parse("p.toml", NODE_BUILD).unwrap();
+    let setup = BuildSetup {
+        repository: world.repository.path(),
+        base_branch: "main",
+        worktrees: world.worktrees.path(),
+        git: PathBuf::from("git"),
+        guardian: PathBuf::new(),
+        profile: &profile,
+        review: false,
+    };
+    let outcome = run_build(
+        world.data.path(),
+        &world.ticket,
+        &agent(&world),
+        &setup,
+        Isolation::Wsl(boundary),
+    )
+    .unwrap();
+
+    assert_eq!(outcome, BuildOutcome::Ready);
+    let failed = failures(&world);
+    assert_eq!(failed.len(), 1, "round one failed once: {failed:?}");
+    assert!(failed[0].contains("not fixed yet"), "{}", failed[0]);
+    let tree = Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", "ticket/b-node"])
+        .current_dir(world.repository.path())
+        .output()
+        .unwrap();
+    let files = String::from_utf8_lossy(&tree.stdout);
+    assert!(
+        !files.contains("node_modules"),
+        "the install was committed: {files}"
+    );
+    assert!(
+        files.contains("fixed.txt"),
+        "the agent's own work is there: {files}"
+    );
+}

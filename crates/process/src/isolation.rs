@@ -42,11 +42,18 @@ pub enum Role {
     /// crate registry hosts and writes only the registry cache; it runs no
     /// project code.
     Fetch { worktree: PathBuf, tmp: PathBuf },
+    /// `npm ci --ignore-scripts` before the checks. It reaches the npm registry
+    /// and writes the npm cache and the project's `node_modules`. Install
+    /// scripts are off, so no package's own code runs here.
+    FetchNode { worktree: PathBuf, tmp: PathBuf },
 }
 
 /// Where `cargo fetch` may go. The agent controls the project's Cargo files, so
 /// the list is fixed here, not read from them.
 pub const REGISTRY: &[&str] = &["index.crates.io", "static.crates.io", "crates.io"];
+
+/// The npm registry, fixed here for the same reason.
+pub const NPM_REGISTRY: &[&str] = &["registry.npmjs.org"];
 
 /// A boundary that passed the probe on this machine. It cannot be built any
 /// other way.
@@ -103,7 +110,11 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
         },
         Role::Check { worktree, tmp } => Boundary {
             write: vec![worktree.clone()],
-            read: RUST_ROOTS.iter().map(|root| wsl.under_home(root)).collect(),
+            read: RUST_ROOTS
+                .iter()
+                .chain(NODE_ROOTS)
+                .map(|root| wsl.under_home(root))
+                .collect(),
             protect: vec![worktree.join(".git")],
             hide: vec![wsl.under_home(CARGO_CREDENTIALS)],
             domains: Vec::new(),
@@ -119,6 +130,14 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
             protect: vec![worktree.join(".git")],
             hide: vec![wsl.under_home(CARGO_CREDENTIALS)],
             domains: REGISTRY.iter().map(|host| (*host).to_owned()).collect(),
+            tmp: Some(tmp.clone()),
+        },
+        Role::FetchNode { worktree, tmp } => Boundary {
+            write: vec![worktree.clone(), wsl.under_home(".npm")],
+            read: NODE_ROOTS.iter().map(|root| wsl.under_home(root)).collect(),
+            protect: vec![worktree.join(".git")],
+            hide: Vec::new(),
+            domains: NPM_REGISTRY.iter().map(|host| (*host).to_owned()).collect(),
             tmp: Some(tmp.clone()),
         },
     }
@@ -191,7 +210,7 @@ impl Scene {
         Ok(scene)
     }
 
-    fn roles(&self) -> [Role; 3] {
+    fn roles(&self) -> [Role; 4] {
         [
             Role::Agent {
                 worktree: self.worktree.clone(),
@@ -202,6 +221,10 @@ impl Scene {
                 tmp: self.tmp.clone(),
             },
             Role::Fetch {
+                worktree: self.worktree.clone(),
+                tmp: self.tmp.clone(),
+            },
+            Role::FetchNode {
                 worktree: self.worktree.clone(),
                 tmp: self.tmp.clone(),
             },
@@ -398,11 +421,14 @@ fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Resu
         Role::Agent { .. } => "agent",
         Role::Check { .. } => "check",
         Role::Fetch { .. } => "fetch",
+        Role::FetchNode { .. } => "fetch-node",
     };
     let agent = matches!(role, Role::Agent { .. });
     let scratch = match role {
         Role::Agent { config, .. } => config.join("tmp"),
-        Role::Check { tmp, .. } | Role::Fetch { tmp, .. } => tmp.clone(),
+        Role::Check { tmp, .. } | Role::Fetch { tmp, .. } | Role::FetchNode { tmp, .. } => {
+            tmp.clone()
+        }
     };
     let sibling_windows = scene
         .sibling

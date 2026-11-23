@@ -92,6 +92,36 @@ impl WorktreeManager {
         self.repository.patch(&base, &head)
     }
 
+    /// Keep a pattern out of every `git add -A` the host runs for this
+    /// repository, through its local `info/exclude`. A project that does not
+    /// ignore what a dependency install creates (`node_modules/`) would
+    /// otherwise have thousands of files committed as the agent's work.
+    ///
+    /// # Errors
+    /// Returns an error for an unverified checkout, a pattern that is not one
+    /// plain line, or a file that cannot be written.
+    pub fn exclude(&self, ticket: &TicketId, pattern: &str) -> Result<(), Error> {
+        self.verified_checkout(ticket)?;
+        if pattern.is_empty() || pattern.contains(['\n', '\r', '\0']) {
+            return Err(Error::WorktreeConflict(self.common_directory.clone()));
+        }
+        let file = self.common_directory.join("info").join("exclude");
+        let current = std::fs::read_to_string(&file).unwrap_or_default();
+        if current.lines().any(|line| line == pattern) {
+            return Ok(());
+        }
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).map_err(|_| Error::WorktreeConflict(file.clone()))?;
+        }
+        let mut text = current;
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(pattern);
+        text.push('\n');
+        std::fs::write(&file, text).map_err(|_| Error::WorktreeConflict(file.clone()))
+    }
+
     /// The checkout path, after confirming this manager owns it and it is ready.
     fn verified_checkout(&self, ticket: &TicketId) -> Result<std::path::PathBuf, Error> {
         let (branch, key) = ticket_worktree(ticket)?;

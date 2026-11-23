@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::{PROVIDER, REGISTRY, ROWS, Role, boundary, judge, probe_script, rows};
+use super::{NPM_REGISTRY, PROVIDER, REGISTRY, ROWS, Role, boundary, judge, probe_script, rows};
 use crate::wsl::{Host, Wsl, parse_discovery};
 
 fn wsl() -> Wsl {
@@ -156,6 +156,40 @@ fn each_role_opens_only_what_it_is_for() {
         [r"D:\w\wt", "/home/u/.cargo/registry", "/home/u/.cargo/git"],
         "the cache, not the whole cargo home"
     );
+
+    let node = boundary(
+        &wsl,
+        &Role::FetchNode {
+            worktree: PathBuf::from(r"D:\w\wt"),
+            tmp: PathBuf::from(r"D:\w\tmp"),
+        },
+    );
+    assert_eq!(node.domains, NPM_REGISTRY, "only the npm registry");
+    let writes: Vec<String> = node
+        .write
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        writes,
+        [r"D:\w\wt", "/home/u/.npm"],
+        "the npm cache, not the home folder"
+    );
+    assert!(node.read.iter().all(|p| p.starts_with("/home/u/")));
+    assert!(
+        !node.write.iter().any(|p| p.starts_with("/home/u/.cargo")),
+        "an npm fetch cannot touch the cargo cache"
+    );
+    // The check role reaches both toolchains, so `cargo test` and `npm test`
+    // run, and still has no network.
+    let reads: Vec<String> = check
+        .read
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    assert!(reads.contains(&"/home/u/.cargo".to_owned()));
+    assert!(reads.contains(&"/home/u/node".to_owned()));
+    assert!(check.domains.is_empty());
 }
 
 // Needs the real distro; see `wsl_runs_a_wrapped_command_under_the_boundary`.
