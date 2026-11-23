@@ -240,7 +240,8 @@ impl Toolbox {
 
     /// Fetch what a Rust project depends on, once per round, before the checks
     /// run without a network. It runs under a role that reaches only the crate
-    /// registry. Anything but a Rust project is left alone.
+    /// registry. It updates `Cargo.lock` when the agent added a dependency, because
+    /// the agent has no toolchain to do it. Anything but a Rust project is left alone.
     ///
     /// # Errors
     /// Returns the tail of the output if the fetch fails or cannot start.
@@ -258,7 +259,7 @@ impl Toolbox {
         }
         let spec = CommandSpec {
             program: PathBuf::from("cargo"),
-            args: ["fetch", "--locked"].map(OsString::from).to_vec(),
+            args: vec![OsString::from("fetch")],
             env: vec![
                 ("CARGO_TERM_COLOR".into(), "never".into()),
                 ("LANG".into(), "C.UTF-8".into()),

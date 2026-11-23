@@ -89,6 +89,11 @@ fn claude_print() -> Result<ExitCode, Box<dyn std::error::Error>> {
     if env::args_os().any(|arg| arg == "--allowedTools") {
         return claude_build(&prompt, &mut output);
     }
+    // Leaves a marker where the call started, so a test can tell which folder
+    // a call without a project was given.
+    if prompt.contains("scenario:record-cwd") {
+        std::fs::write("cwd-marker.txt", "started here")?;
+    }
     // The Plan prompt asks for a plan; every other prompt is Understand.
     let reply = if prompt.contains("Write a plan for this ticket") {
         CLAUDE_PLAN
