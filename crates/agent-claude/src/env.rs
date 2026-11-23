@@ -77,6 +77,18 @@ pub fn child_env(
     Ok(child)
 }
 
+/// Settings that leave Git with no way to authenticate.
+const NO_GIT_CREDENTIALS: &[(&str, &str)] = &[
+    ("GIT_TERMINAL_PROMPT", "0"),
+    ("GCM_INTERACTIVE", "never"),
+    ("GIT_ASKPASS", ""),
+    ("SSH_ASKPASS", ""),
+    ("GIT_CONFIG_NOSYSTEM", "1"),
+    ("GIT_CONFIG_COUNT", "1"),
+    ("GIT_CONFIG_KEY_0", "credential.helper"),
+    ("GIT_CONFIG_VALUE_0", ""),
+];
+
 /// The environment for a build turn: the same allowlist, plus settings that
 /// leave Git with no way to authenticate. A push the hook missed would
 /// otherwise use whatever credential helper this machine has configured, which
@@ -91,20 +103,51 @@ pub fn build_env(
     let mut child = child_env(auth, parent)?;
     // Command-scope config has the highest precedence. An empty value resets
     // the helper list, so the system and global helpers are dropped.
-    for (name, value) in [
-        ("GIT_TERMINAL_PROMPT", "0"),
-        ("GCM_INTERACTIVE", "never"),
-        ("GIT_ASKPASS", ""),
-        ("SSH_ASKPASS", ""),
-        ("GIT_CONFIG_NOSYSTEM", "1"),
-        ("GIT_CONFIG_COUNT", "1"),
-        ("GIT_CONFIG_KEY_0", "credential.helper"),
-        ("GIT_CONFIG_VALUE_0", ""),
-    ] {
-        child.push((name.into(), value.into()));
+    for (name, value) in NO_GIT_CREDENTIALS {
+        child.push(((*name).into(), (*value).into()));
     }
     Ok(child)
 }
+
+/// The whole environment of a build turn inside the Linux boundary. It is
+/// built from nothing: the dedicated key (the only secret), the folders the
+/// turn may write, and switches that stop Claude Code reaching any host but the
+/// provider. Nothing of the Windows environment is carried over, and a
+/// subscription sign-in is never available there.
+///
+/// # Errors
+/// Returns an error if there is no dedicated key.
+pub fn sandbox_env(
+    parent: impl IntoIterator<Item = (OsString, OsString)>,
+    config_dir: &str,
+    tmp_dir: &str,
+) -> Result<Vec<(OsString, OsString)>, EnvError> {
+    let key = parent
+        .into_iter()
+        .find(|(name, value)| name_is(name, API_KEY_SOURCE) && !value.is_empty())
+        .map(|(_, value)| value)
+        .ok_or(EnvError::MissingApiKey)?;
+    let mut child: Vec<(OsString, OsString)> = vec![
+        (API_KEY_TARGET.into(), key),
+        ("CLAUDE_CONFIG_DIR".into(), config_dir.into()),
+        ("CLAUDE_CODE_TMPDIR".into(), tmp_dir.into()),
+        ("DISABLE_TELEMETRY".into(), "1".into()),
+        ("DISABLE_ERROR_REPORTING".into(), "1".into()),
+        ("DISABLE_AUTOUPDATER".into(), "1".into()),
+        (
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(),
+            "1".into(),
+        ),
+        ("LANG".into(), "C.UTF-8".into()),
+    ];
+    for (name, value) in NO_GIT_CREDENTIALS {
+        child.push(((*name).into(), (*value).into()));
+    }
+    Ok(child)
+}
+
+/// The name of the secret in the environment a sandboxed turn is given.
+pub const SANDBOX_SECRETS: &[&str] = &[API_KEY_TARGET];
 
 /// Windows names are case-insensitive. Matching that way everywhere is safe
 /// because no allowed name differs from another only by case.
@@ -171,6 +214,36 @@ mod tests {
         assert_eq!(key[0].1, "dedicated-key");
         assert!(!names(&env).contains(&"anthropic_auth_token".to_string()));
         assert!(!names(&env).contains(&"github_token".to_string()));
+    }
+
+    // Invariant: a turn inside the boundary gets the dedicated key and a fixed
+    // set of settings, and nothing from the parent: not the ambient key, a
+    // token or a path. A change that breaks it: starting from the parent
+    // environment, as the host-side steps do.
+    #[test]
+    fn a_sandboxed_turn_gets_only_the_dedicated_key_and_fixed_settings() {
+        let env = sandbox_env(parent(), "/mnt/d/c", "/mnt/d/c/tmp").unwrap();
+        let get = |name: &str| {
+            env.iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.to_string_lossy().into_owned())
+        };
+        assert_eq!(get("ANTHROPIC_API_KEY").as_deref(), Some("dedicated-key"));
+        assert_eq!(get("CLAUDE_CONFIG_DIR").as_deref(), Some("/mnt/d/c"));
+        assert_eq!(get("CLAUDE_CODE_TMPDIR").as_deref(), Some("/mnt/d/c/tmp"));
+        assert_eq!(get("GIT_ASKPASS").as_deref(), Some(""));
+        for leaked in [
+            "GITHUB_TOKEN",
+            "GH_TOKEN",
+            "AWS_SECRET_ACCESS_KEY",
+            "SystemRoot",
+        ] {
+            assert_eq!(get(leaked), None, "{leaked}");
+        }
+        assert_eq!(
+            sandbox_env([("ANTHROPIC_API_KEY".into(), "ambient".into())], "/c", "/t"),
+            Err(EnvError::MissingApiKey)
+        );
     }
 
     #[test]
