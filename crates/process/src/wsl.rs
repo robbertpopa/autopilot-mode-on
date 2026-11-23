@@ -24,12 +24,14 @@ use crate::{CommandSpec, Limits, Outcome, Runner};
 /// by `WSLENV` and are read by name here, which keeps them out of every
 /// command line in the distro.
 const LAUNCH: &str = r#"set -eu
-srt=$1; settings=$2; cwd=$3; names=$4; shift 4
+srt=$1; settings=$2; cwd=$3; names=$4; tmp=$5; shift 5
 vars=()
 while [ "$1" != "--" ]; do vars+=("$1"); shift; done
 shift
 for n in $names; do vars+=("$n=${!n}"); done
-inner="cd $(printf '%q' "$cwd") && exec $(printf '%q ' "$@")"
+# srt points TMPDIR at a folder that does not exist; a command that needs
+# scratch space (rustdoc) fails without a writable one.
+inner="cd $(printf '%q' "$cwd") && ${tmp:+export TMPDIR=$(printf '%q' "$tmp") &&} exec $(printf '%q ' "$@")"
 exec /usr/bin/env -i "${vars[@]}" "$srt" -s "$settings" -c "$inner"
 "#;
 
@@ -71,6 +73,8 @@ pub struct Boundary {
     pub hide: Vec<PathBuf>,
     /// Hosts the command may reach. Empty means no network at all.
     pub domains: Vec<String>,
+    /// Scratch folder, made writable and exported as `TMPDIR`.
+    pub tmp: Option<PathBuf>,
 }
 
 impl Wsl {
@@ -108,6 +112,11 @@ impl Wsl {
     }
 
     #[must_use]
+    pub(crate) fn launcher(&self) -> &Path {
+        &self.launcher
+    }
+
+    #[must_use]
     pub fn home(&self) -> &str {
         &self.home
     }
@@ -128,7 +137,10 @@ impl Wsl {
     /// # Errors
     /// Returns an error if a path cannot be translated.
     pub fn settings(&self, boundary: &Boundary) -> io::Result<String> {
-        let write = linux_paths(&boundary.write)?;
+        let mut write = linux_paths(&boundary.write)?;
+        if let Some(tmp) = &boundary.tmp {
+            write.push(linux_path(tmp)?);
+        }
         let mut read = linux_paths(&boundary.read)?;
         read.extend(write.iter().cloned());
         read.push(self.seccomp.clone());
@@ -171,8 +183,10 @@ impl Wsl {
         let program = spec
             .program
             .to_str()
-            .filter(|text| text.starts_with('/'))
-            .ok_or_else(|| invalid("the sandboxed program must be an absolute Linux path"))?;
+            .filter(|text| text.starts_with('/') || is_program_name(text))
+            .ok_or_else(|| {
+                invalid("the sandboxed program must be an absolute Linux path or a plain name")
+            })?;
         let settings_file = self.write_settings(boundary)?;
 
         let mut vars: Vec<String> =
@@ -210,6 +224,10 @@ impl Wsl {
         args.push(linux_path(&settings_file)?.into());
         args.push(linux_path(cwd)?.into());
         args.push(secrets.join(" ").into());
+        args.push(match &boundary.tmp {
+            Some(tmp) => linux_path(tmp)?.into(),
+            None => OsString::new(),
+        });
         args.extend(vars.into_iter().map(OsString::from));
         args.push("--".into());
         args.push(program.into());
@@ -258,7 +276,7 @@ for tool in srt bwrap socat rg python3 node; do
 done
 "#;
 
-fn parse_discovery(
+pub(crate) fn parse_discovery(
     text: &str,
     distro: &str,
     launcher: PathBuf,
@@ -325,7 +343,7 @@ fn windows_wsl() -> io::Result<PathBuf> {
     }
 }
 
-fn passthrough_env() -> Vec<(OsString, OsString)> {
+pub(crate) fn passthrough_env() -> Vec<(OsString, OsString)> {
     WINDOWS_PASSTHROUGH
         .iter()
         .filter_map(|name| std::env::var_os(name).map(|value| (OsString::from(*name), value)))
@@ -342,6 +360,15 @@ fn check_distro_name(name: &str) -> io::Result<()> {
     } else {
         Err(invalid("a WSL distro name has letters, digits, - _ and ."))
     }
+}
+
+/// A bare program name, looked up on the distro's `PATH` (`cargo`, `npm`).
+fn is_program_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
 }
 
 fn is_variable_name(name: &str) -> bool {

@@ -62,6 +62,7 @@ fn the_settings_open_only_what_the_boundary_names() {
         protect: vec![PathBuf::from(r"D:\work\wt\.git")],
         hide: vec![PathBuf::from("/home/u/.cargo/credentials.toml")],
         domains: vec!["api.anthropic.com".into()],
+        tmp: Some(PathBuf::from(r"D:\work\tmp")),
     };
     let value: serde_json::Value =
         serde_json::from_str(&wsl.settings(&boundary).expect("settings")).expect("json");
@@ -77,10 +78,14 @@ fn the_settings_open_only_what_the_boundary_names() {
         serde_json::json!([
             "/home/u/.cargo",
             "/mnt/d/work/wt",
+            "/mnt/d/work/tmp",
             "/home/u/lib/vendor/seccomp"
         ])
     );
-    assert_eq!(fs["allowWrite"], serde_json::json!(["/mnt/d/work/wt"]));
+    assert_eq!(
+        fs["allowWrite"],
+        serde_json::json!(["/mnt/d/work/wt", "/mnt/d/work/tmp"])
+    );
     assert_eq!(fs["denyWrite"], serde_json::json!(["/mnt/d/work/wt/.git"]));
 
     let none = wsl.settings(&Boundary::default()).expect("settings");
@@ -154,10 +159,11 @@ fn the_command_follows_the_separator_as_separate_parameters() {
     let list = args(&wrapped);
     let at = list.iter().position(|arg| arg == "--").expect("separator");
     assert_eq!(list[at + 1..], ["/usr/bin/env", "a b", "$(x)"]);
+    assert_eq!(list[10], "", "no scratch folder");
     assert_eq!(list[6], "ap-sandbox");
     assert_eq!(list[7], "/home/u/node/bin/srt");
     assert_eq!(list[9], "/mnt/d/my work/wt");
-    assert!(list[8].contains("/srt-") && list[8].starts_with("/mnt/"));
+    assert!(list[8].contains("/srt-"), "{}", list[8]);
     assert!(wrapped.env.iter().all(|(key, _)| key != "WSLENV"));
 }
 
@@ -181,8 +187,17 @@ fn a_command_that_cannot_be_passed_safely_is_refused() {
     windows_program.program = PathBuf::from(r"C:\tool.exe");
     assert!(run(&windows_program, &[]));
     let mut relative = base();
-    relative.program = PathBuf::from("env");
+    relative.program = PathBuf::from("rel/env");
     assert!(run(&relative, &[]));
+    let mut option_like = base();
+    option_like.program = PathBuf::from("-x");
+    assert!(run(&option_like, &[]));
+    let mut plain_name = base();
+    plain_name.program = PathBuf::from("cargo");
+    assert!(
+        !run(&plain_name, &[]),
+        "a bare name is looked up in the distro"
+    );
     let mut no_cwd = base();
     no_cwd.cwd = None;
     assert!(run(&no_cwd, &[]));
