@@ -211,7 +211,13 @@ impl ClaudeAgent {
         let spec = CommandSpec {
             // The distro's own program, found on its PATH; `self.executable` is the host's.
             program: PathBuf::from("claude"),
-            args: command::build_args(&self.config, &settings, session, request.turns_left, budget),
+            args: command::without_git(command::build_args(
+                &self.config,
+                &settings,
+                session,
+                request.turns_left,
+                budget,
+            )),
             env,
             cwd: Some(request.worktree.to_path_buf()),
         };
