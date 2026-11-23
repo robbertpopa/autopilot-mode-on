@@ -594,6 +594,7 @@ name = "autopilot-process"
 version = "0.1.0"
 dependencies = [
  "rustix 1.1.6",
+ "serde_json",
  "tempfile",
  "windows-sys 0.61.2",
 ]

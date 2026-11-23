@@ -261,10 +261,19 @@ fn command_line(spec: &CommandSpec) -> io::Result<Vec<u16>> {
     Ok(result)
 }
 
+/// Quote one argument for `CommandLineToArgvW`. Only an argument that is empty
+/// or holds a space or tab is wrapped: `wsl.exe` parses its own options and
+/// does not strip quotes from `"-d"`.
 fn quote(result: &mut Vec<u16>, argument: &[u16]) {
     const SLASH: u16 = b'\\' as u16;
     const QUOTE: u16 = b'"' as u16;
-    result.push(QUOTE);
+    let wrap = argument.is_empty()
+        || argument
+            .iter()
+            .any(|&unit| unit == u16::from(b' ') || unit == u16::from(b'\t'));
+    if wrap {
+        result.push(QUOTE);
+    }
     let mut slashes = 0;
     for &unit in argument {
         match unit {
@@ -281,8 +290,12 @@ fn quote(result: &mut Vec<u16>, argument: &[u16]) {
             }
         }
     }
-    result.extend(std::iter::repeat_n(SLASH, slashes * 2));
-    result.push(QUOTE);
+    if wrap {
+        result.extend(std::iter::repeat_n(SLASH, slashes * 2));
+        result.push(QUOTE);
+    } else {
+        result.extend(std::iter::repeat_n(SLASH, slashes));
+    }
 }
 
 fn environment_block(spec: &CommandSpec) -> io::Result<Vec<u16>> {
@@ -309,4 +322,36 @@ fn environment_block(spec: &CommandSpec) -> io::Result<Vec<u16>> {
     }
     block.push(0);
     Ok(block)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{ffi::OsString, path::PathBuf};
+
+    use super::command_line;
+    use crate::CommandSpec;
+
+    // Invariant: an argument is quoted only when it holds a space or tab (or is
+    // empty), and a quote or a backslash run before one is escaped, so the
+    // child parses back exactly what was given. `wsl.exe` reads its own
+    // options and does not strip quotes from `"-d"`, so a change that quotes
+    // every argument breaks it; the process tests below run programs that
+    // would not notice.
+    #[test]
+    fn only_an_argument_that_needs_quotes_gets_them() {
+        let spec = CommandSpec {
+            program: PathBuf::from(r"C:\Program Files\x.exe"),
+            args: ["-d", "a b", "", r#"say "hi""#, r"tail\", r"dir with\"]
+                .into_iter()
+                .map(OsString::from)
+                .collect(),
+            env: Vec::new(),
+            cwd: None,
+        };
+        let line = String::from_utf16_lossy(&command_line(&spec).expect("line"));
+        assert_eq!(
+            line.trim_end_matches('\0'),
+            r#""C:\Program Files\x.exe" -d "a b" "" "say \"hi\"" tail\ "dir with\\""#
+        );
+    }
 }
