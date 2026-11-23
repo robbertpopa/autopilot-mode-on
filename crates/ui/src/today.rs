@@ -566,7 +566,20 @@ impl App {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 8.0;
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(&view.title).monospace().strong());
+                        // The step name keeps its room; the title gives way to it.
+                        let room = (ui.available_width() - 110.0).max(60.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(room, 18.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(&view.title).monospace().strong(),
+                                    )
+                                    .truncate(),
+                                );
+                            },
+                        );
                         let step = view.active().map_or("", step_name);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(theme::mono(step).size(11.0).color(theme::BLUE_TEXT()));

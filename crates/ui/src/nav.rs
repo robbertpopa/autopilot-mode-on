@@ -461,7 +461,10 @@ impl App {
                             toggled = Some(name.clone());
                         }
                         if needs {
-                            ui.label(RichText::new("needs you").size(11.0).color(theme::AMBER()));
+                            // A dot, not words: the words push the row wider than the
+                            // sidebar and cut the project name and the spend meter.
+                            ui.label(RichText::new("●").size(11.0).color(theme::AMBER()))
+                                .on_hover_text("A ticket here needs you");
                         }
                     });
                     if closed {
