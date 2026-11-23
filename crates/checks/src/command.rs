@@ -6,7 +6,10 @@ use std::{
     time::Duration,
 };
 
-use autopilot_process::{CommandSpec, Limits, Outcome, Runner};
+use autopilot_process::{
+    CommandSpec, Limits, Outcome, Runner,
+    isolation::{Role, Validated},
+};
 use autopilot_profile::Profile;
 
 use crate::{Check, Context, Error, Report, tail};
@@ -108,6 +111,15 @@ pub struct Toolbox {
     commands: BTreeMap<String, Result<Launch, String>>,
     runner: Arc<Runner>,
     environment: Environment,
+    /// When set, every command runs inside the validated Linux boundary.
+    sandbox: Option<Sandbox>,
+}
+
+struct Sandbox {
+    boundary: Validated,
+    /// Scratch space for the commands; outside the worktree, so it never shows
+    /// up in a diff.
+    tmp: PathBuf,
 }
 
 pub(crate) struct Executed {
@@ -160,7 +172,127 @@ impl Toolbox {
             commands,
             runner,
             environment,
+            sandbox: None,
         })
+    }
+
+    /// Like [`Toolbox::sandboxed`], building the runner from the process
+    /// guardian so a caller above this layer never touches `process`.
+    #[must_use]
+    pub fn sandboxed_with_guardian(
+        profile: &Profile,
+        guardian: PathBuf,
+        boundary: Validated,
+        tmp: PathBuf,
+    ) -> Arc<Self> {
+        Self::sandboxed(profile, Arc::new(Runner::new(guardian)), boundary, tmp)
+    }
+
+    /// A toolbox whose commands run inside the validated Linux boundary, with
+    /// no network. Commands are looked up on the distro's `PATH`, so the
+    /// profile may name only plain tools (`cargo`), not Windows locations.
+    #[must_use]
+    pub fn sandboxed(
+        profile: &Profile,
+        runner: Arc<Runner>,
+        boundary: Validated,
+        tmp: PathBuf,
+    ) -> Arc<Self> {
+        let commands = profile
+            .checks
+            .iter()
+            .map(|(name, command)| {
+                let launch = if command.executable.is_empty()
+                    || command.executable.contains(['/', '\\', ':'])
+                {
+                    Err(format!(
+                        "executable {:?} must be a plain tool name in the sandbox",
+                        command.executable
+                    ))
+                } else {
+                    Ok(Launch {
+                        program: PathBuf::from(&command.executable),
+                        args: command.args.clone(),
+                    })
+                };
+                (name.clone(), launch)
+            })
+            .collect();
+        // The registry cache is filled by `prepare`; nothing here may reach the
+        // network, so cargo should fail at once instead of retrying.
+        let environment = Environment(
+            [
+                ("CARGO_NET_OFFLINE", "true"),
+                ("CARGO_TERM_COLOR", "never"),
+                ("NO_COLOR", "1"),
+                ("LANG", "C.UTF-8"),
+            ]
+            .map(|(name, value)| (name.into(), value.into()))
+            .to_vec(),
+        );
+        Arc::new(Self {
+            commands,
+            runner,
+            environment,
+            sandbox: Some(Sandbox { boundary, tmp }),
+        })
+    }
+
+    /// Fetch what a Rust project depends on, once per round, before the checks
+    /// run without a network. It runs under a role that reaches only the crate
+    /// registry. Anything but a Rust project is left alone.
+    ///
+    /// # Errors
+    /// Returns the tail of the output if the fetch fails or cannot start.
+    pub fn prepare(
+        &self,
+        worktree: &Path,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), String> {
+        let Some(sandbox) = &self.sandbox else {
+            return Ok(());
+        };
+        let worktree = plain_directory(worktree);
+        if !worktree.join("Cargo.toml").is_file() {
+            return Ok(());
+        }
+        let spec = CommandSpec {
+            program: PathBuf::from("cargo"),
+            args: ["fetch", "--locked"].map(OsString::from).to_vec(),
+            env: vec![
+                ("CARGO_TERM_COLOR".into(), "never".into()),
+                ("LANG".into(), "C.UTF-8".into()),
+            ],
+            cwd: Some(worktree.clone()),
+        };
+        let role = Role::Fetch {
+            worktree,
+            tmp: sandbox.tmp.clone(),
+        };
+        let wrapped = sandbox
+            .boundary
+            .wrap(&role, &spec, &[])
+            .map_err(|error| format!("cargo fetch could not start: {error}"))?;
+        let limits = Limits {
+            timeout: TIMEOUT,
+            bytes_per_stream: BYTES_PER_STREAM,
+        };
+        let output = self
+            .runner
+            .run(&wrapped, b"", limits, cancel)
+            .map_err(|error| format!("cargo fetch could not start: {error}"))?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        match output.outcome {
+            Outcome::Exited(status) if status.success() => Ok(()),
+            _ => Err(format!(
+                "cargo fetch failed. Last output:\n{}",
+                tail(text.trim_end(), NOTE_TAIL)
+            )),
+        }
     }
 
     #[must_use]
@@ -225,6 +357,22 @@ impl Toolbox {
                 .collect(),
             env: self.environment.0.clone(),
             cwd: Some(plain_directory(context.worktree)),
+        };
+        let spec = match &self.sandbox {
+            None => spec,
+            Some(sandbox) => {
+                let role = Role::Check {
+                    worktree: plain_directory(context.worktree),
+                    tmp: sandbox.tmp.clone(),
+                };
+                sandbox
+                    .boundary
+                    .wrap(&role, &spec, &[])
+                    .map_err(|error| Error::Launch {
+                        check: name.to_owned(),
+                        reason: error.to_string(),
+                    })?
+            }
         };
         let limits = Limits {
             timeout: TIMEOUT,

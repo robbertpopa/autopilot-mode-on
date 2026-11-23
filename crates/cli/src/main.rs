@@ -9,7 +9,7 @@ use std::{
 };
 
 use autopilot_accounts::{Accounts, Status};
-use autopilot_agent_claude::{BuildConfig, ClaudeAgent, ClaudeConfig};
+use autopilot_agent_claude::{BuildConfig, ClaudeAgent, ClaudeConfig, Validated};
 use autopilot_agent_fixture::FixtureAgent;
 use autopilot_core::{
     RequestId, SettingsScope, Step as CoreStep, StepChange, StepOverride, Ticket, TicketId,
@@ -665,9 +665,10 @@ fn build_command(
     run_build(data_dir, &ticket, agent, &exe, places, &profile)
 }
 
-/// The fake agent stands in for Claude Code here and is the only agent a
-/// build may use: a real one would run tools in a real repository, and S6 has
-/// not shown how to contain that.
+/// The fake agent runs the fixture; a real agent runs only inside the Linux
+/// boundary (WSL2 with the sandbox runtime) after its escape probe passed on
+/// this machine, and only in API-key mode. Every other case is refused with
+/// the reason, because real Claude runs shell tools in a real repository.
 fn run_build(
     data_dir: &Path,
     ticket: &Ticket,
@@ -676,31 +677,45 @@ fn run_build(
     places: &BuildPlaces<'_>,
     profile: &autopilot_profile::Profile,
 ) -> Result<serde_json::Value, Box<dyn Error>> {
-    if matches!(agent, Agent::Claude) {
-        return Err(
-            "a real agent cannot run the Build step until the containment spike S6 \
-                    is settled (docs/spikes/S6-containment.md); use --agent fake"
-                .into(),
-        );
-    }
     let guardian = exe.with_file_name(format!(
         "autopilot-process-guardian{}",
         env::consts::EXE_SUFFIX
     ));
-    let fake = exe.with_file_name(format!("autopilot-fake-agent{}", env::consts::EXE_SUFFIX));
-    let config = ClaudeConfig {
-        auth: Auth::Subscription,
-        model: "fake".into(),
-        effort: None,
-        max_turns: 8,
-        max_budget_usd: None,
-        executable: Some(fake),
-        timeout: Duration::from_secs(120),
-    };
-    let agent = ClaudeAgent::new(config, guardian.clone())?.with_build(BuildConfig {
+    let hook = BuildConfig {
         hook_command: format!("\"{}\" hook", exe.display()),
         data_dir: data_dir.to_path_buf(),
-    });
+    };
+    let (agent, isolation) = match agent {
+        Agent::Fake => {
+            let fake =
+                exe.with_file_name(format!("autopilot-fake-agent{}", env::consts::EXE_SUFFIX));
+            let config = ClaudeConfig {
+                auth: Auth::Subscription,
+                model: "fake".into(),
+                effort: None,
+                max_turns: 8,
+                max_budget_usd: None,
+                executable: Some(fake),
+                timeout: Duration::from_secs(120),
+            };
+            (
+                ClaudeAgent::new(config, guardian.clone())?.with_build(hook),
+                autopilot_engine::Isolation::Fixture,
+            )
+        }
+        Agent::Claude => {
+            let config = sandbox_config(profile)?;
+            let boundary = wsl_boundary(data_dir)?;
+            let sandbox = autopilot_agent_claude::Sandbox {
+                boundary: boundary.clone(),
+                config_root: data_dir.join("claude-config"),
+            };
+            (
+                ClaudeAgent::sandboxed(config, guardian.clone(), sandbox)?.with_build(hook),
+                autopilot_engine::Isolation::Wsl(boundary),
+            )
+        }
+    };
     let setup = autopilot_engine::BuildSetup {
         repository: places.repo,
         base_branch: places.base,
@@ -709,19 +724,59 @@ fn run_build(
         guardian,
         profile,
     };
-    let outcome = autopilot_engine::run_build(
-        data_dir,
-        ticket,
-        &agent,
-        &setup,
-        autopilot_engine::Isolation::Fixture,
-    )?;
+    let outcome = autopilot_engine::run_build(data_dir, ticket, &agent, &setup, isolation)?;
     Ok(match outcome {
         autopilot_engine::BuildOutcome::Ready => serde_json::json!({"build": "ready"}),
         autopilot_engine::BuildOutcome::NeedsYou { request, reason } => {
             serde_json::json!({"build": "needs_you", "request": request, "reason": reason})
         }
     })
+}
+
+/// What a real Build turn runs with: the profile's `build_check` step. Only
+/// API-key mode exists inside the boundary.
+fn sandbox_config(profile: &autopilot_profile::Profile) -> Result<ClaudeConfig, Box<dyn Error>> {
+    let refused = |reason: &str| -> Box<dyn Error> {
+        format!(
+            "a real agent cannot run the Build step: {reason} (docs/spikes/S6-containment.md, S6);              use --agent fake"
+        )
+        .into()
+    };
+    let settings = profile
+        .step(CoreStep::BuildCheck)
+        .ok_or_else(|| refused("the profile has no build_check step"))?;
+    if settings.auth != Auth::Api {
+        return Err(refused(
+            "build_check must use auth = \"api\", because a subscription sign-in cannot be kept out of the agent's reach",
+        ));
+    }
+    let micro = settings
+        .limits
+        .budget_microusd
+        .map_or(50_000, autopilot_core::Money::as_microusd);
+    Ok(ClaudeConfig {
+        auth: Auth::Api,
+        model: settings.model.clone().unwrap_or_else(|| "haiku".to_owned()),
+        effort: settings.effort.clone(),
+        max_turns: settings.limits.turns.max(2),
+        max_budget_usd: Some(format!("{}.{:06}", micro / 1_000_000, micro % 1_000_000)),
+        executable: None,
+        timeout: Duration::from_secs(u64::from(settings.limits.wall_seconds.max(30))),
+    })
+}
+
+/// Find the distro and run the escape probe. The boundary is returned only if
+/// every row held; otherwise Build stays refused and the rows are listed.
+fn wsl_boundary(data_dir: &Path) -> Result<Validated, Box<dyn Error>> {
+    let distro = env::var("AUTOPILOT_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_owned());
+    let folder = data_dir.join("sandbox");
+    let refused = |error: &dyn std::fmt::Display| -> Box<dyn Error> {
+        format!(
+            "a real agent cannot run the Build step: the Linux sandbox is not ready ({error}).              Set it up with tools/wsl (docs/spikes/S6-containment.md, S6) or use --agent fake"
+        )
+        .into()
+    };
+    autopilot_agent_claude::sandbox_boundary(&distro, &folder).map_err(|error| refused(&error))
 }
 
 fn claude_agent(exe: &Path, config: ClaudeConfig) -> Result<ClaudeAgent, Box<dyn Error>> {

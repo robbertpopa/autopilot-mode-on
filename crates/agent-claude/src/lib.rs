@@ -20,14 +20,11 @@ use autopilot_agent::{
     Agent, AgentContext, AgentError, AgentRun, BuildRequest, SessionUse, StepRequest, Stopped,
 };
 use autopilot_core::{Money, Plan, Step, Understanding};
-use autopilot_process::{
-    CommandSpec, Limits, Outcome, Runner,
-    isolation::{Role, Validated},
-    wsl::linux_path,
-};
+use autopilot_process::{CommandSpec, Limits, Outcome, Runner, isolation::Role, wsl::linux_path};
 use autopilot_profile::Auth;
 
 pub use auth::PreflightError;
+pub use autopilot_process::isolation::Validated;
 pub use command::ClaudeConfig;
 pub use env::{API_KEY_SOURCE, EnvError, SANDBOX_SECRETS, build_env, child_env, sandbox_env};
 
@@ -46,6 +43,16 @@ pub struct BuildConfig {
     pub hook_command: String,
     /// The data directory, where session references are mapped.
     pub data_dir: PathBuf,
+}
+
+/// Find the WSL distro and run the escape probe in `folder`. The boundary is
+/// returned only if every row held.
+///
+/// # Errors
+/// Returns an error if the distro is not ready or any row of the probe failed.
+pub fn sandbox_boundary(distro: &str, folder: &std::path::Path) -> io::Result<Validated> {
+    let wsl = autopilot_process::wsl::Wsl::discover(distro, folder.to_path_buf())?;
+    autopilot_process::isolation::validate(wsl, folder)
 }
 
 /// Where build turns run: inside a boundary that passed its probe. Each ticket
