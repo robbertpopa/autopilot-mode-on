@@ -236,7 +236,7 @@ pub fn run_understand_in(
     if ticket.id.as_str().trim().is_empty() || ticket.title.trim().is_empty() {
         return Err(Error::InvalidTicket);
     }
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, &ticket.id)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let started_at = timestamp()?;
     let mut start_events = vec![
@@ -333,7 +333,7 @@ pub(crate) fn run_attempt(
         (Pumped::Failed(error), last) => (Err(Outcome::Failed(error)), last),
     };
     let asked = response.is_ok() && ask_after;
-    let approval = approval_id(&history, Step::Understand);
+    let approval = approval_id(&ticket.id, &history, Step::Understand);
     let result = conclude(store, &ticket.id, last, response, ask_after, &approval)?;
     if asked {
         Inbox::in_data_dir(directory).write_request(&approval_request(
@@ -406,7 +406,7 @@ fn pump(
 /// The id of the approval a step asks for. Answers are kept once per request
 /// id, so a step that is sent back, rejected or run again asks under a new id
 /// each time: the first is `plan-approval`, then `plan-approval-2`, and so on.
-pub(crate) fn approval_id(history: &[RecordedEvent], step: Step) -> RequestId {
+pub(crate) fn approval_id(ticket: &TicketId, history: &[RecordedEvent], step: Step) -> RequestId {
     let base = format!("{}-approval", step.as_str());
     let used = history
         .iter()
@@ -416,10 +416,51 @@ pub(crate) fn approval_id(history: &[RecordedEvent], step: Step) -> RequestId {
         })
         .count();
     if used == 0 {
-        RequestId::from(base)
+        scoped(ticket, &base)
     } else {
-        RequestId::from(format!("{base}-{}", used + 1))
+        scoped(ticket, &format!("{base}-{}", used + 1))
     }
+}
+
+/// Why a step failed, in words the owner can act on. A usage limit is said
+/// out loud, with the time the agent gave, because "step failed" alone sends
+/// the owner looking for a bug that is not there.
+pub(crate) fn failure_reason(
+    store: &impl Store,
+    ticket: &TicketId,
+    step: Option<Step>,
+    label: &str,
+    error: &dyn std::fmt::Display,
+) -> String {
+    let limit = store.events(ticket, 0).ok().and_then(|history| {
+        history
+            .iter()
+            .rev()
+            .find_map(|record| match &record.event.kind {
+                Event::AgentActivity { summary }
+                    if record.event.step == step
+                        && summary.starts_with("assistant: ")
+                        && summary.to_lowercase().contains("limit") =>
+                {
+                    Some(summary.trim_start_matches("assistant: ").to_owned())
+                }
+                _ => None,
+            })
+    });
+    let why = limit.unwrap_or_else(|| error.to_string());
+    format!(
+        "{label} step failed: {}",
+        why.chars().take(300).collect::<String>()
+    )
+}
+
+/// A request id that belongs to one ticket. The inbox keeps one file per id,
+/// so two tickets waiting on the same kind of question must not share one: the
+/// tag keeps the files apart and a ticket always finds its own.
+pub(crate) fn scoped(ticket: &TicketId, base: &str) -> RequestId {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(ticket.as_str().as_bytes());
+    RequestId::from(format!("{base}-{}", attachments::hex(&digest[..4])))
 }
 
 fn plan_request(ticket: &TicketId, plan: &Plan, id: RequestId) -> Request {
@@ -500,7 +541,7 @@ fn conclude(
                     finished_at,
                     UNDERSTAND,
                     Event::Failed {
-                        reason: "Understand step failed".into(),
+                        reason: failure_reason(store, ticket, UNDERSTAND, "Understand", &error),
                     },
                 )],
             )?;
@@ -534,7 +575,7 @@ const CLARIFY_REQUEST: &str = "clarify-1";
 /// # Errors
 /// Returns an error if Understand has not passed or Clarify already ran.
 pub fn start_clarify(directory: &Path, ticket: &TicketId) -> Result<ClarifyStart, Error> {
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, ticket)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(ticket, 0)?;
     let last = history.last().ok_or(Error::UnknownTicket)?.seq;
@@ -562,7 +603,7 @@ pub fn start_clarify(directory: &Path, ticket: &TicketId) -> Result<ClarifyStart
             Ok(ClarifyStart::Skipped(reason))
         }
         ClarifyPlan::Ask(questions) => {
-            let request = RequestId::from(CLARIFY_REQUEST);
+            let request = scoped(ticket, CLARIFY_REQUEST);
             let started = Event::StepStarted {
                 attempt: AttemptId::from("clarify-1"),
                 session: None,
@@ -599,7 +640,7 @@ pub fn answer_clarify(
     request: &RequestId,
     choices: &[Choice],
 ) -> Result<Vec<QaPair>, Error> {
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, ticket)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(ticket, 0)?;
     let pairs = commit_clarify_answer(&mut store, ticket, &history, request, choices)?;
@@ -654,7 +695,7 @@ fn commit_clarify_answer(
 /// Returns an error if another action holds the data directory or the history
 /// is invalid.
 pub fn recover(directory: &Path, ticket: &TicketId) -> Result<Vec<Step>, Error> {
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, ticket)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(ticket, 0)?;
     let mut last = history.last().ok_or(Error::UnknownTicket)?.seq;
@@ -689,7 +730,7 @@ pub fn recover(directory: &Path, ticket: &TicketId) -> Result<Vec<Step>, Error> 
 /// Returns an error for an invalid history or an unusable answer file. An
 /// invalid answer leaves its files in place for the owner to replace.
 pub fn sync_inbox(directory: &Path, ticket: &TicketId) -> Result<Vec<RequestId>, Error> {
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, ticket)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let inbox = Inbox::in_data_dir(directory);
     let history = store.events(ticket, 0)?;
@@ -765,7 +806,7 @@ fn waiting_request(
     step: Step,
     request: &RequestId,
 ) -> Result<Request, Error> {
-    if step == Step::Clarify && request.as_str() == CLARIFY_REQUEST {
+    if step == Step::Clarify && request.as_str().starts_with(CLARIFY_REQUEST) {
         let understanding = latest_understanding(history)
             .ok_or_else(|| Error::History("no Understand result".into()))?;
         return Ok(Request {
@@ -776,10 +817,10 @@ fn waiting_request(
             },
         });
     }
-    if step == Step::BuildCheck && request.as_str() == build::STUCK_REQUEST {
+    if step == Step::BuildCheck && request.as_str().starts_with(build::STUCK_REQUEST) {
         return Ok(build::stuck_request(ticket, history));
     }
-    if step == Step::PullRequest && request.as_str() == publish::PUBLISH_REQUEST {
+    if step == Step::PullRequest && request.as_str().starts_with(publish::PUBLISH_REQUEST) {
         return publish::request(ticket, history);
     }
     if step == Step::Design
@@ -930,14 +971,20 @@ pub fn follow(
     }
 }
 
-fn lock_run(directory: &Path) -> Result<File, Error> {
+/// One lock per ticket, so tickets run side by side while one ticket never has
+/// two actions at once. The name is hashed: an id may hold characters a file
+/// name cannot.
+fn lock_run(directory: &Path, ticket: &TicketId) -> Result<File, Error> {
+    use sha2::{Digest, Sha256};
     fs::create_dir_all(directory)?;
+    let digest = Sha256::digest(ticket.as_str().as_bytes());
+    let name = format!("run-{}.lock", attachments::hex(&digest[..8]));
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(directory.join("run.lock"))?;
+        .open(directory.join(name))?;
     match lock.try_lock() {
         Ok(()) => Ok(lock),
         Err(TryLockError::WouldBlock) => Err(Error::Busy),
@@ -954,4 +1001,70 @@ pub(crate) fn timestamp() -> Result<u64, Error> {
 
 fn event(at_ms: u64, step: Option<Step>, kind: Event) -> NewEvent {
     NewEvent { at_ms, step, kind }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+
+    // Invariant: two tickets can each hold their own lock at once, one ticket
+    // cannot hold it twice. A lock per data folder would make tickets queue
+    // behind each other; none at all would let one ticket run two actions.
+    #[test]
+    fn the_run_lock_is_per_ticket() {
+        let data = tempfile::tempdir().unwrap();
+        let one = TicketId::from("t-1");
+        let two = TicketId::from("t-2");
+        let held = lock_run(data.path(), &one).unwrap();
+        assert!(matches!(lock_run(data.path(), &one), Err(Error::Busy)));
+        let other = lock_run(data.path(), &two).unwrap();
+        drop(held);
+        assert!(lock_run(data.path(), &one).is_ok());
+        drop(other);
+    }
+
+    // Invariant: the same kind of request from two tickets gets two ids, and the
+    // id stays a safe file name. One shared id made two tickets waiting on a
+    // design overwrite each other's inbox file, so one could not be approved.
+    #[test]
+    fn request_ids_are_per_ticket() {
+        let one = scoped(&TicketId::from("t-1"), "design-approval");
+        let two = scoped(&TicketId::from("t-2"), "design-approval");
+        assert_ne!(one, two);
+        assert!(one.as_str().starts_with("design-approval-"));
+        assert!(one.as_str().len() <= 64);
+    }
+
+    // Invariant: a usage limit the agent reported is what the failure says; any
+    // other failure keeps the error. A fixed "step failed" sent the owner
+    // looking for a bug when the cause was the 5-hour limit.
+    #[test]
+    fn a_failed_step_says_when_the_cause_was_a_usage_limit() {
+        let data = tempfile::tempdir().unwrap();
+        let mut store = SqliteStore::open(data.path().join(DATABASE)).unwrap();
+        let ticket = TicketId::from("t-9");
+        let step = Some(Step::Design);
+        let first = event(
+            1,
+            step,
+            Event::AgentActivity {
+                summary: "assistant: thinking".into(),
+            },
+        );
+        let committed = store.append(&ticket, 0, &[first]).unwrap();
+        let plain = failure_reason(&store, &ticket, step, "Design", &"the stream broke");
+        assert_eq!(plain, "Design step failed: the stream broke");
+        let limit = event(
+            2,
+            step,
+            Event::AgentActivity {
+                summary: "assistant: You've hit your 5-hour limit, resets 7:30pm".into(),
+            },
+        );
+        store
+            .append(&ticket, committed.last().unwrap().seq, &[limit])
+            .unwrap();
+        let said = failure_reason(&store, &ticket, step, "Design", &"the stream broke");
+        assert!(said.contains("5-hour limit"), "{said}");
+    }
 }

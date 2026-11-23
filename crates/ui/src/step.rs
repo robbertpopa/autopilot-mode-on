@@ -90,7 +90,7 @@ impl App {
                 let has_result = view.outputs.iter().any(|(kept, _)| *kept == step);
                 if ui
                     .add_enabled(
-                        has_result && !self.busy,
+                        has_result && !self.busy(),
                         egui::Button::new("Explain in plain words"),
                     )
                     .on_hover_text(
@@ -480,7 +480,7 @@ impl App {
                     .desired_rows(2)
                     .desired_width(f32::INFINITY),
             );
-            let ready = !self.chat_text.trim().is_empty() && !self.busy;
+            let ready = !self.chat_text.trim().is_empty() && !self.busy();
             if ui
                 .add_enabled(ready, egui::Button::new("Ask"))
                 .on_hover_text(

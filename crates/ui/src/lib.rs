@@ -1220,7 +1220,7 @@ effort = \"high\"
             ..Default::default()
         };
         let _ = context.run(input, |context| app.ui(context));
-        assert!(!app.busy, "Shift+Enter started a ticket");
+        assert!(!app.busy(), "Shift+Enter started a ticket");
         assert_eq!(app.mode, Mode::NewTicket);
         assert!(
             app.home.description.contains('\n'),
@@ -1559,7 +1559,7 @@ effort = \"high\"
         for _ in 0..5 {
             frame(&mut older, &context);
         }
-        assert!(!older.busy);
+        assert!(!older.busy());
         let plan_state = |options: &Options| {
             read(options).tickets[0]
                 .step(Step::Plan)

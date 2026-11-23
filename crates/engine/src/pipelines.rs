@@ -64,7 +64,7 @@ pub fn choose_pipeline(
     let pipeline = profile
         .pipeline(name)
         .ok_or_else(|| Error::NotReady(format!("{name:?} is not a known pipeline")))?;
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, ticket)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(ticket, 0)?;
     let last = history.last().ok_or(Error::UnknownTicket)?.seq;

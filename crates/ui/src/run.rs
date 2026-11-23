@@ -247,7 +247,7 @@ impl App {
                     .hint_text("Ask the advisor, e.g. is this plan safe?")
                     .desired_width((ui.available_width() - 80.0).max(120.0)),
             );
-            let ready = !self.advise_text.trim().is_empty() && !self.busy;
+            let ready = !self.advise_text.trim().is_empty() && !self.busy();
             if ui
                 .add_enabled(ready, egui::Button::new("Ask"))
                 .on_hover_text(
@@ -380,7 +380,8 @@ impl App {
                 ui.set_width(ui.available_width());
                 ui.label(RichText::new(text).size(14.0).strong().color(color));
                 if problem.is_none() && ready_to_design(view) {
-                    let busy = self.busy;
+                    self.design_mode_picker(ui);
+                    let busy = self.busy();
                     if ui
                         .add_enabled(!busy, theme::primary("Make the design"))
                         .on_hover_text("The agent draws static mockups. You approve them before the plan.")
@@ -392,7 +393,7 @@ impl App {
                 if problem.is_none()
                     && let Some(step) = self.ready_custom(view)
                 {
-                    let busy = self.busy;
+                    let busy = self.busy();
                     if ui
                         .add_enabled(!busy, theme::primary(&format!("Run {}", step_name(step))))
                         .on_hover_text("Your own step: the agent reads the ticket and reports back.")
@@ -405,7 +406,7 @@ impl App {
                     }
                 }
                 if problem.is_none() && ready_to_plan(view) {
-                    let busy = self.busy;
+                    let busy = self.busy();
                     if ui
                         .add_enabled(!busy, theme::primary("Make the plan"))
                         .on_hover_text("The agent writes the plan. You approve it before anything is built.")

@@ -162,7 +162,7 @@ fn ask(
     max_calls: u32,
     advisor: impl FnOnce(&str) -> Result<String, String>,
 ) -> Result<String, Error> {
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, ticket)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(ticket, 0)?;
     let last = history.last().ok_or(Error::UnknownTicket)?.seq;

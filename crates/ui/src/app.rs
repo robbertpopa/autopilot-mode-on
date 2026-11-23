@@ -58,6 +58,14 @@ pub enum Tab {
     Changes,
 }
 
+/// One engine action on its own thread.
+struct Running {
+    id: u64,
+    ticket: Option<TicketId>,
+    what: &'static str,
+    starts_ticket: bool,
+}
+
 #[allow(clippy::struct_excessive_bools, reason = "independent view toggles")]
 pub struct App {
     pub(crate) options: Options,
@@ -122,14 +130,14 @@ pub struct App {
     pub(crate) reading: Option<Result<autopilot_engine::Reading, String>>,
     pub(crate) for_project: bool,
     pub(crate) profile_problem: Option<(Step, String)>,
-    pub(crate) busy: bool,
-    pub(crate) new_started: bool,
+    /// The actions running now. Tickets run side by side; one ticket has one
+    /// action at a time.
+    running: Vec<Running>,
+    next_action: u64,
     /// The palette in use, resolved from `theme`.
     pub(crate) light: bool,
     pub(crate) theme: theme::ThemeChoice,
     pub(crate) agent: backend::AgentChoice,
-    /// What the running action is doing, in words.
-    busy_what: &'static str,
     /// Texts of what each waiting request asks, read once per snapshot.
     waiting_cache: std::collections::HashMap<(TicketId, RequestId), String>,
     /// Whether the data folder holds the sample-data marker, read once per snapshot.
@@ -167,6 +175,8 @@ pub struct App {
     /// The service logos of the welcome screens, loaded on first use.
     pub(crate) welcome_logos: Vec<egui::TextureHandle>,
     open_newest: bool,
+    /// Tickets that finished starting and are not yet handed to the driver.
+    new_tickets: usize,
     pub(crate) icon: Option<egui::TextureHandle>,
     pub(crate) group_by_status: bool,
     pub(crate) closed_groups: std::collections::HashSet<String>,
@@ -244,12 +254,11 @@ impl App {
             reading: None,
             for_project: false,
             profile_problem: None,
-            busy: false,
-            new_started: false,
+            running: Vec::new(),
+            next_action: 0,
             light,
             theme: choice,
             agent,
-            busy_what: "Working",
             waiting_cache: std::collections::HashMap::new(),
             sample_data,
             saved_workspace,
@@ -274,6 +283,7 @@ impl App {
             git_edit: None,
             welcome_logos: Vec::new(),
             open_newest: false,
+            new_tickets: 0,
             icon: theme::icon_texture(context),
             group_by_status: false,
             closed_groups: std::collections::HashSet::new(),
@@ -391,11 +401,23 @@ impl App {
         if first {
             self.apply_start_view();
         }
-        if self.open_newest {
-            self.open_newest = false;
-            if let Some(newest) = self.snapshot.tickets.first().map(|view| view.id.clone()) {
-                self.fresh.push(newest.clone());
-                self.auto.driven.push(newest.clone());
+        // Every ticket started here is driven, opened or not: the owner may have
+        // gone on to write the next one.
+        while self.new_tickets > 0 {
+            let newest = self
+                .snapshot
+                .tickets
+                .iter()
+                .map(|view| view.id.clone())
+                .find(|id| !self.auto.driven.contains(id));
+            let Some(newest) = newest else {
+                break;
+            };
+            self.new_tickets -= 1;
+            self.fresh.push(newest.clone());
+            self.auto.driven.push(newest.clone());
+            if self.open_newest {
+                self.open_newest = false;
                 self.open(&newest);
             }
         }
@@ -474,8 +496,7 @@ impl App {
     /// Understand step has passed. A ticket from an earlier session is never
     /// picked up here, so opening the window never spends anything.
     fn auto_orchestrate(&mut self) {
-        if self.busy
-            || self.agent != backend::AgentChoice::Claude
+        if self.agent != backend::AgentChoice::Claude
             || self.orchestrator == backend::Orchestrator::Off
         {
             return;
@@ -483,6 +504,7 @@ impl App {
         let ready = self.fresh.iter().position(|id| {
             self.ticket(id).is_some_and(|view| {
                 view.triage.is_none()
+                    && !self.running_for(id)
                     && view
                         .step(Step::Understand)
                         .is_some_and(|card| card.state == StepState::Passed)
@@ -502,10 +524,10 @@ impl App {
     /// the button on the ticket stays as the way to try again. Opening the
     /// window never starts anything: only a ticket started here is driven.
     fn auto_advance(&mut self) {
-        if self.busy {
-            return;
-        }
         let next = self.auto.driven.iter().find_map(|id| {
+            if self.running_for(id) {
+                return None;
+            }
             if self.fresh.contains(id) {
                 // The orchestrator goes first and picks the later steps' models.
                 return None;
@@ -545,12 +567,40 @@ impl App {
         }
     }
 
+    /// Whether an action is running for this ticket.
+    fn running_for(&self, id: &TicketId) -> bool {
+        self.running
+            .iter()
+            .any(|each| each.ticket.as_ref() == Some(id))
+    }
+
+    /// Whether the open ticket has an action running, which is when its own
+    /// buttons wait. Another ticket's work never blocks it.
+    pub(crate) fn busy(&self) -> bool {
+        self.current_work().is_some()
+    }
+
+    /// What the open ticket is doing, in words. With no ticket open, a ticket
+    /// being created counts, so the first seconds are not blank.
+    fn current_work(&self) -> Option<&'static str> {
+        self.running
+            .iter()
+            .find(|each| each.ticket == self.selected)
+            .map(|each| each.what)
+    }
+
     /// Run an engine action without blocking the window.
     pub(crate) fn act(&mut self, action: Action) {
-        self.busy = true;
-        self.busy_what = action.describe();
+        self.next_action += 1;
+        self.running.push(Running {
+            id: self.next_action,
+            ticket: action.ticket().cloned(),
+            what: action.describe(),
+            starts_ticket: matches!(action, Action::Start { .. }),
+        });
         self.notice = None;
         backend::run(
+            self.next_action,
             self.options.clone(),
             action,
             self.context.clone(),
@@ -629,10 +679,16 @@ impl App {
                     self.installing = false;
                     self.notice = Some((false, format!("The update was not installed: {why}")));
                 }
-                Message::Done(outcome) => {
-                    self.busy = false;
-                    self.open_newest = outcome.is_ok() && self.new_started;
-                    self.new_started = false;
+                Message::Done(id, outcome) => {
+                    let ended = id
+                        .and_then(|id| self.running.iter().position(|each| each.id == id))
+                        .map(|at| self.running.remove(at));
+                    // A new ticket opens by itself only when the owner is still
+                    // waiting on it, not when they went on to something else.
+                    if outcome.is_ok() && ended.is_some_and(|each| each.starts_ticket) {
+                        self.new_tickets += 1;
+                        self.open_newest = self.selected.is_none() && self.mode == Mode::Watch;
+                    }
                     self.notice = Some(match outcome {
                         Ok(text) => (true, text),
                         Err(text) => (false, text),
@@ -789,12 +845,12 @@ impl App {
     /// of the page and beside each button that starts work, so a click always
     /// shows that it was taken.
     pub(crate) fn busy_inline(&self, ui: &mut egui::Ui) {
-        if !self.busy {
+        let Some(what) = self.current_work() else {
             return;
-        }
+        };
         ui.horizontal(|ui| {
             ui.add(egui::Spinner::new().size(14.0).color(theme::BLUE()));
-            ui.label(theme::muted(format!("{}...", self.busy_what)));
+            ui.label(theme::muted(format!("{what}...")));
         });
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(100));

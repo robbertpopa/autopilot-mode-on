@@ -54,7 +54,11 @@ pub enum Message {
     /// Who Git signs commits as.
     GitIdentity(autopilot_accounts::GitIdentity),
     /// The outcome of an action: a short confirmation, or the reason it failed.
-    Done(Result<String, String>),
+    ///
+    /// The number is the one `run` gave the action, so the window knows which
+    /// of the actions running side by side has ended. Outcomes of the small
+    /// settings tasks carry none.
+    Done(Option<u64>, Result<String, String>),
     /// The answer of the release check: a newer version, nothing, or why not.
     Update(Result<Option<autopilot_update::Update>, String>),
     /// The installer was downloaded and checked, and handed to the system.
@@ -165,6 +169,35 @@ pub fn now_ms() -> u64 {
 }
 
 impl Action {
+    /// The ticket the action works on. A new ticket has none yet.
+    #[must_use]
+    pub const fn ticket(&self) -> Option<&TicketId> {
+        match self {
+            Self::Start { .. } => None,
+            Self::SendBack { ticket, .. }
+            | Self::ApproveCorrected { ticket, .. }
+            | Self::ChoosePipeline { ticket, .. }
+            | Self::Attach { ticket, .. }
+            | Self::Decide { ticket, .. }
+            | Self::AcceptDefaults { ticket }
+            | Self::Advise { ticket, .. }
+            | Self::Chat { ticket, .. }
+            | Self::RunCustom { ticket, .. }
+            | Self::Explain { ticket, .. }
+            | Self::RerunUnderstand(ticket)
+            | Self::RerunUnderstandWithMoreTurns(ticket)
+            | Self::MakePlan(ticket)
+            | Self::RerunPlan(ticket)
+            | Self::Orchestrate(ticket)
+            | Self::MakeDesign(ticket)
+            | Self::RerunDesign(ticket)
+            | Self::OpenDesign(ticket)
+            | Self::Pause(ticket)
+            | Self::Resume(ticket)
+            | Self::Stop(ticket) => Some(ticket),
+        }
+    }
+
     /// What is happening, in words, while the action runs.
     #[must_use]
     pub const fn describe(&self) -> &'static str {
@@ -268,7 +301,10 @@ pub fn save_git_identity(
 ) {
     thread::spawn(move || {
         if let Err(reason) = autopilot_accounts::set_git_identity(&guardian(), &name, &email) {
-            let _ = sender.send(Message::Done(Err(format!("Could not save: {reason}"))));
+            let _ = sender.send(Message::Done(
+                None,
+                Err(format!("Could not save: {reason}")),
+            ));
         }
         let _ = sender.send(Message::GitIdentity(autopilot_accounts::git_identity(
             guardian(),
@@ -294,7 +330,10 @@ pub fn switch_account(
             }
         };
         if let Err(reason) = result {
-            let _ = sender.send(Message::Done(Err(format!("Could not switch: {reason}"))));
+            let _ = sender.send(Message::Done(
+                None,
+                Err(format!("Could not switch: {reason}")),
+            ));
         }
         fetch_accounts(context, sender);
     });
@@ -333,7 +372,7 @@ pub fn install_update(
         let guardian = guardian();
         let directory = std::env::temp_dir().join("autopilot-mode-on-updates");
         let outcome = autopilot_update::download(&guardian, &update, &directory)
-            .and_then(|file| autopilot_update::open_installer(&guardian, &file));
+            .and_then(|file| autopilot_update::open_installer(&file));
         let _ = sender.send(Message::Installing(outcome));
         context.request_repaint();
     });
@@ -353,6 +392,27 @@ pub enum AgentChoice {
 }
 
 const AGENT_FILE: &str = "ui-agent.txt";
+const DESIGN_FILE: &str = "ui-design-reads.txt";
+
+/// Whether Design may read the project's files, as Claude Code does. On unless
+/// turned off: mockups drawn without seeing the application have nothing to do
+/// with it. Off means the step works from the ticket's words alone.
+#[must_use]
+pub fn design_reads_project(data_dir: &Path) -> bool {
+    std::fs::read_to_string(data_dir.join(DESIGN_FILE)).map_or(true, |text| text.trim() != "no")
+}
+
+pub fn save_design_reads_project(data_dir: &Path, reads: bool) {
+    let _ = std::fs::create_dir_all(data_dir);
+    let _ = std::fs::write(data_dir.join(DESIGN_FILE), if reads { "yes" } else { "no" });
+}
+
+/// The folder Design may read, or none when the owner chose the plain mode.
+fn design_folder(options: &Options, ticket: &TicketId) -> Option<PathBuf> {
+    design_reads_project(&options.data_dir)
+        .then(|| ticket_folder(options, ticket))
+        .flatten()
+}
 const NOTIFY_FILE: &str = "ui-notify.txt";
 
 /// Whether the window may show desktop notifications. On unless turned off.
@@ -821,10 +881,16 @@ fn fixture_agent() -> Result<FixtureAgent, String> {
 }
 
 /// Run an action on its own thread and report the outcome.
-pub fn run(options: Options, action: Action, context: egui::Context, sender: Sender<Message>) {
+pub fn run(
+    id: u64,
+    options: Options,
+    action: Action,
+    context: egui::Context,
+    sender: Sender<Message>,
+) {
     thread::spawn(move || {
         let outcome = perform(&options, &action);
-        let _ = sender.send(Message::Done(outcome));
+        let _ = sender.send(Message::Done(Some(id), outcome));
         context.request_repaint();
     });
 }
@@ -963,7 +1029,7 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
         }
         Action::MakeDesign(ticket) => {
             orchestrated_first(options, ticket);
-            let folder = ticket_folder(options, ticket);
+            let folder = design_folder(options, ticket);
             let agent = chosen_agent(options, Step::Design, Some(ticket), folder.as_deref())?;
             let history =
                 autopilot_engine::watch(directory, ticket, 0).map_err(|error| error.to_string())?;
@@ -977,7 +1043,7 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                 .map_err(|error| error.to_string())
         }
         Action::RerunDesign(ticket) => {
-            let folder = ticket_folder(options, ticket);
+            let folder = design_folder(options, ticket);
             let agent = chosen_agent(options, Step::Design, Some(ticket), folder.as_deref())?;
             autopilot_engine::rerun_design(directory, ticket, &agent)
                 .map(|_| "New design ready".to_owned())
@@ -1013,8 +1079,23 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             if !folder.is_dir() {
                 return Err("there is no saved design for this ticket yet".to_owned());
             }
-            let guardian = beside("autopilot-process-guardian")?;
-            autopilot_update::open_installer(&guardian, &folder)?;
+            // Each mockup is a page of its own: open them all in the browser,
+            // not the folder they sit in.
+            let mut pages: Vec<PathBuf> = std::fs::read_dir(&folder)
+                .map_err(|error| error.to_string())?
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| {
+                    path.extension()
+                        .is_some_and(|extension| extension == "html")
+                })
+                .collect();
+            pages.sort();
+            if pages.is_empty() {
+                autopilot_update::open_installer(&folder)?;
+            }
+            for page in pages.iter().take(6) {
+                autopilot_update::open_installer(page)?;
+            }
             Ok("Opened the mockups".to_owned())
         }
         Action::Orchestrate(ticket) => orchestrate(options, ticket),

@@ -137,7 +137,7 @@ pub fn triage_ticket(
     has_project: bool,
     orchestrator: impl FnOnce(&str) -> Result<String, String>,
 ) -> Result<Triage, Error> {
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, ticket)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(ticket, 0)?;
     let last = history.last().ok_or(Error::UnknownTicket)?.seq;

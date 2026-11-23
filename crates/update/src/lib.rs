@@ -267,28 +267,8 @@ pub fn download(guardian: &Path, update: &Update, directory: &Path) -> Result<Pa
 ///
 /// # Errors
 /// Returns a sentence if the system opener is missing or cannot start.
-pub fn open_installer(guardian: &Path, installer: &Path) -> Result<(), String> {
-    let program = if cfg!(windows) {
-        let root = env::var_os("SYSTEMROOT").ok_or("SYSTEMROOT is not set")?;
-        PathBuf::from(root).join("explorer.exe")
-    } else {
-        PathBuf::from("/usr/bin/open")
-    };
-    // explorer.exe exits with 1 even when it works, so only a launch error counts.
-    let spec = CommandSpec {
-        program,
-        args: vec![installer.into()],
-        env: Vec::new(),
-        cwd: None,
-    };
-    let limits = Limits {
-        timeout: Duration::from_secs(15),
-        bytes_per_stream: 4096,
-    };
-    Runner::new(guardian.to_path_buf())
-        .run(&spec, &[], limits, &AtomicBool::new(false))
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+pub fn open_installer(installer: &Path) -> Result<(), String> {
+    autopilot_process::open_with_system(installer)
 }
 
 #[cfg(test)]

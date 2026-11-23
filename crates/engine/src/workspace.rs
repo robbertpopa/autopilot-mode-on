@@ -43,7 +43,7 @@ pub fn canonical(folder: &Path) -> Option<String> {
 pub fn record(directory: &Path, ticket: &TicketId, folder: &Path) -> Result<String, Error> {
     let text = canonical(folder)
         .ok_or_else(|| Error::NotReady(format!("{} is not a folder", folder.display())))?;
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, ticket)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(ticket, 0)?;
     let last = history.last().ok_or(Error::UnknownTicket)?.seq;

@@ -63,7 +63,7 @@ pub fn reset_step(
     step: Step,
     and_after: bool,
 ) -> Result<(), Error> {
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, ticket)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(ticket, 0)?;
     let last = history.last().ok_or(Error::UnknownTicket)?.seq;
@@ -129,7 +129,7 @@ pub fn rerun_understand(
                 && !crate::allowances::allowed(directory, Step::Understand)
         }
     };
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, ticket)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(ticket, 0)?;
     let mut last = history.last().ok_or(Error::UnknownTicket)?.seq;
