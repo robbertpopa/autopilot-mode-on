@@ -143,8 +143,10 @@ pub enum Auth {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WhenUnsure {
-    #[default]
     Ask,
+    /// Default: fewer stops for the owner. Design, Plan and the pull request
+    /// are approvals and still ask whatever this says.
+    #[default]
     DecideAndTell,
 }
 

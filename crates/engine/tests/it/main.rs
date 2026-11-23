@@ -546,15 +546,15 @@ fn a_ticket_when_unsure_beats_the_profile_for_that_ticket_only() {
     let one = understood_with(data.path(), "one", None);
     let two = understood_with(data.path(), "two", None);
     let profile = Profile::parse("p.toml", "").unwrap();
-    assert_eq!(profile.when_unsure, WhenUnsure::Ask);
-    set_when_unsure(data.path(), &one, UnsureMode::DecideAndTell).unwrap();
+    assert_eq!(profile.when_unsure, WhenUnsure::DecideAndTell);
+    set_when_unsure(data.path(), &one, UnsureMode::Ask).unwrap();
     assert_eq!(
         effective_when_unsure(data.path(), &one, &profile).unwrap(),
-        WhenUnsure::DecideAndTell
+        WhenUnsure::Ask
     );
     assert_eq!(
         effective_when_unsure(data.path(), &two, &profile).unwrap(),
-        WhenUnsure::Ask
+        WhenUnsure::DecideAndTell
     );
 }
 

@@ -1313,6 +1313,41 @@ effort = \"high\"
         assert_eq!(read(&options).tickets.len(), 1);
     }
 
+    // Invariant: with `when_unsure = "decide_and_tell"` a started ticket does not
+    // wait on Clarify; with the default it still asks. A change that always
+    // asks, or always decides, fails one of the two halves.
+    #[test]
+    fn decide_and_tell_answers_clarify_and_ask_still_waits() {
+        for (setting, waits) in [("decide_and_tell", false), ("ask", true)] {
+            let directory = tempfile::tempdir().unwrap();
+            let options = Options {
+                data_dir: directory.path().join("data"),
+                profile: directory.path().join("profile.toml"),
+                view: None,
+                ticket: None,
+            };
+            std::fs::write(&options.profile, format!("when_unsure = \"{setting}\"\n")).unwrap();
+            backend::AgentChoice::Practice.save(&options.data_dir);
+            perform(
+                &options,
+                &Action::Start {
+                    title: "Decide".into(),
+                    description: "Add an export option".into(),
+                    attachments: Vec::new(),
+                    workspace: Some(directory.path().to_path_buf()),
+                    pipeline: None,
+                },
+            )
+            .unwrap();
+            let view = read(&options).tickets[0].clone();
+            let clarify_open = matches!(
+                view.step(Step::Clarify).unwrap().state,
+                autopilot_pipeline::StepState::Asking(_)
+            );
+            assert_eq!(clarify_open, waits, "when_unsure = {setting}");
+        }
+    }
+
     // Invariant: from the window a ticket goes Understand, Clarify (recommended
     // answers), then "Make the plan", and the plan waits for approval; approving
     // it settles the step. A ticket that is not ready is refused with a reason.

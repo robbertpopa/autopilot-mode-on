@@ -214,6 +214,7 @@ impl App {
             theme::cost_tag(ui, true);
             ui.label(format!("{} estimated", dollars(view.subscription)));
         });
+        crate::ticket::live_status(ui, view);
     }
 
     /// A question for the advisor, a strong read-only model with a small cap
