@@ -280,7 +280,13 @@ impl App {
             .is_some_and(|card| card.state == StepState::Passed);
         let on = self.orchestrator != crate::backend::Orchestrator::Off
             && self.agent == crate::backend::AgentChoice::Claude;
-        if understood && on && !self.busy {
+        // It only sets Design and Plan, so once both have started there is
+        // nothing left for it to choose.
+        let open = [Step::Design, Step::Plan].iter().any(|step| {
+            view.step(*step)
+                .is_some_and(|card| card.state == StepState::Idle)
+        });
+        if understood && on && open && !self.busy {
             ui.add_space(8.0);
             if ui
                 .button("Ask the orchestrator to choose models and effort")

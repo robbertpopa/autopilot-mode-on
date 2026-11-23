@@ -176,7 +176,16 @@ fn clause(text: &str, profile: &Profile) -> Result<Proposal, String> {
             after: (!off).to_string(),
         });
     }
-    Err("not understood".into())
+    if ["continue", "proceed", "start", "go on", "run", "resume"]
+        .iter()
+        .any(|word| text.contains(word))
+    {
+        return Err(
+            "not understood. This box changes settings; it does not start work. Real Build runs wait for the containment spike (S6)"
+                .into(),
+        );
+    }
+    Err("not understood. Try \"use opus for the plan\", \"effort high for design\" or \"don't ask after plan\"".into())
 }
 
 /// Read a request. Settings that already have the asked value are left out.
@@ -319,6 +328,8 @@ mod tests {
         assert!(reading.notes[0].contains("spending limit cannot be changed"));
         let error = propose("make it faster", &profile()).unwrap_err();
         assert!(error.contains("not understood"));
+        let error = propose("continue working", &profile()).unwrap_err();
+        assert!(error.contains("does not start work"), "{error}");
         assert!(propose("   ", &profile()).is_err());
     }
 
