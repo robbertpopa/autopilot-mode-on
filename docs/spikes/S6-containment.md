@@ -62,6 +62,44 @@ A Rust probe ran directly under `codex sandbox` in a disposable Git repository, 
 
 Both processes exited normally. The host verified that the workspace output existed, the sibling marker and local Git config kept their original bytes, and the listener received no sandbox connection. Before the Rust probe, Windows PowerShell under this profile failed during startup with a filesystem-provider and authorization error. That attempt ended at shell startup.
 
+## Linux sandbox in WSL2 (srt)
+
+Run on 2026-11-23 on Windows build 26300: WSL2 Ubuntu 24.04.4 (kernel 6.6.87.2), `@anthropic-ai/sandbox-runtime` (`srt`) 0.0.83, bubblewrap 0.9.0, socat 1.8.0.0, ripgrep, Node 22 (srt needs Node 20 or newer), Claude Code 2.1.330 installed in the distro. The script is `tools/s6-probe/matrix.sh`. It uses synthetic markers only, makes no provider call and costs nothing.
+
+Settings used (paths are the disposable worktree and its siblings):
+
+~~~json
+{"network": {"allowedDomains": ["api.anthropic.com"], "deniedDomains": []},
+ "filesystem": {"denyRead": ["$HOME"],
+                "allowRead": ["$WT", "$HOME/.npm-global/lib/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp"],
+                "allowWrite": ["$WT"],
+                "denyWrite": ["$WT/.git/config", "$WT/.git/hooks"]}}
+~~~
+
+Each row ran twice: once directly under `srt`, and once as a grandchild (`bash -c 'sh -c ...'`) with the environment scrubbed by the launcher (`env -i`). Results were identical except for the environment rows.
+
+| Attempt | Probe | Grandchild | Host check afterwards |
+|---|---|---|---|
+| write inside the worktree | allowed | allowed | file present |
+| write a sibling folder, `/tmp` | denied | denied | no file |
+| read a sibling marker, a home dotfile | denied | denied | marker bytes unchanged |
+| append `.git/config`, write `.git/hooks/pre-push` | denied | denied | config bytes unchanged, no hook |
+| `git push` to a local bare remote | denied | denied | no branch landed |
+| connect to a host loopback listener (control request returned 200 on the host) | denied | denied | |
+| `api.anthropic.com` (the one allowed domain) | reachable | reachable | |
+| `example.com`, and a raw `1.1.1.1:443` that skips the proxy | denied | denied | |
+| `GH_TOKEN`, `ANTHROPIC_API_KEY` in the environment | visible | absent | `srt` inherits the environment; the launcher must scrub it |
+
+Limits of this evidence:
+- The `git push` denial is by filesystem rule (the bare remote lies outside the readable set), not by a network rule. A push to a remote over the network is covered by the domain list, which was not exercised with a real Git host.
+- `gh` is not installed in the distro, so that row shows only that the binary is absent. Token separation rests on the scrubbed environment.
+- `srt` refuses an incomplete config (`network.deniedDomains` is required) and refuses to run without `rg`. Both fail closed. With `denyRead` on the home folder the `apply-seccomp` helper had to be re-allowed, or the command failed to start.
+- Not run: the independent check runner (`cargo`, tests), a provider smoke test with `claude` signed in inside WSL, and `srt` on native Windows (`srt windows-install` provisions a service account and machine-wide WFP filters through a UAC prompt, so it needs the owner's go-ahead).
+- Claude Code's own Bash sandbox is documented as unavailable on native Windows. Inside WSL2 it is available, and `srt` is the same runtime.
+
 ## Result
 
-The direct MXC run is preliminary containment evidence for one Windows CLI version and profile. The independent check launcher, shell compatibility, provider connectivity and credential separation still need testing. Keep real Build, Check and publishing gated on the full S6 matrix.
+- **Native Windows, Claude agent:** level 0. Codex MXC has no documented per-domain network rule, and the recorded profile switches the network off, so the provider would be unreachable. Keep it in fixture mode.
+- **WSL2 with `srt`, probe and descendants:** every row of the local matrix held. This is level 2 evidence for filesystem, process-tree, egress and credential rows. It is not yet enough to enable real Build: the check runner, shell and toolchain compatibility and a provider smoke test with a WSL-only sign-in are still open.
+- The direct MXC run above stays preliminary evidence for one Windows CLI version and profile.
+- Keep real Build, Check and publishing gated until the open rows run. The refusal in `autopilot build` stays.

@@ -36,7 +36,16 @@
 | 1 | Level 0 plus a validated filesystem, process and egress boundary for agents and checks | Required for real Build, Check and publishing. S6 records each supported launcher, platform and auth mode. |
 | 2 | A separately validated WSL or container runtime | Alternative if a native runtime cannot meet level 1. |
 
-The [S6 Windows preflight](spikes/S6-containment.md#windows-mxc-preflight) exercised one MXC profile against synthetic files, a local TCP listener and a child process. S6 still needs a validated check runner, shell compatibility and a provider smoke test with credential separation.
+| Platform | Launcher | Auth mode | Status (2026-11-23) |
+|---|---|---|---|
+| Windows native | none (Claude's sandbox is unavailable) | subscription or API | Level 0. Real Build refused. |
+| Windows native | Codex MXC `workspace-only` | none (network off) | Probe only; the provider is unreachable, so it cannot host Claude. |
+| WSL2 Ubuntu 24.04 | `srt` 0.0.83 (bubblewrap, seccomp, domain proxy) | not yet tested | Local matrix passed for a probe and a descendant. Check runner and provider smoke test open. Still refused. |
+| macOS, Linux | `srt` | not tested | Not tested. |
+
+Details, settings and limits: [S6 Linux sandbox in WSL2](spikes/S6-containment.md#linux-sandbox-in-wsl2-srt). The launcher must scrub the environment itself: `srt` passes it through.
+
+The [S6 Windows preflight](spikes/S6-containment.md#windows-mxc-preflight) exercised one MXC profile against synthetic files, a local TCP listener and a child process.
 
 ## Reporting
 
