@@ -151,9 +151,6 @@ impl App {
     /// Title, status, spend, and the controls that matter.
     pub(crate) fn run_header(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(&view.title).size(18.0).strong());
-            let (text, fill, color) = badge_colors(view.badge, view);
-            theme::pill(ui, &text, fill, color);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.menu_button("More", |ui| {
                     for (text, why) in [
@@ -193,6 +190,16 @@ impl App {
                         Action::Pause(view.id.clone())
                     });
                 }
+                // The buttons are placed first, so the status and the title only
+                // get what is left and a long title is cut, never run under them.
+                let (text, fill, color) = badge_colors(view.badge, view);
+                theme::pill(ui, &text, fill, color);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(&view.title).size(18.0).strong()).truncate(),
+                    )
+                    .on_hover_text(&view.title);
+                });
             });
         });
         ui.horizontal(|ui| {
@@ -254,7 +261,7 @@ impl App {
         if let Some(triage) = &view.triage {
             ui.add_space(10.0);
             theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-                ui.set_width(ui.available_width() - 38.0);
+                ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Orchestrator").strong());
                     ui.label(theme::muted(format!("{:?} complexity", triage.complexity)));
@@ -375,7 +382,7 @@ impl App {
             .corner_radius(egui::CornerRadius::same(10))
             .inner_margin(Margin::symmetric(16, 12))
             .show(ui, |ui| {
-                ui.set_width(ui.available_width() - 38.0);
+                ui.set_width(ui.available_width());
                 ui.label(RichText::new(text).size(14.0).strong().color(color));
                 if problem.is_none() && ready_to_design(view) {
                     let busy = self.busy;
@@ -447,7 +454,7 @@ impl App {
             .corner_radius(egui::CornerRadius::same(10))
             .inner_margin(Margin::same(16))
             .show(ui, |ui| {
-                ui.set_width(ui.available_width() - 38.0);
+                ui.set_width(ui.available_width());
                 ui.label(
                     RichText::new(format!("{} needs you", step_name(*step)))
                         .size(14.0)
@@ -510,7 +517,7 @@ impl App {
             theme::BORDER()
         };
         theme::card(theme::CARD(), border).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 38.0);
+            ui.set_width(ui.available_width());
             let latest = view.rounds.last();
             let limit = self
                 .profile
@@ -598,7 +605,7 @@ impl App {
     /// diff, and applied only when the owner says so.
     pub(crate) fn change_box(&mut self, ui: &mut egui::Ui) {
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 38.0);
+            ui.set_width(ui.available_width());
             let edit = ui.add(
                 egui::TextEdit::multiline(&mut self.change_text)
                     .desired_rows(2)

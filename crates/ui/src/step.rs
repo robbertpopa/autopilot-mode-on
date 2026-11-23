@@ -80,7 +80,7 @@ impl App {
             }
         });
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 38.0);
+            ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new("IN SHORT")
@@ -137,7 +137,7 @@ impl App {
         self.tab = tab;
         ui.add_space(6.0);
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 38.0);
+            ui.set_width(ui.available_width());
             ui.set_min_height(240.0);
             self.tab_body(ui, &view, step);
         });
@@ -222,15 +222,16 @@ impl App {
             .ok()
             .and_then(|profile| profile.step(step))
             .is_some_and(|settings| settings.ask_after);
-        ui.columns(2, |columns| {
-            columns[0].label(theme::muted("Why it ran"));
-            columns[0].label(why_it_ran(step));
-            columns[1].label(theme::muted("Asks you"));
-            columns[1].label(if ask {
-                "Yes: it waits for your approval when it finishes."
-            } else {
-                "Not unless a rule forces it, or you tick the box."
-            });
+        // Stacked, not two columns: the drawer is too narrow for two readable
+        // columns, and their text ran together.
+        ui.label(theme::muted("Why it ran"));
+        ui.label(why_it_ran(step));
+        ui.add_space(4.0);
+        ui.label(theme::muted("Asks you"));
+        ui.label(if ask {
+            "Yes: it waits for your approval when it finishes."
+        } else {
+            "Not unless a rule forces it, or you tick the box."
         });
         if step == Step::BuildCheck {
             ui.add_space(8.0);
@@ -308,10 +309,11 @@ impl App {
                 .color(theme::TEXT_MUTED()),
         );
         let card = view.step(step).map(|card| card.state.clone());
-        let width = ui.available_width() - 36.0;
+        // A card's own margins are 28 wide, so a button of this width fills one.
+        let width = ui.available_width() - 28.0;
         let button = |text: &str| egui::Button::new(text).min_size(egui::vec2(width, 40.0));
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 38.0);
+            ui.set_width(ui.available_width());
             ui.label(theme::muted("Run"));
             // Only Understand runs for real today: the other steps need a
             // real agent, which stays refused until S6.
@@ -363,7 +365,7 @@ impl App {
         });
         ui.add_space(8.0);
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 38.0);
+            ui.set_width(ui.available_width());
             ui.label(theme::muted("Control"));
             let paused = view.badge == autopilot_engine::Badge::Paused;
             if ui
@@ -405,7 +407,7 @@ impl App {
         });
         ui.add_space(8.0);
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 38.0);
+            ui.set_width(ui.available_width());
             ui.label(theme::muted("Open"));
             for text in [
                 "Open the worktree",

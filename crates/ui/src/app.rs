@@ -707,7 +707,7 @@ impl App {
         ));
         ui.add_space(12.0);
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
-            ui.set_width(ui.available_width() - 38.0);
+            ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Today").strong());
                 theme::cost_tag(ui, false);
