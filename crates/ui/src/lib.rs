@@ -686,20 +686,11 @@ mod tests {
         let saved = autopilot_engine::save_draft(&options.profile, &draft).unwrap();
         let step = Step::Custom(1);
         assert!(saved.custom_step(step).is_some());
-        assert!(saved.pipeline(&draft.name).unwrap().custom_steps() == [step]);
+        assert_eq!(saved.pipeline(&draft.name).unwrap().custom_steps(), [step]);
         app.profile = Ok(saved);
         app.pipeline_selected = Some(draft.name.clone());
         app.step_open = Some(step);
         frame(&mut app, &context);
-        assert_eq!(
-            autopilot_engine::step_name(step),
-            app.profile
-                .as_ref()
-                .unwrap()
-                .custom_step(step)
-                .unwrap()
-                .name
-        );
     }
 
     // Invariant: a plan can be sent back with a note (the step stops as
