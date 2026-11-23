@@ -268,12 +268,12 @@ fn a_build_that_never_passes_stops_at_the_round_cap_and_asks_the_owner() {
     let BuildOutcome::NeedsYou { request, .. } = build(&world, NEEDS_FIX).unwrap() else {
         panic!("expected the owner to be asked");
     };
-    assert_eq!(request.as_str(), "build_check-stuck");
+    assert!(request.as_str().starts_with("build_check-stuck"));
     let waiting = Inbox::in_data_dir(world.data.path()).requests().unwrap();
     assert_eq!(waiting.len(), 1);
     assert!(matches!(
         kinds(&world).last(),
-        Some(Event::Asked { request }) if request.as_str() == "build_check-stuck"
+        Some(Event::Asked { request }) if request.as_str().starts_with("build_check-stuck")
     ));
 }
 
@@ -453,7 +453,7 @@ fn an_approved_commit_is_pushed_and_opened_as_a_draft() {
     let bare = remote(&world, GITHUB);
     let p = publishing(&world);
     let id = prepare_publish(world.data.path(), &world.ticket, &setup(&world, &p)).unwrap();
-    assert_eq!(id.as_str(), "pull_request-publish");
+    assert!(id.as_str().starts_with("pull_request-publish"));
     // Nothing has left the machine yet.
     assert_eq!(rev_parse(bare.path(), "HEAD"), "HEAD");
     let waiting = Inbox::in_data_dir(world.data.path()).requests().unwrap();

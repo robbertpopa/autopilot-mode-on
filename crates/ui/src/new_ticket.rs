@@ -32,7 +32,7 @@ const fn locked(step: Step) -> bool {
 
 impl App {
     pub(crate) fn new_ticket_screen(&mut self, ui: &mut egui::Ui) {
-        if ui.input(|input| input.key_pressed(egui::Key::Escape)) && !self.busy {
+        if ui.input(|input| input.key_pressed(egui::Key::Escape)) && !self.busy() {
             self.mode = Mode::Watch;
             return;
         }
@@ -104,7 +104,6 @@ impl App {
         if let Some(action) = start {
             self.home = composer::NewTicket::default();
             self.pipeline_chosen = false;
-            self.new_started = true;
             self.mode = Mode::Watch;
             self.act(action);
         }
@@ -196,6 +195,33 @@ impl App {
     }
 
     /// The steps and which of them will ask, read from the profile.
+    /// How Design gets to know the application: Claude Design reading the project
+    /// (read-only), or the ticket's words alone.
+    pub(crate) fn design_mode_picker(&self, ui: &mut egui::Ui) {
+        // Without Claude there is no choice to make: the practice agent draws
+        // fixed text.
+        if self.agent != backend::AgentChoice::Claude {
+            return;
+        }
+        let reads = backend::design_reads_project(&self.options.data_dir);
+        let mut choice = reads;
+        ui.add_space(6.0);
+        ui.label(theme::muted("Design draws from"));
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut choice, true, "Claude Design")
+                .on_hover_text(
+                    "Claude reads the whole application first (read-only): its screens, colours, fonts and names, so the mockups match the real pages. Costs more.",
+                );
+            ui.selectable_value(&mut choice, false, "Normal")
+                .on_hover_text(
+                    "A plain request from the ticket's words alone. Cheaper, but it cannot see the application.",
+                );
+        });
+        if choice != reads {
+            backend::save_design_reads_project(&self.options.data_dir, choice);
+        }
+    }
+
     fn what_will_happen(&self, ui: &mut egui::Ui) {
         ui.label(
             RichText::new("WHAT WILL HAPPEN")
@@ -240,6 +266,7 @@ impl App {
                 }
             });
         }
+        self.design_mode_picker(ui);
         ui.add_space(8.0);
         let budget = profile.budgets.per_ticket_microusd.map_or_else(
             || "no limit set".to_owned(),

@@ -378,7 +378,7 @@ fn excerpt(path: &Path) -> Option<String> {
 /// Returns an error if another action holds the data directory, the ticket is
 /// unknown or done, or a source is refused. Nothing is written then.
 pub fn attach(directory: &Path, ticket: &TicketId, sources: &[PathBuf]) -> Result<usize, Error> {
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, ticket)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(ticket, 0)?;
     let last = history.last().ok_or(Error::UnknownTicket)?.seq;

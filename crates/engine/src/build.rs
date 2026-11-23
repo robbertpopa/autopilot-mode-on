@@ -277,7 +277,7 @@ pub(crate) fn stuck_request(ticket: &TicketId, history: &[RecordedEvent]) -> Req
         });
     let detail = last_failure.unwrap_or_else(|| "no check result was recorded".into());
     Request {
-        id: RequestId::from(STUCK_REQUEST),
+        id: crate::scoped(ticket, STUCK_REQUEST),
         ticket: ticket.clone(),
         body: RequestBody::Approval {
             action: format!(
@@ -376,7 +376,7 @@ pub fn run_build(
     setup: &BuildSetup<'_>,
     _isolation: Isolation,
 ) -> Result<BuildOutcome, Error> {
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, &ticket.id)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(&ticket.id, 0)?;
     let last = history.last().ok_or(Error::UnknownTicket)?.seq;
@@ -493,7 +493,7 @@ fn conclude(
             Ok(BuildOutcome::Ready)
         }
         Ok(Outcome::NeedsYou { stop, .. }) => {
-            let request = RequestId::from(STUCK_REQUEST);
+            let request = crate::scoped(ticket, STUCK_REQUEST);
             journal.push(Event::Asked {
                 request: request.clone(),
             })?;

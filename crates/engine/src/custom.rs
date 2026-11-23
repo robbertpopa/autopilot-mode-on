@@ -68,7 +68,7 @@ pub fn run_custom(
             step.as_str()
         )));
     }
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, &ticket.id)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(&ticket.id, 0)?;
     let mut last = history.last().ok_or(Error::UnknownTicket)?.seq;
@@ -158,7 +158,7 @@ impl Settle<'_> {
                 };
                 if self.ask_after {
                     let history = store.events(id, 0)?;
-                    let request = crate::approval_id(&history, self.step);
+                    let request = crate::approval_id(id, &history, self.step);
                     let asked = Event::Asked {
                         request: request.clone(),
                     };

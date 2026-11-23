@@ -28,6 +28,29 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Open a file or folder with the system, as a double click would. The
+/// program is started on its own, outside the supervised job a step runs in:
+/// a window opened inside that job is closed again when the job ends.
+///
+/// # Errors
+/// Returns a sentence if the system opener cannot be started.
+pub fn open_with_system(path: &std::path::Path) -> Result<(), String> {
+    let mut command = if cfg!(windows) {
+        let root = std::env::var_os("SYSTEMROOT").ok_or("SYSTEMROOT is not set")?;
+        std::process::Command::new(PathBuf::from(root).join("explorer.exe"))
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("/usr/bin/open")
+    } else {
+        std::process::Command::new("/usr/bin/xdg-open")
+    };
+    // explorer.exe exits with 1 even when it works, so the exit status is not read.
+    command
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("could not open {}: {error}", path.display()))
+}
+
 const MAX_INPUT: usize = 1024 * 1024;
 const POLL: Duration = Duration::from_millis(15);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);

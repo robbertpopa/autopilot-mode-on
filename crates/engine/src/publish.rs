@@ -138,7 +138,7 @@ pub(crate) fn request(ticket: &TicketId, history: &[RecordedEvent]) -> Result<Re
         let _ = write!(action, ". Asks anyway: {}", offer.reasons.join(", "));
     }
     Ok(Request {
-        id: RequestId::from(PUBLISH_REQUEST),
+        id: crate::scoped(ticket, PUBLISH_REQUEST),
         ticket: ticket.clone(),
         body: RequestBody::Approval {
             action,
@@ -168,7 +168,7 @@ pub fn prepare_publish(
     ticket: &Ticket,
     setup: &PublishSetup<'_>,
 ) -> Result<RequestId, Error> {
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, &ticket.id)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(&ticket.id, 0)?;
     let mut last = history.last().ok_or(Error::UnknownTicket)?.seq;
@@ -246,7 +246,7 @@ pub fn prepare_publish(
             summary: format!("{OFFER_PREFIX}{json}"),
         },
     )?;
-    let id = RequestId::from(PUBLISH_REQUEST);
+    let id = crate::scoped(&ticket.id, PUBLISH_REQUEST);
     push_event(
         &mut store,
         &ticket.id,
@@ -277,7 +277,7 @@ pub fn run_publish(
     setup: &PublishSetup<'_>,
     gh: &Gh,
 ) -> Result<Published, Error> {
-    let _owner = lock_run(directory)?;
+    let _owner = lock_run(directory, &ticket.id)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(&ticket.id, 0)?;
     let mut last = history.last().ok_or(Error::UnknownTicket)?.seq;
