@@ -176,6 +176,14 @@ fn nav_row(
             },
         );
     }
+    if selected {
+        let bar = egui::Rect::from_min_size(
+            rect.left_top() + egui::vec2(0.0, 6.0),
+            egui::vec2(3.0, rect.height() - 12.0),
+        );
+        ui.painter()
+            .rect_filled(bar, egui::CornerRadius::same(2), theme::BLUE());
+    }
     let text_color = if selected {
         theme::TEXT()
     } else {
@@ -346,14 +354,6 @@ impl App {
             if nav_row(ui, name, short, self.mode == mode, narrow, None) {
                 self.mode = mode;
             }
-        }
-        if nav_row(ui, "Help", "?", false, narrow, None) {
-            self.help_open = !self.help_open;
-        }
-        if nav_row(ui, "Search", "S", false, narrow, Some(("^K".into(), false))) {
-            self.search_open = true;
-            self.search_query.clear();
-            self.search_selected = 0;
         }
     }
 

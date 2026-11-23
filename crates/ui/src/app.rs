@@ -102,7 +102,6 @@ pub struct App {
     pub(crate) reading: Option<Result<autopilot_engine::Reading, String>>,
     pub(crate) for_project: bool,
     pub(crate) profile_problem: Option<(Step, String)>,
-    pub(crate) help_open: bool,
     pub(crate) busy: bool,
     pub(crate) new_started: bool,
     /// The palette in use, resolved from `theme`.
@@ -215,7 +214,6 @@ impl App {
             reading: None,
             for_project: false,
             profile_problem: None,
-            help_open: false,
             busy: false,
             new_started: false,
             light,
@@ -624,7 +622,6 @@ impl App {
                         });
                     });
             });
-        self.dialogs(ctx);
         self.search_overlay(ctx);
     }
 
@@ -672,20 +669,6 @@ impl App {
         }
         if self.busy {
             ui.label(theme::muted(format!("{}...", self.busy_what)));
-        }
-    }
-
-    fn dialogs(&mut self, ctx: &egui::Context) {
-        if self.help_open {
-            let mut open = true;
-            egui::Window::new("Help").open(&mut open).show(ctx, |ui| {
-                ui.label("Home: describe what should change and press Start. Tickets that need you are listed first.");
-                ui.label("A ticket: the box on top says what to do next. Click a step for its details.");
-                ui.label("Settings (bottom left): pipeline steps, cost, and who is signed in. Ctrl+N starts a ticket.");
-                ui.label("A grey control marked coming soon is not built yet.");
-                ui.label("Keyboard: Tab and Shift+Tab move between controls, Enter or Space press one, Escape closes a dialog.");
-            });
-            self.help_open = open;
         }
     }
 

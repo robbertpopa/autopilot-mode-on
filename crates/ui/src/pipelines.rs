@@ -392,18 +392,17 @@ impl App {
 fn pipeline_card(ui: &mut egui::Ui, pipeline: &Pipeline, word: &str, chosen: bool) -> bool {
     let shown = egui::Frame::new()
         .fill(if chosen {
-            theme::CARD()
+            theme::BLUE_FILL()
         } else {
             Color32::TRANSPARENT
         })
-        .stroke(egui::Stroke::new(
-            1.0_f32,
-            if chosen {
-                theme::BORDER_STRONG()
-            } else {
-                theme::BORDER()
-            },
-        ))
+        // A thicker blue edge is what tells the owner which pipeline the
+        // detail on the right belongs to.
+        .stroke(if chosen {
+            egui::Stroke::new(2.0_f32, theme::BLUE())
+        } else {
+            egui::Stroke::new(1.0_f32, theme::BORDER())
+        })
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(egui::Margin::symmetric(12, 9))
         .show(ui, |ui| {
