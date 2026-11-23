@@ -120,6 +120,12 @@ pub enum Action {
     RerunPlan(TicketId),
     /// Ask the orchestrator to choose models and effort for the later steps.
     Orchestrate(TicketId),
+    /// Put one question to the advisor, a strong read-only model. The answer
+    /// is kept in the ticket's history and counts against the profile's cap.
+    Advise {
+        ticket: TicketId,
+        question: String,
+    },
     /// Make the design (static mockups) for a ticket that changes a screen,
     /// or skip the step when it needs none.
     MakeDesign(TicketId),
@@ -158,6 +164,7 @@ impl Action {
         match self {
             Self::Start { .. } => "Reading your request",
             Self::Orchestrate(_) => "The orchestrator is choosing models and effort",
+            Self::Advise { .. } => "Asking the advisor",
             Self::MakePlan(_) | Self::RerunPlan(_) => "Making the plan",
             Self::MakeDesign(_) | Self::RerunDesign(_) => "Making the design",
             Self::RunCustom { .. } => "Running your step",
@@ -681,6 +688,43 @@ fn orchestrate(options: &Options, ticket: &TicketId) -> Result<String, String> {
     .map_err(|error| error.to_string())
 }
 
+/// Ask the advisor one question about a ticket. The model and the cap come from
+/// the profile's `[advisor]` section.
+fn advise(options: &Options, ticket: &TicketId, question: &str) -> Result<String, String> {
+    if AgentChoice::read(&options.data_dir) != AgentChoice::Claude {
+        return Err("the advisor needs the Claude agent".to_owned());
+    }
+    let profile =
+        autopilot_engine::load_profile(&options.profile).map_err(|error| error.to_string())?;
+    let settings = profile.advisor.clone();
+    let folder = ticket_folder(options, ticket);
+    let mut config = profile_config(options, Step::Understand);
+    config.model = settings.model;
+    config.effort = settings.effort;
+    let agent = claude_agent(config, folder.as_deref())?;
+    let history =
+        autopilot_engine::watch(&options.data_dir, ticket, 0).map_err(|error| error.to_string())?;
+    let context = autopilot_engine::ticket_words(ticket, &history)
+        .map(|words| {
+            format!(
+                "{}
+
+{}",
+                words.title, words.description
+            )
+        })
+        .map_err(|error| error.to_string())?;
+    autopilot_engine::advise_ticket(
+        &options.data_dir,
+        ticket,
+        question,
+        &context,
+        settings.max_calls,
+        |prompt| agent.advise(prompt).map_err(|error| error.to_string()),
+    )
+    .map_err(|error| error.to_string())
+}
+
 /// Run the orchestrator before a step when it is on and has not decided yet.
 /// Its failure never stops the step: the profile's settings stay in force.
 fn orchestrated_first(options: &Options, ticket: &TicketId) {
@@ -908,6 +952,7 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             Ok("Opened the mockups".to_owned())
         }
         Action::Orchestrate(ticket) => orchestrate(options, ticket),
+        Action::Advise { ticket, question } => advise(options, ticket, question),
         Action::RerunPlan(ticket) => {
             let folder = ticket_folder(options, ticket);
             let agent = chosen_agent(options, Step::Plan, Some(ticket), folder.as_deref())?;

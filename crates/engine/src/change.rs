@@ -278,7 +278,7 @@ mod tests {
             (p.step, p.field),
             (Step::Plan, StepField::Model("opus-5-5".into()))
         );
-        assert_eq!(p.before, "default");
+        assert_eq!(p.before, "opus");
         let p = one("allow only 2 refine rounds");
         assert_eq!(
             (p.step, p.field, p.before.as_str()),

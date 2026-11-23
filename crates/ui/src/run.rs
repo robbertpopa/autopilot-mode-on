@@ -216,7 +216,38 @@ impl App {
         });
     }
 
-    /// The one thing to know or do right now.
+    /// A question for the advisor, a strong read-only model with a small cap
+    /// per ticket. Only with the Claude agent, because the practice agent has
+    /// no advisor to ask.
+    pub(crate) fn advisor_box(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+        if self.agent != crate::backend::AgentChoice::Claude {
+            return;
+        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.advise_text)
+                    .hint_text("Ask the advisor, e.g. is this plan safe?")
+                    .desired_width((ui.available_width() - 80.0).max(120.0)),
+            );
+            let ready = !self.advise_text.trim().is_empty() && !self.busy;
+            if ui
+                .add_enabled(ready, egui::Button::new("Ask"))
+                .on_hover_text(
+                    "One call to a strong model that can read the project but change nothing",
+                )
+                .clicked()
+            {
+                let question = self.advise_text.trim().to_owned();
+                self.advise_text.clear();
+                self.act(Action::Advise {
+                    ticket: view.id.clone(),
+                    question,
+                });
+            }
+        });
+    }
+
     /// What the orchestrator decided for the later steps, or a way to ask it.
     pub(crate) fn orchestrator_card(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         if let Some(triage) = &view.triage {
