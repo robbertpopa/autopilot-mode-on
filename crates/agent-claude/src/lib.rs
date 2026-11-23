@@ -129,6 +129,20 @@ impl ClaudeAgent {
         self
     }
 
+    /// Where a host-run call starts. Claude Code loads the `CLAUDE.md` of its
+    /// working folder and the folders above it, so a call with no project must
+    /// not start in whatever folder this process happens to be in: the owner's
+    /// own repository rules would steer a ticket about something else. An empty
+    /// folder of our own has none.
+    fn call_dir(&self) -> Option<PathBuf> {
+        if let Some(folder) = &self.workspace {
+            return Some(folder.clone());
+        }
+        let folder = process_env::temp_dir().join("autopilot-neutral");
+        std::fs::create_dir_all(&folder).ok()?;
+        Some(folder)
+    }
+
     fn in_project(&self, args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
         if self.workspace.is_some() {
             command::read_project(args)
@@ -237,7 +251,7 @@ impl ClaudeAgent {
     /// Returns an error if Claude Code cannot start, fails, or answers with
     /// something that is not the expected JSON.
     pub fn explain(&self, prompt: &str) -> Result<String, AgentError> {
-        self.one_call(command::explain_args(&self.config), None, prompt)
+        self.one_call(command::explain_args(&self.config), self.call_dir(), prompt)
     }
 
     /// The orchestrator's single call: it reads the ticket and findings (and
@@ -249,7 +263,7 @@ impl ClaudeAgent {
         let reading = self.workspace.is_some();
         self.one_call(
             command::orchestrator_args(&self.config, reading),
-            self.workspace.clone(),
+            self.call_dir(),
             prompt,
         )
     }
@@ -263,7 +277,7 @@ impl ClaudeAgent {
         let reading = self.workspace.is_some();
         self.one_call(
             command::advisor_args(&self.config, reading),
-            self.workspace.clone(),
+            self.call_dir(),
             prompt,
         )
     }
@@ -313,7 +327,7 @@ impl Agent for ClaudeAgent {
             program: self.executable.clone(),
             args: self.in_project(command::understand_args(&self.config, &schema)),
             env: child_env(self.config.auth, process_env::vars_os())?,
-            cwd: self.workspace.clone(),
+            cwd: self.call_dir(),
         };
         let prompt = prompt(request.ticket, request.context)?;
         let runner = Runner::new(self.guardian.clone());
@@ -384,7 +398,7 @@ impl Agent for ClaudeAgent {
             program: self.executable.clone(),
             args: self.in_project(command::design_args(&self.config, &schema)),
             env: child_env(self.config.auth, process_env::vars_os())?,
-            cwd: self.workspace.clone(),
+            cwd: self.call_dir(),
         };
         let prompt = design_prompt(request.ticket, request.context)?;
         let runner = Runner::new(self.guardian.clone());
@@ -406,7 +420,7 @@ impl Agent for ClaudeAgent {
             program: self.executable.clone(),
             args: command::draft_args(&self.config),
             env: child_env(self.config.auth, process_env::vars_os())?,
-            cwd: None,
+            cwd: self.call_dir(),
         };
         let prompt = draft_prompt(&request);
         let runner = Runner::new(self.guardian.clone());
@@ -438,7 +452,7 @@ impl Agent for ClaudeAgent {
             program: self.executable.clone(),
             args: self.in_project(command::custom_args(&self.config, &schema)),
             env: child_env(self.config.auth, process_env::vars_os())?,
-            cwd: self.workspace.clone(),
+            cwd: self.call_dir(),
         };
         let prompt = custom_prompt(&request)?;
         let runner = Runner::new(self.guardian.clone());
@@ -460,7 +474,7 @@ impl Agent for ClaudeAgent {
             program: self.executable.clone(),
             args: self.in_project(command::plan_args(&self.config, &schema)),
             env: child_env(self.config.auth, process_env::vars_os())?,
-            cwd: self.workspace.clone(),
+            cwd: self.call_dir(),
         };
         let prompt = plan_prompt(request.ticket, request.context)?;
         let runner = Runner::new(self.guardian.clone());

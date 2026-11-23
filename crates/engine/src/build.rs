@@ -247,6 +247,22 @@ impl<A: Agent> Round for BuildRound<'_, A> {
 
     fn check(&mut self) -> Result<Vec<autopilot_checks::CheckRun>, Error> {
         self.gate()?;
+        // Checks have no network, so what a Rust project needs is fetched first,
+        // under a role that reaches only the crate registry. A new dependency
+        // updates the lockfile, which is committed here so the change list, the
+        // fingerprint and the published commit all include it. A failed fetch
+        // (a crate that does not exist, a version that does not resolve) is the
+        // agent's to fix, so it is a failing check, not a fault of the machine.
+        if let Err(note) = self.toolbox.prepare(&self.worktree, &self.cancel) {
+            return Ok(vec![autopilot_checks::CheckRun {
+                id: "dependencies".to_owned(),
+                report: autopilot_checks::Report::fail(note),
+                reused: false,
+                can_refine: true,
+            }]);
+        }
+        self.manager
+            .commit_all(&self.ticket.id, "autopilot: update dependencies")?;
         let stats = self.manager.committed_changes(&self.ticket.id)?;
         let changes: Vec<Change> = stats
             .files
@@ -258,12 +274,6 @@ impl<A: Agent> Round for BuildRound<'_, A> {
             .collect();
         let tree = self.manager.fingerprint(&self.ticket.id)?.to_string();
         let key = Key::new(&self.base, &tree, &self.plan_hash);
-        // Checks have no network, so what a Rust project needs is fetched first,
-        // under a role that reaches only the crate registry. A failure here is a
-        // fault of the machine, not something the agent can fix.
-        self.toolbox
-            .prepare(&self.worktree, &self.cancel)
-            .map_err(Error::NotReady)?;
         let context = Context {
             worktree: &self.worktree,
             plan: self.plan,

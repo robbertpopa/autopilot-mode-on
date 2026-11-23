@@ -755,7 +755,7 @@ fn a_rust_build_is_checked_inside_the_sandbox_and_refined() {
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(
         root.join("Cargo.toml"),
-        "[package]\nname = \"sample\"\nversion = \"0.1.0\"\nedition = \"2024\"\nbuild = \"build.rs\"\n",
+        "[package]\nname = \"sample\"\nversion = \"0.1.0\"\nedition = \"2024\"\nbuild = \"build.rs\"\n\n[dependencies]\nitoa = \"1\"\n",
     )
     .unwrap();
     std::fs::write(
@@ -770,7 +770,7 @@ fn a_rust_build_is_checked_inside_the_sandbox_and_refined() {
     .unwrap();
     std::fs::write(
         root.join("src").join("lib.rs"),
-        "pub fn one() -> u32 {\n    1\n}\n",
+        "pub fn one() -> String {\n    itoa::Buffer::new().format(1_u32).to_owned()\n}\n",
     )
     .unwrap();
     std::fs::write(root.join(".gitignore"), "target/\n").unwrap();
@@ -824,6 +824,19 @@ fn a_rust_build_is_checked_inside_the_sandbox_and_refined() {
     .unwrap();
 
     assert_eq!(outcome, BuildOutcome::Ready);
+    // The lockfile in the repository had no entry for the dependency. The fetch
+    // under the registry-only role filled it in and the host committed it.
+    let lock = Command::new("git")
+        .args(["show", "ticket/b-rust:Cargo.lock"])
+        .current_dir(world.repository.path())
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&lock.stdout).contains("itoa"),
+        "the updated lockfile was not committed: {} / {}",
+        String::from_utf8_lossy(&lock.stdout),
+        String::from_utf8_lossy(&lock.stderr)
+    );
     // The build script tried to write beside the worktree on every round.
     assert!(
         !world.worktrees.path().join("escape.txt").exists(),
