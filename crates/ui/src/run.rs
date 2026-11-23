@@ -12,7 +12,7 @@ use crate::theme;
 
 /// Understand and Clarify are settled, the ticket changes a screen and the
 /// Design step has not started.
-fn ready_to_design(view: &TicketView) -> bool {
+pub(crate) fn ready_to_design(view: &TicketView) -> bool {
     let state = |step| {
         view.steps
             .iter()
@@ -29,7 +29,7 @@ fn ready_to_design(view: &TicketView) -> bool {
 }
 
 /// Understand and Clarify are settled and Plan has not started.
-fn ready_to_plan(view: &TicketView) -> bool {
+pub(crate) fn ready_to_plan(view: &TicketView) -> bool {
     let state = |step| {
         view.steps
             .iter()
@@ -293,7 +293,7 @@ impl App {
 
     /// The next of the owner's own steps this ticket's pipeline runs, once the
     /// build has passed and the earlier ones are settled.
-    fn ready_custom(&self, view: &TicketView) -> Option<Step> {
+    pub(crate) fn ready_custom(&self, view: &TicketView) -> Option<Step> {
         let state = |step| view.steps.iter().find(|card| card.step == step);
         if state(Step::BuildCheck)?.state != StepState::Passed {
             return None;

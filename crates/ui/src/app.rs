@@ -36,6 +36,13 @@ pub enum Mode {
     Accounts,
 }
 
+/// Which tickets the window drives by itself, and what it already started.
+#[derive(Default)]
+pub(crate) struct AutoRun {
+    pub(crate) driven: Vec<TicketId>,
+    pub(crate) tried: Vec<(TicketId, Step)>,
+}
+
 /// What the Watch tab shows for the selected ticket.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Screen {
@@ -129,6 +136,9 @@ pub struct App {
     pub(crate) saved_workspace: Option<std::path::PathBuf>,
     /// Tickets started in this window that the orchestrator has not looked at.
     fresh: Vec<TicketId>,
+    /// Tickets started in this window and the steps already started for them
+    /// by themselves.
+    pub(crate) auto: AutoRun,
     pub(crate) orchestrator: backend::Orchestrator,
     /// "Do not ask again after this kind of step" on an approval.
     pub(crate) always: bool,
@@ -241,6 +251,7 @@ impl App {
             sample_data,
             saved_workspace,
             fresh: Vec::new(),
+            auto: AutoRun::default(),
             orchestrator,
             always: false,
             notify,
@@ -381,6 +392,7 @@ impl App {
             self.open_newest = false;
             if let Some(newest) = self.snapshot.tickets.first().map(|view| view.id.clone()) {
                 self.fresh.push(newest.clone());
+                self.auto.driven.push(newest.clone());
                 self.open(&newest);
             }
         }
@@ -476,6 +488,57 @@ impl App {
         if let Some(at) = ready {
             let id = self.fresh.remove(at);
             self.act(Action::Orchestrate(id));
+        }
+    }
+
+    /// Start the next step of a ticket started in this window, without a click:
+    /// the design when the ticket changes a screen, then the plan, then the
+    /// owner's own steps. It stops for anything that needs the owner: a
+    /// question, an approval, a paused or failed ticket. Each step is tried once
+    /// per ticket, so a refusal is never retried in a loop that spends money;
+    /// the button on the ticket stays as the way to try again. Opening the
+    /// window never starts anything: only a ticket started here is driven.
+    fn auto_advance(&mut self) {
+        if self.busy {
+            return;
+        }
+        let next = self.auto.driven.iter().find_map(|id| {
+            if self.fresh.contains(id) {
+                // The orchestrator goes first and picks the later steps' models.
+                return None;
+            }
+            let view = self.ticket(id)?;
+            let stopped = view
+                .steps
+                .iter()
+                .any(|card| matches!(card.state, StepState::Failed(_) | StepState::Interrupted(_)));
+            if view.asking.is_some()
+                || stopped
+                || view.badge == Badge::Paused
+                || view.steps.iter().any(|card| card.state.is_active())
+            {
+                return None;
+            }
+            let (step, action) = if crate::run::ready_to_design(view) {
+                (Step::Design, Action::MakeDesign(id.clone()))
+            } else if crate::run::ready_to_plan(view) {
+                (Step::Plan, Action::MakePlan(id.clone()))
+            } else {
+                let step = self.ready_custom(view)?;
+                (
+                    step,
+                    Action::RunCustom {
+                        ticket: id.clone(),
+                        step,
+                    },
+                )
+            };
+            let key = (id.clone(), step);
+            (!self.auto.tried.contains(&key)).then_some((key, action))
+        });
+        if let Some((key, action)) = next {
+            self.auto.tried.push(key);
+            self.act(action);
         }
     }
 
@@ -585,6 +648,7 @@ impl App {
         self.drain();
         self.update_clock(ctx);
         self.auto_orchestrate();
+        self.auto_advance();
         self.follow_system_theme(ctx);
         if self.is_first_run() {
             self.welcome(ctx);

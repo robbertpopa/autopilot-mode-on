@@ -1374,6 +1374,76 @@ effort = \"high\"
         ));
     }
 
+    // Invariant: a ticket started in this window gets its plan without a
+    // click once Understand and Clarify are settled, a ticket from an earlier
+    // session does not, and a step is tried once: a refused attempt is not
+    // repeated every frame. Without the once-only rule a failing agent would be
+    // called on every redraw.
+    #[test]
+    fn the_plan_starts_by_itself_for_a_ticket_started_here_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        perform(
+            &options,
+            &Action::Start {
+                title: "Plan me".into(),
+                description: "Add an export option".into(),
+                attachments: Vec::new(),
+                workspace: Some(directory.path().to_path_buf()),
+                pipeline: None,
+            },
+        )
+        .unwrap();
+        let id = read(&options).tickets[0].id.clone();
+        if read(&options).tickets[0].asking.is_some() {
+            perform(&options, &Action::AcceptDefaults { ticket: id.clone() }).unwrap();
+        }
+        let context = egui::Context::default();
+
+        // An earlier ticket: opening the window starts nothing.
+        let mut older = App::new(&context, options.clone(), false);
+        older.set_snapshot(read(&options));
+        for _ in 0..5 {
+            frame(&mut older, &context);
+        }
+        assert!(!older.busy);
+        let plan_state = |options: &Options| {
+            read(options).tickets[0]
+                .step(Step::Plan)
+                .unwrap()
+                .state
+                .clone()
+        };
+        assert_eq!(plan_state(&options), autopilot_pipeline::StepState::Idle);
+
+        // A ticket started here is driven: the plan is made and waits for approval.
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        app.auto.driven.push(id.clone());
+        for _ in 0..200 {
+            frame(&mut app, &context);
+            app.set_snapshot(read(&options));
+            if matches!(
+                plan_state(&options),
+                autopilot_pipeline::StepState::Asking(_)
+            ) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(matches!(
+            plan_state(&options),
+            autopilot_pipeline::StepState::Asking(_)
+        ));
+        assert_eq!(app.auto.tried, vec![(id, Step::Plan)]);
+    }
+
     // Invariant: with the Claude choice saved, starting a ticket from the window
     // runs the real agent and the ticket reflects an attached file. Needs a
     // signed-in Claude Code and spends subscription quota, so it only runs on
