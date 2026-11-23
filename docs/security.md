@@ -40,8 +40,8 @@
 |---|---|---|---|
 | Windows native | none (Claude's sandbox is unavailable) | subscription or API | Level 0. Real Build refused. |
 | Windows native | Codex MXC `workspace-only` | none (network off) | Probe only; the provider is unreachable, so it cannot host Claude. |
-| WSL2 Ubuntu 24.04 | `srt` 0.0.83 (bubblewrap, seccomp, domain proxy) | API key (tested), subscription (not tested) | Local matrix passed for a probe and a descendant; API-key smoke test with Haiku passed. Check runner and subscription mode open. Still refused. |
-| macOS, Linux | `srt` | not tested | Not tested. |
+| Windows host, WSL2 Ubuntu 24.04 | `srt` 0.0.83 (bubblewrap, seccomp, domain proxy) | API key | Supported for Build and Check after the escape probe passes on this machine. Two live tickets built green. Subscription mode refused. |
+| Linux or macOS host | `srt` | any | Not wired; real Build refused. |
 
 Details, settings and limits: [S6 Linux sandbox in WSL2](spikes/S6-containment.md#linux-sandbox-in-wsl2-srt). The launcher must scrub the environment itself: `srt` passes it through.
 
