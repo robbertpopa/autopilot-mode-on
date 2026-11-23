@@ -135,21 +135,34 @@ fn account_icon(ui: &mut egui::Ui, row: &Row, pending: bool) -> bool {
     theme::named(response.on_hover_text(text), row.name).clicked()
 }
 
-/// A gear drawn with lines, because the default font has no gear glyph.
+/// A gear drawn as an outline with eight square teeth and a round hole,
+/// because the default font has no gear glyph. Rays around a circle read as a
+/// sun, so the teeth are joined into one outline.
 fn gear_button(ui: &mut egui::Ui) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
-    let painter = ui.painter();
     let color = theme::TEXT_SOFT();
     let center = rect.center();
-    painter.circle_stroke(center, 6.0, Stroke::new(1.6_f32, color));
+    let (body, tip) = (8.0_f32, 11.5_f32);
+    let tooth = std::f32::consts::FRAC_PI_4;
+    let mut outline = Vec::new();
     for step in 0_u8..8 {
-        let angle = f32::from(step) * std::f32::consts::FRAC_PI_4;
-        let direction = egui::vec2(angle.cos(), angle.sin());
-        painter.line_segment(
-            [center + direction * 8.0, center + direction * 11.0],
-            Stroke::new(2.4_f32, color),
-        );
+        let middle = f32::from(step) * tooth;
+        // Each tooth covers 0.3 of its slice at the tip, 0.5 at the base.
+        for (angle, radius) in [
+            (middle - tooth * 0.25, body),
+            (middle - tooth * 0.15, tip),
+            (middle + tooth * 0.15, tip),
+            (middle + tooth * 0.25, body),
+        ] {
+            outline.push(center + egui::vec2(angle.cos(), angle.sin()) * radius);
+        }
     }
+    let painter = ui.painter();
+    painter.add(egui::Shape::closed_line(
+        outline,
+        Stroke::new(1.5_f32, color),
+    ));
+    painter.circle_stroke(center, 3.5, Stroke::new(1.5_f32, color));
     theme::named(response.on_hover_text("Settings"), "Settings")
 }
 
