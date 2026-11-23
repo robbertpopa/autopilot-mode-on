@@ -892,7 +892,7 @@ impl Agent for Reviewing {
         let finds = request.instruction.contains("swallowed")
             && self
                 .findings_left
-                .fetch_update(SeqCst, SeqCst, |left| left.checked_sub(1))
+                .try_update(SeqCst, SeqCst, |left| left.checked_sub(1))
                 .is_ok();
         let confidence = self.confidence;
         let cost = self.cost;
@@ -994,7 +994,7 @@ fn a_doubtful_remark_does_not_send_the_build_back() {
         BuildOutcome::Ready
     );
     assert_eq!(calls(&agent), REVIEWERS_WITHOUT_RULES, "one round only");
-    assert!(failures(&world).is_empty());
+    assert_eq!(failures(&world), Vec::<String>::new());
 }
 
 // Invariant: the review waits for the checks that run code. A build that fails
