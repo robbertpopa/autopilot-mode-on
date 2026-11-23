@@ -40,7 +40,7 @@ const LOGO_BYTES: [&[u8]; 5] = [
     include_bytes!("../assets/codex.rgba"),
 ];
 
-fn load_logos(ctx: &egui::Context) -> Vec<TextureHandle> {
+pub(crate) fn load_logos(ctx: &egui::Context) -> Vec<TextureHandle> {
     LOGO_BYTES
         .iter()
         .enumerate()
@@ -53,6 +53,18 @@ fn load_logos(ctx: &egui::Context) -> Vec<TextureHandle> {
             )
         })
         .collect()
+}
+
+/// The place of a service in `LOGO_BYTES`, so the nav can show the same logos
+/// as the welcome screens.
+pub(crate) fn service_logo(name: &str) -> Option<usize> {
+    match name {
+        "Claude" => Some(Logo::Claude as usize),
+        "GitHub" => Some(Logo::Github as usize),
+        "Azure" => Some(Logo::Azure as usize),
+        "Codex" => Some(Logo::Codex as usize),
+        _ => None,
+    }
 }
 
 /// A white tile that holds a logo, white in both themes because the dark

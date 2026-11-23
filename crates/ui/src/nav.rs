@@ -103,30 +103,54 @@ fn tooltip(row: &Row) -> String {
     text
 }
 
-/// One service as a coloured disc with its initial and a status dot.
+/// One service as its logo on a white tile with a status dot, the same logos
+/// as the welcome screens. A service that is not ready is drawn faded.
 /// Returns true when clicked.
-fn account_icon(ui: &mut egui::Ui, row: &Row, pending: bool) -> bool {
+fn account_icon(
+    ui: &mut egui::Ui,
+    row: &Row,
+    pending: bool,
+    logo: Option<&egui::TextureHandle>,
+) -> bool {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
-    let color = if pending {
-        theme::TEXT_MUTED()
-    } else {
-        brand(row.name, row.level)
-    };
+    let ready = !pending && row.level == Level::Good;
     let painter = ui.painter();
-    painter.circle_stroke(rect.center(), 12.0, Stroke::new(1.5_f32, color));
-    painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        row.name.chars().next().unwrap_or('?'),
-        egui::FontId::proportional(13.0),
-        color,
+    let tile = egui::Rect::from_center_size(rect.center(), egui::vec2(26.0, 26.0));
+    painter.rect(
+        tile,
+        egui::CornerRadius::same(8),
+        egui::Color32::WHITE,
+        Stroke::new(1.0_f32, theme::BORDER()),
+        egui::StrokeKind::Inside,
     );
+    if let Some(logo) = logo {
+        let image = egui::Rect::from_center_size(tile.center(), egui::vec2(15.0, 15.0));
+        let tint = if ready {
+            egui::Color32::WHITE
+        } else {
+            egui::Color32::from_white_alpha(110)
+        };
+        painter.image(
+            logo.id(),
+            image,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            tint,
+        );
+    } else {
+        painter.text(
+            tile.center(),
+            egui::Align2::CENTER_CENTER,
+            row.name.chars().next().unwrap_or('?'),
+            egui::FontId::proportional(13.0),
+            brand(row.name, row.level),
+        );
+    }
     let status = if pending {
         theme::TEXT_MUTED()
     } else {
         dot_color(row.level)
     };
-    painter.circle_filled(rect.right_bottom() - egui::vec2(5.0, 5.0), 4.0, status);
+    painter.circle_filled(rect.right_bottom() - egui::vec2(4.0, 4.0), 4.0, status);
     let text = if pending {
         format!("{}: checking...", row.name)
     } else {
@@ -569,6 +593,10 @@ impl App {
     }
 
     fn account_icons(&mut self, ui: &mut egui::Ui, accounts: Option<&Accounts>) {
+        if self.welcome_logos.is_empty() {
+            self.welcome_logos = crate::first_run::load_logos(ui.ctx());
+        }
+        let logos = self.welcome_logos.clone();
         let shown = accounts.map(rows);
         // `rows` lists GitHub, Claude, Codex, Azure; the nav shows Claude first.
         let order = ["Claude", "GitHub", "Azure", "Codex"];
@@ -583,7 +611,8 @@ impl App {
                     lines: vec![],
                     hint: None,
                 });
-            if account_icon(ui, &row, accounts.is_none()) {
+            let logo = crate::first_run::service_logo(name).and_then(|index| logos.get(index));
+            if account_icon(ui, &row, accounts.is_none(), logo) {
                 self.mode = Mode::Accounts;
             }
         }
