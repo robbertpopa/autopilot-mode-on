@@ -531,7 +531,7 @@ mod tests {
         )
         .unwrap();
         let card = scan_workspace(dir.path());
-        assert!(card.commands.is_empty());
+        assert_eq!(commands(&card), Vec::<&str>::new());
         assert!(card.skipped >= 1);
     }
 
