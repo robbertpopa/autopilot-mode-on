@@ -36,6 +36,23 @@ pub struct DraftRequest<'a> {
     pub description: &'a str,
     /// The pipelines that already exist, so the draft can start from one.
     pub known: &'a [String],
+    /// What the owner is changing, in plain text: the pipeline being edited
+    /// with its steps, and the custom steps already defined. Empty for a new
+    /// pipeline. It is data for the agent, like the description.
+    pub current: &'a str,
+}
+
+/// One custom step: the owner's own prompt, run on what the ticket has so far.
+pub struct CustomRequest<'a> {
+    pub step: Step,
+    pub ticket: &'a Ticket,
+    /// The name the owner gave the step.
+    pub name: &'a str,
+    /// What the owner wants done. It is the owner's instruction, unlike the
+    /// ticket and the context, which are data.
+    pub prompt: &'a str,
+    /// What the earlier steps established, as text.
+    pub context: &'a str,
 }
 
 /// One build turn in a ticket's worktree.
@@ -85,6 +102,7 @@ pub enum AgentEvent {
     /// engine parses and checks it, so nothing is dropped before it is seen.
     DraftResult(String),
     DesignResult(Design),
+    CustomResult(autopilot_core::CustomOutcome),
     /// A build turn ended normally. Its effect is in the worktree.
     BuildDone,
     Stopped(String),
@@ -131,6 +149,18 @@ pub trait Agent {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "this agent cannot draft a pipeline",
+        )
+        .into())
+    }
+
+    /// Start a custom step. Adapters that cannot keep this default.
+    ///
+    /// # Errors
+    /// Returns an error if the request cannot be started or is unsupported.
+    fn start_custom(&self, _request: CustomRequest<'_>) -> Result<AgentRun, AgentError> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this agent cannot run a custom step",
         )
         .into())
     }
@@ -227,6 +257,18 @@ impl AgentRun {
         work: impl FnOnce(AgentContext) -> Result<Design, AgentError> + Send + 'static,
     ) -> io::Result<Self> {
         Self::spawn_with(work, AgentEvent::DesignResult)
+    }
+
+    /// Like [`AgentRun::spawn`] for a custom step's outcome.
+    ///
+    /// # Errors
+    /// Returns an error if the worker thread cannot be started.
+    pub fn spawn_custom(
+        work: impl FnOnce(AgentContext) -> Result<autopilot_core::CustomOutcome, AgentError>
+        + Send
+        + 'static,
+    ) -> io::Result<Self> {
+        Self::spawn_with(work, AgentEvent::CustomResult)
     }
 
     /// Like [`AgentRun::spawn`] for a pipeline draft, whose result is raw text.

@@ -260,6 +260,24 @@ impl App {
         }
     }
 
+    /// The next of the owner's own steps this ticket's pipeline runs, once the
+    /// build has passed and the earlier ones are settled.
+    fn ready_custom(&self, view: &TicketView) -> Option<Step> {
+        let state = |step| view.steps.iter().find(|card| card.step == step);
+        if state(Step::BuildCheck)?.state != StepState::Passed {
+            return None;
+        }
+        let (name, _) = view.pipeline.as_ref()?;
+        let wanted = self.profile.as_ref().ok()?.pipeline(name)?.custom_steps();
+        wanted.into_iter().find(|step| {
+            !matches!(
+                state(*step).map(|card| &card.state),
+                Some(StepState::Passed)
+            )
+        })
+    }
+
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn next_card(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         if view.asking.is_some() {
             self.waiting_card(ui, view);
@@ -293,6 +311,12 @@ impl App {
                 theme::BLUE_TEXT(),
                 format!("Working on {}.", step_name(card.step)),
             )
+        } else if let Some(step) = self.ready_custom(view) {
+            (
+                theme::BLUE_FILL(),
+                theme::BLUE_TEXT(),
+                format!("The build passed. Ready to run {}.", step_name(step)),
+            )
         } else if ready_to_design(view) {
             (
                 theme::BLUE_FILL(),
@@ -323,6 +347,21 @@ impl App {
                         .clicked()
                     {
                         self.act(Action::MakeDesign(view.id.clone()));
+                    }
+                }
+                if problem.is_none()
+                    && let Some(step) = self.ready_custom(view)
+                {
+                    let busy = self.busy;
+                    if ui
+                        .add_enabled(!busy, theme::primary(&format!("Run {}", step_name(step))))
+                        .on_hover_text("Your own step: the agent reads the ticket and reports back.")
+                        .clicked()
+                    {
+                        self.act(Action::RunCustom {
+                            ticket: view.id.clone(),
+                            step,
+                        });
                     }
                 }
                 if problem.is_none() && ready_to_plan(view) {

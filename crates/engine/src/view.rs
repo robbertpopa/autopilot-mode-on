@@ -176,9 +176,33 @@ impl TicketView {
     }
 }
 
-/// Plain name of a step, as the design words it.
+/// The names the owner gave their custom steps, by slot minus one. Names are
+/// kept for the life of the process so `step_name` can hand out a plain
+/// `&'static str` like it does for the built-in steps.
+static CUSTOM_NAMES: std::sync::Mutex<[&'static str; 8]> =
+    std::sync::Mutex::new(["Custom step"; 8]);
+
+/// Tell `step_name` what the profile calls each custom step. A name is kept
+/// once per change, so calling this every frame costs nothing.
+pub fn name_custom_steps(profile: &autopilot_profile::Profile) {
+    let Ok(mut names) = CUSTOM_NAMES.lock() else {
+        return;
+    };
+    for slot in 1..=Step::CUSTOM_SLOTS {
+        let wanted = Step::custom(slot)
+            .and_then(|step| profile.custom_step(step))
+            .map_or("Custom step", |definition| definition.name.as_str());
+        let index = usize::from(slot) - 1;
+        if names[index] != wanted {
+            names[index] = Box::leak(wanted.to_owned().into_boxed_str());
+        }
+    }
+}
+
+/// Plain name of a step, as the design words it. A custom step has the name
+/// its owner gave it.
 #[must_use]
-pub const fn step_name(step: Step) -> &'static str {
+pub fn step_name(step: Step) -> &'static str {
     match step {
         Step::Understand => "Understand",
         Step::Clarify => "Clarify",
@@ -186,6 +210,9 @@ pub const fn step_name(step: Step) -> &'static str {
         Step::Plan => "Plan",
         Step::BuildCheck => "Build ⟲ Check",
         Step::PullRequest => "Pull request",
+        Step::Custom(slot) => CUSTOM_NAMES.lock().map_or("Custom step", |names| {
+            names[usize::from(slot).clamp(1, 8) - 1]
+        }),
     }
 }
 
@@ -334,8 +361,15 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     }
 
     let lines = summary::from_history(history);
-    let steps = Step::ALL
+    let steps = Step::EVERY
         .into_iter()
+        // A custom step is in the ticket's view once it has done anything.
+        .filter(|step| {
+            !step.is_custom()
+                || !matches!(state.step(*step), StepState::Idle)
+                    && !matches!(state.step(*step), StepState::Skipped(why)
+                        if why.starts_with(crate::pipelines::OFF_PREFIX))
+        })
         .map(|step| {
             let (step_api, step_sub) = per_step
                 .iter()

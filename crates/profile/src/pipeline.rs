@@ -38,7 +38,23 @@ pub struct Pipeline {
 impl Pipeline {
     #[must_use]
     pub fn mode(&self, step: Step) -> StepMode {
-        self.modes.get(&step).copied().unwrap_or(StepMode::On)
+        // A custom step runs only where a pipeline names it.
+        let unlisted = if step.is_custom() {
+            StepMode::Off
+        } else {
+            StepMode::On
+        };
+        self.modes.get(&step).copied().unwrap_or(unlisted)
+    }
+
+    /// The custom steps this pipeline runs, in pipeline order.
+    #[must_use]
+    pub fn custom_steps(&self) -> Vec<Step> {
+        self.modes
+            .iter()
+            .filter(|(step, mode)| step.is_custom() && **mode != StepMode::Off)
+            .map(|(step, _)| *step)
+            .collect()
     }
 
     /// The steps this pipeline never runs, in pipeline order.
@@ -104,7 +120,13 @@ pub const ASK_ONLY: &str = "ask-only";
 /// # Errors
 /// Returns a sentence naming the step that cannot be switched this way.
 pub fn validate_modes(modes: &BTreeMap<Step, StepMode>) -> Result<(), String> {
-    let mode = |step| modes.get(&step).copied().unwrap_or(StepMode::On);
+    let mode = |step: Step| {
+        modes.get(&step).copied().unwrap_or(if step.is_custom() {
+            StepMode::Off
+        } else {
+            StepMode::On
+        })
+    };
     let runs = |step| mode(step) != StepMode::Off;
     if mode(Step::Understand) != StepMode::On {
         return Err("understand always runs first".into());
@@ -117,6 +139,20 @@ pub fn validate_modes(modes: &BTreeMap<Step, StepMode>) -> Result<(), String> {
     }
     if runs(Step::Plan) && mode(Step::Plan) != StepMode::On {
         return Err("plan is either on or off".into());
+    }
+    for (step, each) in modes {
+        if !step.is_custom() || *each == StepMode::Off {
+            continue;
+        }
+        if *each == StepMode::IfNeeded {
+            return Err(format!("{} is either on or off", step.as_str()));
+        }
+        if !runs(Step::BuildCheck) {
+            return Err(format!(
+                "{} runs after the build: keep build_check on",
+                step.as_str()
+            ));
+        }
     }
     Ok(())
 }
@@ -233,4 +269,52 @@ pub fn check_name(name: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// A custom step as written in `profile.toml`: what it is called and what the
+/// agent is told. Its model, effort, limits and `ask_after` live in the
+/// matching `[steps.custom_N]` table, like any other step.
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct CustomStepFile {
+    pub name: String,
+    pub prompt: String,
+}
+
+/// A custom step the owner defined.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CustomStep {
+    pub name: String,
+    pub prompt: String,
+}
+
+impl CustomStep {
+    /// The longest prompt a step may hold. The prompt is part of the agent's
+    /// instructions, so it is bounded like the other owner-written text.
+    pub const MAX_PROMPT: usize = 4000;
+
+    /// # Errors
+    /// Returns a sentence when the name or the prompt cannot be used.
+    pub fn check(name: &str, prompt: &str) -> Result<(), String> {
+        let plain = |text: &str| !text.chars().any(char::is_control);
+        if name.trim().is_empty() || name.chars().count() > 40 || !plain(name) {
+            return Err("a step name is 1 to 40 plain characters".into());
+        }
+        if prompt.trim().is_empty() {
+            return Err("a step needs a prompt: say what the agent should do".into());
+        }
+        if prompt.chars().count() > Self::MAX_PROMPT {
+            return Err(format!(
+                "a step prompt is at most {} characters",
+                Self::MAX_PROMPT
+            ));
+        }
+        if prompt
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t')
+        {
+            return Err("a step prompt has a control character".into());
+        }
+        Ok(())
+    }
 }

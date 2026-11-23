@@ -26,6 +26,7 @@ mod attachments;
 mod build;
 mod change;
 mod control;
+mod custom;
 mod design;
 mod draft;
 mod explain;
@@ -54,19 +55,26 @@ pub use autopilot_checks::resolve_executable;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
 pub use change::{Proposal, Reading, apply_to_project, apply_to_ticket, propose};
 pub use control::{request_pause, request_resume, request_stop};
+pub use custom::{latest as custom_outcome, run_custom};
 pub use design::{
     context as design_context, folder as design_folder, latest as latest_design, rerun_design,
     run_design,
 };
-pub use draft::{PipelineDraft, draft_pipeline, save_draft, validate_draft};
+pub use draft::{
+    PipelineDraft, draft_pipeline, draft_pipeline_for, save_draft, validate_draft,
+    validate_draft_for,
+};
 pub use explain::{explain_step, kept as explanation_kept, prompt as explain_prompt};
 pub use metrics::{PipelineMetrics, StepMetrics, UsageLine, metrics_of, pipeline_metrics};
 pub use overlap::{TicketOverlap, find_overlaps};
-pub use pipelines::{choose_pipeline, chosen as chosen_pipeline};
+pub use pipelines::{
+    choose_pipeline, chosen as chosen_pipeline, chosen_custom as chosen_custom_steps,
+};
 pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use profile_edit::{
     ProfileEditError, ProjectField, ReviewField, StepField, add_pipeline, edit_project,
-    edit_review, edit_step, load_profile,
+    edit_review, edit_step, free_custom_slot, load_profile, remove_custom_step, save_pipeline,
+    set_custom_step,
 };
 pub use proposals::{Suggestion, dismiss_proposal, proposals_for};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
@@ -88,7 +96,8 @@ pub use tuning::{
 };
 pub use view::{
     AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,
-    TimelineLine, dollars, load_ticket, spent_since, step_name, ticket_view, tickets,
+    TimelineLine, dollars, load_ticket, name_custom_steps, spent_since, step_name, ticket_view,
+    tickets,
 };
 pub use workspace::{
     canonical as canonical_folder, of as workspace_of, record as record_workspace,
@@ -300,7 +309,7 @@ pub(crate) fn run_attempt(
     });
     let (response, last) = match pump(store, &ticket.id, UNDERSTAND, last, started)? {
         (Pumped::Understanding(result), last) => (Ok(result), last),
-        (Pumped::Plan(_) | Pumped::Design(_), last) => (
+        (Pumped::Plan(_) | Pumped::Design(_) | Pumped::Custom(_), last) => (
             Err(Outcome::Failed(
                 io::Error::other("the agent answered Understand with a plan").into(),
             )),
@@ -328,6 +337,7 @@ enum Pumped {
     Understanding(Understanding),
     Plan(Plan),
     Design(autopilot_core::Design),
+    Custom(autopilot_core::CustomOutcome),
     Stopped(String),
     Failed(AgentError),
 }
@@ -364,6 +374,7 @@ fn pump(
             }
             Some(AgentEvent::PlanResult(plan)) => break Pumped::Plan(plan),
             Some(AgentEvent::DesignResult(design)) => break Pumped::Design(design),
+            Some(AgentEvent::CustomResult(outcome)) => break Pumped::Custom(outcome),
             Some(AgentEvent::Stopped(reason)) => break Pumped::Stopped(reason),
             Some(AgentEvent::Failed(error)) => break Pumped::Failed(error),
             None => {
@@ -635,7 +646,7 @@ pub fn recover(directory: &Path, ticket: &TicketId) -> Result<Vec<Step>, Error> 
     let mut last = history.last().ok_or(Error::UnknownTicket)?.seq;
     let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
     let mut recovered = Vec::new();
-    for step in Step::ALL {
+    for step in Step::EVERY {
         if state.step(step) != &StepState::Running {
             continue;
         }
@@ -673,7 +684,7 @@ pub fn sync_inbox(directory: &Path, ticket: &TicketId) -> Result<Vec<RequestId>,
     }
     let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
     let mut applied = Vec::new();
-    for step in Step::ALL {
+    for step in Step::EVERY {
         let StepState::Asking(request) = state.step(step) else {
             continue;
         };
@@ -711,7 +722,7 @@ pub fn sync_inbox(directory: &Path, ticket: &TicketId) -> Result<Vec<RequestId>,
     let history = store.events(ticket, 0)?;
     let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
     for request in inbox.requests()? {
-        let waiting = Step::ALL
+        let waiting = Step::EVERY
             .iter()
             .any(|step| state.step(*step) == &StepState::Asking(request.id.clone()));
         if request.ticket == *ticket && !waiting {

@@ -154,3 +154,68 @@ fn ask_only_runs_only_understand_and_clarify() {
         autopilot_profile::StepMode::On
     );
 }
+
+const SECURITY: &str = "[custom_steps.custom_1]\nname = \"Security review\"\nprompt = \"Look for injection and unsafe input handling.\"\n";
+
+fn parse(source: &str) -> Result<Profile, autopilot_profile::ProfileDiagnostic> {
+    Profile::parse(Path::new("profile.toml"), source)
+}
+
+// A custom step is only useful if a pipeline can run it. It must be defined,
+// run after the build, and carry the same settings as any step.
+#[test]
+fn a_pipeline_can_run_a_custom_step_the_profile_defines() {
+    let source = format!(
+        "{SECURITY}\n[steps.custom_1]\nask_after = true\n\n[pipelines.careful]\nbased_on = \"full\"\non = [\"custom_1\"]\n"
+    );
+    let profile = parse(&source).unwrap();
+    let step = Step::Custom(1);
+    assert_eq!(profile.custom_step(step).unwrap().name, "Security review");
+    assert!(profile.step(step).unwrap().ask_after);
+    assert_eq!(profile.pipeline("careful").unwrap().custom_steps(), [step]);
+    // No built-in pipeline and no other custom one runs it.
+    assert_eq!(profile.pipeline("full").unwrap().custom_steps(), []);
+}
+
+#[test]
+fn a_bad_custom_step_is_refused_with_its_key() {
+    for (source, key) in [
+        // Defined but never named.
+        (
+            "[custom_steps.custom_1]\nprompt = \"x\"\n".to_owned(),
+            "custom_steps.custom_1",
+        ),
+        (
+            "[custom_steps.custom_1]\nname = \"a\"\n".to_owned(),
+            "custom_steps.custom_1",
+        ),
+        // A built-in step cannot be redefined here.
+        (
+            "[custom_steps.plan]\nname = \"a\"\nprompt = \"x\"\n".to_owned(),
+            "custom_steps.plan",
+        ),
+        // Settings for a step nobody defined.
+        (
+            "[steps.custom_2]\nask_after = true\n".to_owned(),
+            "steps.custom_2",
+        ),
+        // A pipeline cannot run a step that does not exist.
+        (
+            "[pipelines.a]\non = [\"custom_3\"]\n".to_owned(),
+            "pipelines.a",
+        ),
+        // Custom steps run after the build, so the build must run.
+        (
+            format!("{SECURITY}\n[pipelines.a]\nbased_on = \"ask-only\"\non = [\"custom_1\"]\n"),
+            "pipelines.a",
+        ),
+        // A custom step is on or off, never "if needed".
+        (
+            format!("{SECURITY}\n[pipelines.a]\nif_needed = [\"custom_1\"]\n"),
+            "pipelines.a",
+        ),
+    ] {
+        let error = parse(&source).expect_err(&source);
+        assert!(error.to_string().contains(key), "{source}: {error}");
+    }
+}

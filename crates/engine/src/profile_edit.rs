@@ -224,14 +224,31 @@ pub fn add_pipeline(
     off: &[Step],
     rounds: Option<u32>,
 ) -> Result<Profile, ProfileEditError> {
-    let source = match fs::read_to_string(path) {
-        Ok(source) => source,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error.into()),
-    };
-    let mut document: DocumentMut = source
-        .parse()
-        .map_err(|error: toml_edit::TomlError| ProfileEditError::Syntax(error.to_string()))?;
+    save_pipeline(path, name, based_on, (on, if_needed, off), rounds, &[])
+}
+
+/// Save a pipeline together with the custom steps it introduces, in one
+/// write, so a pipeline never points at a step that was not saved.
+///
+/// # Errors
+/// Returns an error for an unreadable file, or the diagnostic when the result
+/// is invalid. The file is left as it was in that case.
+pub fn save_pipeline(
+    path: &Path,
+    name: &str,
+    based_on: &str,
+    (on, if_needed, off): (&[Step], &[Step], &[Step]),
+    rounds: Option<u32>,
+    new_steps: &[(Step, autopilot_profile::CustomStep)],
+) -> Result<Profile, ProfileEditError> {
+    let mut document = open_document(path)?;
+    for (step, definition) in new_steps {
+        let custom = child_table(document.as_table_mut(), "custom_steps")?;
+        custom.set_implicit(true);
+        let table = child_table(custom, step.as_str())?;
+        table["name"] = value(definition.name.as_str());
+        table["prompt"] = value(definition.prompt.as_str());
+    }
     let pipelines = child_table(document.as_table_mut(), "pipelines")?;
     pipelines.set_implicit(true);
     let table = child_table(pipelines, name)?;
@@ -245,7 +262,84 @@ pub fn add_pipeline(
     }
     if let Some(rounds) = rounds {
         table["rounds"] = value(i64::from(rounds));
+    } else {
+        // Saving over a pipeline must not keep a cap the new one dropped.
+        table.remove("rounds");
     }
+    write_checked(path, &document)
+}
+
+/// The first free custom slot, or `None` when all of them are used.
+#[must_use]
+pub fn free_custom_slot(profile: &Profile) -> Option<Step> {
+    (1..=Step::CUSTOM_SLOTS)
+        .filter_map(Step::custom)
+        .find(|step| profile.custom_step(*step).is_none())
+}
+
+/// Define a custom step, or change its name and prompt. Its other settings
+/// (model, effort, limits, ask after) are edited like any step's.
+///
+/// # Errors
+/// Returns an error for an unreadable file, or the diagnostic when the name or
+/// prompt cannot be used or the step is not a custom one. The file is left as
+/// it was in that case.
+pub fn set_custom_step(
+    path: &Path,
+    step: Step,
+    name: &str,
+    prompt: &str,
+) -> Result<Profile, ProfileEditError> {
+    let mut document = open_document(path)?;
+    let custom = child_table(document.as_table_mut(), "custom_steps")?;
+    custom.set_implicit(true);
+    let table = child_table(custom, step.as_str())?;
+    table["name"] = value(name.trim());
+    table["prompt"] = value(prompt);
+    write_checked(path, &document)
+}
+
+/// Remove a custom step and everything that points at it: its settings and
+/// its place in every pipeline. Tickets that already ran it keep their history.
+///
+/// # Errors
+/// Returns an error for an unreadable file or when the result is invalid.
+pub fn remove_custom_step(path: &Path, step: Step) -> Result<Profile, ProfileEditError> {
+    let mut document = open_document(path)?;
+    let key = step.as_str();
+    for group in ["custom_steps", "steps"] {
+        if let Some(table) = document.get_mut(group).and_then(Item::as_table_mut) {
+            table.remove(key);
+        }
+    }
+    if let Some(pipelines) = document.get_mut("pipelines").and_then(Item::as_table_mut) {
+        for (_, pipeline) in pipelines.iter_mut() {
+            let Some(pipeline) = pipeline.as_table_mut() else {
+                continue;
+            };
+            for list in ["on", "if_needed", "off"] {
+                if let Some(array) = pipeline.get_mut(list).and_then(Item::as_array_mut) {
+                    array.retain(|entry| entry.as_str() != Some(key));
+                }
+            }
+        }
+    }
+    write_checked(path, &document)
+}
+
+fn open_document(path: &Path) -> Result<DocumentMut, ProfileEditError> {
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
+    source
+        .parse()
+        .map_err(|error: toml_edit::TomlError| ProfileEditError::Syntax(error.to_string()))
+}
+
+/// Save the document only if it still parses as a valid profile.
+fn write_checked(path: &Path, document: &DocumentMut) -> Result<Profile, ProfileEditError> {
     let text = document.to_string();
     let profile = Profile::parse(path, &text)?;
     if let Some(parent) = path
@@ -473,5 +567,43 @@ protected_paths = [\"infra/**\"]
             assert!(edit_review(&path, bad).is_err(), "{bad:?}");
         }
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+}
+
+#[cfg(test)]
+mod custom_step_edit_tests {
+    use super::*;
+
+    // Invariant: adding a step writes the definition and keeps the owner's
+    // comments, a refused definition writes nothing, and removing a step also
+    // takes it out of every pipeline. Without the last, deleting a step the
+    // owner had already put in a pipeline would leave a profile that no longer
+    // parses.
+    #[test]
+    fn a_custom_step_is_added_edited_and_removed_with_its_pipeline_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("profile.toml");
+        fs::write(&path, "# my notes\nprotected_paths = [\"infra/**\"]\n").unwrap();
+        let step = Step::Custom(1);
+
+        let profile =
+            set_custom_step(&path, step, "Security review", "Look for injection.").unwrap();
+        assert_eq!(profile.custom_step(step).unwrap().name, "Security review");
+        assert!(fs::read_to_string(&path).unwrap().contains("# my notes"));
+        assert_eq!(free_custom_slot(&profile), Some(Step::Custom(2)));
+
+        let before = fs::read_to_string(&path).unwrap();
+        assert!(set_custom_step(&path, step, "", "x").is_err());
+        assert!(set_custom_step(&path, Step::Plan, "Plan", "x").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+
+        let profile = set_custom_step(&path, step, "Security audit", "Look harder.").unwrap();
+        assert_eq!(profile.custom_step(step).unwrap().prompt, "Look harder.");
+
+        add_pipeline(&path, "careful", "full", &[step], &[], &[], None).unwrap();
+        let profile = remove_custom_step(&path, step).unwrap();
+        assert!(profile.custom_step(step).is_none());
+        assert_eq!(profile.pipeline("careful").unwrap().custom_steps(), []);
+        assert!(!fs::read_to_string(&path).unwrap().contains("custom_1"));
     }
 }

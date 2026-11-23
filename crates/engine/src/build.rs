@@ -209,7 +209,8 @@ impl<A: Agent> Round for BuildRound<'_, A> {
                 AgentEvent::Result(_)
                 | AgentEvent::PlanResult(_)
                 | AgentEvent::DraftResult(_)
-                | AgentEvent::DesignResult(_) => {
+                | AgentEvent::DesignResult(_)
+                | AgentEvent::CustomResult(_) => {
                     return Err(Error::NotReady(
                         "the agent answered Build with a result".into(),
                     ));

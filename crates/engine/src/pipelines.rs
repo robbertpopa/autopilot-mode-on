@@ -29,11 +29,24 @@ pub fn chosen(history: &[RecordedEvent]) -> Option<(String, Vec<Step>, Option<u3
         .iter()
         .rev()
         .find_map(|record| match &record.event.kind {
-            Event::PipelineChosen { name, off, rounds } => {
-                Some((name.clone(), off.clone(), *rounds))
-            }
+            Event::PipelineChosen {
+                name, off, rounds, ..
+            } => Some((name.clone(), off.clone(), *rounds)),
             _ => None,
         })
+}
+
+/// The custom steps the ticket's pipeline runs, in order.
+#[must_use]
+pub fn chosen_custom(history: &[RecordedEvent]) -> Vec<Step> {
+    history
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event.kind {
+            Event::PipelineChosen { custom, .. } => Some(custom.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 /// Choose, or change, the pipeline of a ticket. It applies to steps that have
@@ -65,9 +78,11 @@ pub fn choose_pipeline(
             name: name.to_owned(),
             off: off.clone(),
             rounds: pipeline.rounds,
+            custom: pipeline.custom_steps(),
         },
     }];
-    for step in Step::ALL {
+    let defined = profile.custom_steps().keys().copied();
+    for step in Step::ALL.into_iter().chain(defined) {
         let wanted_off = pipeline.mode(step) == StepMode::Off;
         let reason = off_reason(name);
         let step_events: Vec<Event> = match (state.step(step).clone(), wanted_off) {

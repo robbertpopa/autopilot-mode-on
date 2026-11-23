@@ -74,6 +74,43 @@ pub struct Design {
     pub notes: String,
 }
 
+/// What a custom step reports: a short account and whether the agent found
+/// nothing that should stop the ticket.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct CustomOutcome {
+    /// What the step found or did, in plain words.
+    pub summary: String,
+    /// False when the step found something that should be looked at first.
+    pub ok: bool,
+}
+
+/// The longest summary a custom step keeps.
+pub const MAX_CUSTOM_SUMMARY: usize = 4000;
+
+impl CustomOutcome {
+    /// # Errors
+    /// Returns a description when the summary is empty, too long or holds a
+    /// control character, since it is shown and kept as plain text.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.summary.trim().is_empty() {
+            return Err("the summary is empty".into());
+        }
+        if self.summary.chars().count() > MAX_CUSTOM_SUMMARY {
+            return Err(format!(
+                "the summary is over {MAX_CUSTOM_SUMMARY} characters"
+            ));
+        }
+        if self
+            .summary
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t')
+        {
+            return Err("the summary has a control character".into());
+        }
+        Ok(())
+    }
+}
+
 /// The longest mockup page kept.
 pub const MAX_MOCKUP_BYTES: usize = 200 * 1024;
 
@@ -303,29 +340,27 @@ impl Understanding {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
+/// One stage of a ticket. The six named steps are built in; `Custom` is a step
+/// the owner defines in the profile (a name and a prompt), run between Build
+/// and Check and the pull request. The slot number is 1 to
+/// [`Step::CUSTOM_SLOTS`], so a step stays `Copy` and keeps a fixed name.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Step {
     Understand,
     Clarify,
     Design,
     Plan,
     BuildCheck,
+    Custom(u8),
     PullRequest,
 }
 
-impl<'de> Deserialize<'de> for Step {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        // Deserialize table keys as strings so profile diagnostics can name the step.
-        let name = String::deserialize(deserializer)?;
-        Self::ALL
-            .into_iter()
-            .find(|step| step.as_str() == name)
-            .ok_or_else(|| D::Error::custom(format!("unknown step {name:?}")))
-    }
-}
-
 impl Step {
+    /// How many custom steps a profile may define.
+    pub const CUSTOM_SLOTS: u8 = 8;
+
+    /// The six built-in steps, in pipeline order. Custom steps are not here:
+    /// code that must handle every step asks the profile for them.
     pub const ALL: [Self; 6] = [
         Self::Understand,
         Self::Clarify,
@@ -334,6 +369,48 @@ impl Step {
         Self::BuildCheck,
         Self::PullRequest,
     ];
+
+    /// Every step a ticket can hold, custom ones included, in pipeline order.
+    pub const EVERY: [Self; 14] = [
+        Self::Understand,
+        Self::Clarify,
+        Self::Design,
+        Self::Plan,
+        Self::BuildCheck,
+        Self::Custom(1),
+        Self::Custom(2),
+        Self::Custom(3),
+        Self::Custom(4),
+        Self::Custom(5),
+        Self::Custom(6),
+        Self::Custom(7),
+        Self::Custom(8),
+        Self::PullRequest,
+    ];
+
+    /// A custom step by slot, or `None` outside 1 to [`Self::CUSTOM_SLOTS`].
+    #[must_use]
+    pub const fn custom(slot: u8) -> Option<Self> {
+        if slot >= 1 && slot <= Self::CUSTOM_SLOTS {
+            Some(Self::Custom(slot))
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub const fn is_custom(self) -> bool {
+        matches!(self, Self::Custom(_))
+    }
+
+    /// The slot of a custom step.
+    #[must_use]
+    pub const fn slot(self) -> Option<u8> {
+        match self {
+            Self::Custom(slot) => Some(slot),
+            _ => None,
+        }
+    }
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -344,7 +421,76 @@ impl Step {
             Self::BuildCheck => "build_check",
             Self::Plan => "plan",
             Self::PullRequest => "pull_request",
+            Self::Custom(1) => "custom_1",
+            Self::Custom(2) => "custom_2",
+            Self::Custom(3) => "custom_3",
+            Self::Custom(4) => "custom_4",
+            Self::Custom(5) => "custom_5",
+            Self::Custom(6) => "custom_6",
+            Self::Custom(7) => "custom_7",
+            Self::Custom(8) => "custom_8",
+            Self::Custom(_) => "custom_0",
         }
+    }
+
+    /// Where the step sits in a pipeline. A custom step runs after Build and
+    /// Check and before the pull request, in slot order.
+    const fn rank(self) -> u16 {
+        match self {
+            Self::Understand => 0,
+            Self::Clarify => 1,
+            Self::Design => 2,
+            Self::Plan => 3,
+            Self::BuildCheck => 4,
+            Self::Custom(slot) => 4 + slot as u16,
+            Self::PullRequest => 100,
+        }
+    }
+}
+
+impl PartialOrd for Step {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Pipeline order, so "every later step" is `>`.
+impl Ord for Step {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank().cmp(&other.rank())
+    }
+}
+
+impl Serialize for Step {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Step {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Deserialize table keys as strings so profile diagnostics can name the step.
+        let name = String::deserialize(deserializer)?;
+        Self::ALL
+            .into_iter()
+            .chain((1..=Self::CUSTOM_SLOTS).map(Self::Custom))
+            .find(|step| step.as_str() == name)
+            .ok_or_else(|| D::Error::custom(format!("unknown step {name:?}")))
+    }
+}
+
+impl JsonSchema for Step {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Step".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let names: Vec<&str> = Step::ALL
+            .into_iter()
+            .chain((1..=Step::CUSTOM_SLOTS).map(Step::Custom))
+            .map(Step::as_str)
+            .collect();
+        schemars::json_schema!({ "type": "string", "enum": names })
     }
 }
 
@@ -596,6 +742,10 @@ pub enum Event {
     DesignResult {
         design: Design,
     },
+    /// What a custom step reported, kept so a review shows exactly what it said.
+    CustomResult {
+        outcome: CustomOutcome,
+    },
     /// A short plain-words explanation of a step's result, asked of a small
     /// model once and kept so it is never asked again.
     Explained {
@@ -617,6 +767,10 @@ pub enum Event {
         /// A lower cap on build rounds, if the pipeline sets one.
         #[serde(default)]
         rounds: Option<u32>,
+        /// The custom steps the pipeline runs, so the pull request waits for
+        /// them even if the profile changes later.
+        #[serde(default)]
+        custom: Vec<Step>,
     },
     /// The orchestrator's decision for the later steps. The settings it chose
     /// are recorded next to it as a ticket-scope `SettingsOverridden`.
@@ -810,5 +964,40 @@ mod design_tests {
         ] {
             assert!(design(bad).validate().is_err(), "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod custom_step_tests {
+    use super::Step;
+
+    // Reset "and every later step" and the pipeline view both rely on this
+    // order: a custom step must sit after Build and Check and before the pull
+    // request, whatever its slot.
+    #[test]
+    fn a_custom_step_runs_after_build_and_before_the_pull_request() {
+        for slot in 1..=Step::CUSTOM_SLOTS {
+            let step = Step::Custom(slot);
+            assert!(Step::BuildCheck < step && step < Step::PullRequest);
+        }
+        assert!(Step::Custom(1) < Step::Custom(2));
+    }
+
+    // A custom step is stored as text in events and in profile.toml, so every
+    // slot must read back as itself and a slot that does not exist must not.
+    #[test]
+    fn every_step_name_reads_back_and_unknown_slots_are_refused() {
+        for step in Step::ALL
+            .into_iter()
+            .chain((1..=Step::CUSTOM_SLOTS).map(Step::Custom))
+        {
+            let text = serde_json::to_string(&step).unwrap();
+            assert_eq!(serde_json::from_str::<Step>(&text).unwrap(), step);
+        }
+        assert!(serde_json::from_str::<Step>("\"custom_9\"").is_err());
+        assert!(serde_json::from_str::<Step>("\"custom_0\"").is_err());
+        assert_eq!(Step::custom(0), None);
+        assert_eq!(Step::custom(9), None);
+        assert_eq!(Step::custom(3), Some(Step::Custom(3)));
     }
 }

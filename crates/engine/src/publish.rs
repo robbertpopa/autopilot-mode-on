@@ -97,6 +97,16 @@ fn ready_to_publish(history: &[RecordedEvent]) -> Result<autopilot_pipeline::Tic
             "the build has not passed its checks".into(),
         ));
     }
+    // A custom step the ticket's pipeline runs is part of getting to the
+    // pull request, so it settles first.
+    for step in crate::pipelines::chosen_custom(history) {
+        if !matches!(state.step(step), StepState::Passed | StepState::Skipped(_)) {
+            return Err(Error::NotReady(format!(
+                "{} has not finished",
+                step.as_str()
+            )));
+        }
+    }
     Ok(state)
 }
 

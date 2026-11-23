@@ -10,10 +10,10 @@ use autopilot_core::{Money, Step};
 
 mod pipeline;
 pub use pipeline::{
-    ASK_ONLY, DEFAULT_PIPELINE, Pipeline, Project, StepMode, builtin_pipelines, check_name, leaf,
-    normalize_path,
+    ASK_ONLY, CustomStep, DEFAULT_PIPELINE, Pipeline, Project, StepMode, builtin_pipelines,
+    check_name, leaf, normalize_path,
 };
-use pipeline::{PipelineFile, ProjectFile};
+use pipeline::{CustomStepFile, PipelineFile, ProjectFile};
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
 use toml::Spanned;
@@ -163,6 +163,7 @@ pub struct StepSettings {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Profile {
     steps: BTreeMap<Step, StepSettings>,
+    custom_steps: BTreeMap<Step, CustomStep>,
     pub checks: BTreeMap<String, CheckCommand>,
     pub protected_paths: Vec<String>,
     pub branch_rules: BranchRules,
@@ -178,6 +179,7 @@ pub struct Profile {
 #[serde(default, deny_unknown_fields)]
 struct ProfileFile {
     steps: BTreeMap<Step, StepOverrides>,
+    custom_steps: BTreeMap<Step, CustomStepFile>,
     checks: BTreeMap<String, CheckCommand>,
     protected_paths: Vec<String>,
     branch_rules: BranchRules,
@@ -241,16 +243,35 @@ impl Profile {
             let options = file.steps.remove(&step).unwrap_or_default();
             steps.insert(step, resolve_step(step, options, path, source)?);
         }
+        let custom_steps = resolve_custom_steps(&file.custom_steps, path, source)?;
+        for step in custom_steps.keys() {
+            let options = file.steps.remove(step).unwrap_or_default();
+            steps.insert(*step, resolve_step(*step, options, path, source)?);
+        }
+        // A settings table for a custom step that was never defined would
+        // otherwise be dropped without a word.
+        if let Some(step) = file.steps.keys().find(|step| step.is_custom()) {
+            let key = format!("steps.{}", step.as_str());
+            let offset = source.find(&key).unwrap_or(0);
+            return Err(diagnostic(
+                path,
+                source,
+                offset,
+                key,
+                "this custom step is not defined under [custom_steps]".into(),
+            ));
+        }
 
         if let Err(why) = file.review.check() {
             let offset = source.find("[review]").unwrap_or(0);
             return Err(diagnostic(path, source, offset, "review".into(), why));
         }
-        let custom_pipelines = resolve_pipelines(&file.pipelines, path, source)?;
+        let custom_pipelines = resolve_pipelines(&file.pipelines, &custom_steps, path, source)?;
         let projects = resolve_projects(&file.projects, &custom_pipelines, path, source)?;
 
         Ok(Self {
             steps,
+            custom_steps,
             checks: file.checks,
             protected_paths: file.protected_paths,
             branch_rules: file.branch_rules,
@@ -301,7 +322,9 @@ impl Profile {
             off: off.to_vec(),
             rounds,
         };
-        pipeline::resolve(name, &file, &known)
+        let made = pipeline::resolve(name, &file, &known)?;
+        check_defined(&made, &self.custom_steps)?;
+        Ok(made)
     }
 
     /// The project for a workspace folder, however its path is spelled.
@@ -332,6 +355,28 @@ impl Profile {
             daily_microusd: lower(self.budgets.daily_microusd, project.budgets.daily_microusd),
         };
         merged
+    }
+
+    /// This profile with more custom steps defined, to check a pipeline that
+    /// would use them before anything is written.
+    #[must_use]
+    pub fn with_custom_steps(&self, added: &[(Step, CustomStep)]) -> Self {
+        let mut staged = self.clone();
+        for (step, definition) in added {
+            staged.custom_steps.insert(*step, definition.clone());
+        }
+        staged
+    }
+
+    /// The custom steps the owner defined, by slot.
+    #[must_use]
+    pub const fn custom_steps(&self) -> &BTreeMap<Step, CustomStep> {
+        &self.custom_steps
+    }
+
+    #[must_use]
+    pub fn custom_step(&self, step: Step) -> Option<&CustomStep> {
+        self.custom_steps.get(&step)
     }
 
     #[must_use]
@@ -429,8 +474,50 @@ fn lower(global: Option<NonZeroU64>, project: Option<NonZeroU64>) -> Option<NonZ
 
 /// Custom pipelines, each resolved against the built-ins and the ones before
 /// it. A pass per level lets one custom pipeline build on another.
+/// A pipeline may run only the custom steps the profile defines.
+fn check_defined(pipeline: &Pipeline, defined: &BTreeMap<Step, CustomStep>) -> Result<(), String> {
+    for step in pipeline.custom_steps() {
+        if !defined.contains_key(&step) {
+            return Err(format!(
+                "pipeline {:?} runs {}, which is not defined under [custom_steps]",
+                pipeline.name,
+                step.as_str()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn resolve_custom_steps(
+    files: &BTreeMap<Step, CustomStepFile>,
+    path: &Path,
+    source: &str,
+) -> Result<BTreeMap<Step, CustomStep>, ProfileDiagnostic> {
+    let mut steps = BTreeMap::new();
+    for (step, file) in files {
+        let key = format!("custom_steps.{}", step.as_str());
+        let at = |why: String| {
+            let offset = source.find(&key).unwrap_or(0);
+            diagnostic(path, source, offset, key.clone(), why)
+        };
+        if !step.is_custom() {
+            return Err(at("only custom_1 to custom_8 can be defined here".into()));
+        }
+        CustomStep::check(&file.name, &file.prompt).map_err(at)?;
+        steps.insert(
+            *step,
+            CustomStep {
+                name: file.name.trim().to_owned(),
+                prompt: file.prompt.clone(),
+            },
+        );
+    }
+    Ok(steps)
+}
+
 fn resolve_pipelines(
     files: &BTreeMap<String, PipelineFile>,
+    defined: &BTreeMap<Step, CustomStep>,
     path: &Path,
     source: &str,
 ) -> Result<BTreeMap<String, Pipeline>, ProfileDiagnostic> {
@@ -460,6 +547,7 @@ fn resolve_pipelines(
                 continue;
             }
             let made = pipeline::resolve(name, file, &known).map_err(at)?;
+            check_defined(&made, defined).map_err(at)?;
             known.insert(name.clone(), made.clone());
             custom.insert(name.clone(), made);
         }

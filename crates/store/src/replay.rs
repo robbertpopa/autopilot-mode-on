@@ -231,6 +231,7 @@ impl TicketState {
             | Event::Workspace { .. }
             | Event::Triaged { .. }
             | Event::DesignResult { .. }
+            | Event::CustomResult { .. }
             | Event::SettingsOverridden { .. } => {}
         }
         self.last_seq = record.seq;

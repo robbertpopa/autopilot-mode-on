@@ -164,7 +164,7 @@ impl App {
             }
             let click = ui.interact(
                 rect,
-                ui.id().with(("story", card.step as u8)),
+                ui.id().with(("story", card.step.as_str())),
                 egui::Sense::click(),
             );
             if theme::named(click, step_name(card.step)).clicked() {
