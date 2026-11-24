@@ -854,11 +854,15 @@ fn a_rust_build_is_checked_inside_the_sandbox_and_refined() {
     );
 }
 
-/// The fake agent for Build, plus a reviewer that answers from a queue and
-/// counts its calls.
+/// The fake agent for Build, plus reviewers that find one thing for a number of
+/// rounds, count their calls and charge for each.
 struct Reviewing {
     inner: ClaudeAgent,
-    answers: std::sync::Mutex<Vec<autopilot_core::CustomOutcome>>,
+    /// How many more times the "swallowed errors" reviewer reports a finding.
+    findings_left: std::sync::atomic::AtomicUsize,
+    confidence: u8,
+    /// What each reviewer call costs.
+    cost: autopilot_core::Money,
     calls: std::sync::atomic::AtomicUsize,
     seen: std::sync::Mutex<Vec<String>>,
 }
@@ -875,29 +879,48 @@ impl Agent for Reviewing {
         self.inner.start_build(request)
     }
 
-    fn start_custom(
+    fn start_review(
         &self,
-        request: autopilot_agent::CustomRequest<'_>,
+        request: autopilot_agent::ReviewRequest<'_>,
     ) -> Result<AgentRun, AgentError> {
-        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.seen.lock().unwrap().push(request.context.to_owned());
-        let answer = self.answers.lock().unwrap().remove(0);
-        Ok(AgentRun::spawn_custom(move |_| Ok(answer))?)
+        use std::sync::atomic::Ordering::SeqCst;
+        self.calls.fetch_add(1, SeqCst);
+        self.seen
+            .lock()
+            .unwrap()
+            .push(format!("{}\n{}", request.instruction, request.context));
+        let finds = request.instruction.contains("swallowed")
+            && self
+                .findings_left
+                .try_update(SeqCst, SeqCst, |left| left.checked_sub(1))
+                .is_ok();
+        let confidence = self.confidence;
+        let cost = self.cost;
+        Ok(AgentRun::spawn_review(move |context| {
+            context.cost(cost, false);
+            Ok(autopilot_core::ReviewReport {
+                findings: if finds {
+                    vec![autopilot_core::ReviewFinding {
+                        path: "src/lib.rs".into(),
+                        line: 3,
+                        issue: "The error from the parse is replaced by a default.".into(),
+                        kind: autopilot_core::FindingKind::ErrorHandling,
+                        confidence,
+                    }]
+                } else {
+                    Vec::new()
+                },
+            })
+        })?)
     }
 }
 
-fn reviewing(world: &World, answers: Vec<(bool, &str)>) -> Reviewing {
+fn reviewing(world: &World, findings: usize, confidence: u8, cost: u64) -> Reviewing {
     Reviewing {
         inner: agent(world),
-        answers: std::sync::Mutex::new(
-            answers
-                .into_iter()
-                .map(|(ok, summary)| autopilot_core::CustomOutcome {
-                    summary: summary.into(),
-                    ok,
-                })
-                .collect(),
-        ),
+        findings_left: std::sync::atomic::AtomicUsize::new(findings),
+        confidence,
+        cost: autopilot_core::Money::from_microusd(cost),
         calls: std::sync::atomic::AtomicUsize::new(0),
         seen: std::sync::Mutex::new(Vec::new()),
     }
@@ -924,35 +947,54 @@ fn build_reviewed(world: &World, profile: &str, agent: &Reviewing) -> BuildOutco
     .unwrap()
 }
 
-// Invariant: a review that finds a problem is a failed check: the build goes
-// another round and the review runs again on the new change, and the step ends
-// only on an approving review. A change that breaks it: treating the review as
-// advice, which would finish a build the reviewer rejected.
+fn calls(agent: &Reviewing) -> usize {
+    agent.calls.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+// The project has no rules here, so the rules reviewer is skipped and three
+// reviewers read each round.
+const REVIEWERS_WITHOUT_RULES: usize = 3;
+
+// Invariant: a finding the reviewers are sure of is a failed check: the build
+// goes another round with the finding at its `path:line` in the note, the
+// reviewers read the new change, and the step ends only when they find nothing
+// at the threshold. A change that breaks it: treating the review as advice,
+// which would finish a build a reviewer was sure was wrong.
 #[test]
-fn a_rejecting_review_sends_the_build_back_and_an_approving_one_ends_it() {
+fn a_confident_finding_sends_the_build_back_and_a_clean_review_ends_it() {
     let world = world("b-review", "plain", false);
-    let agent = reviewing(
-        &world,
-        vec![
-            (false, "The change has no doc comment."),
-            (true, "Looks right."),
-        ],
-    );
+    let agent = reviewing(&world, 1, 90, 0);
     assert_eq!(
         build_reviewed(&world, ALWAYS_PASS, &agent),
         BuildOutcome::Ready
     );
-    assert_eq!(agent.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(calls(&agent), 2 * REVIEWERS_WITHOUT_RULES);
     let failed = failures(&world);
     assert_eq!(failed.len(), 1, "{failed:?}");
-    assert!(failed[0].contains("no doc comment"), "{failed:?}");
-    // The reviewer got the plan and the committed change as text.
+    assert!(failed[0].contains("src/lib.rs:3"), "{failed:?}");
+    assert!(failed[0].contains("error handling, 90%"), "{failed:?}");
+    // Each reviewer got the plan and the committed change as text.
     let seen = agent.seen.lock().unwrap();
     assert!(
-        seen[0].contains("Plan:") && seen[0].contains("diff --git"),
-        "{}",
-        seen[0]
+        seen.iter()
+            .all(|text| text.contains("Plan:") && text.contains("diff --git")),
+        "{seen:?}"
     );
+}
+
+// Invariant: a remark under the threshold does not fail the check. Four
+// reviewers each reporting what they merely suspect would otherwise send the
+// agent round again and again for nothing.
+#[test]
+fn a_doubtful_remark_does_not_send_the_build_back() {
+    let world = world("b-review-low", "plain", false);
+    let agent = reviewing(&world, 1, 40, 0);
+    assert_eq!(
+        build_reviewed(&world, ALWAYS_PASS, &agent),
+        BuildOutcome::Ready
+    );
+    assert_eq!(calls(&agent), REVIEWERS_WITHOUT_RULES, "one round only");
+    assert_eq!(failures(&world), Vec::<String>::new());
 }
 
 // Invariant: the review waits for the checks that run code. A build that fails
@@ -961,16 +1003,49 @@ fn a_rejecting_review_sends_the_build_back_and_an_approving_one_ends_it() {
 #[test]
 fn the_review_is_not_asked_while_an_earlier_check_fails() {
     let world = world("b-review-late", "plain", false);
-    let agent = reviewing(&world, vec![(true, "Fine.")]);
+    let agent = reviewing(&world, 0, 90, 0);
     assert_eq!(
         build_reviewed(&world, NEEDS_FIX, &agent),
         BuildOutcome::Ready
     );
     assert_eq!(
-        agent.calls.load(std::sync::atomic::Ordering::SeqCst),
-        1,
+        calls(&agent),
+        REVIEWERS_WITHOUT_RULES,
         "one review, after the round that passed"
     );
+}
+
+// Invariant: what the reviewers spend counts against the step's dollar cap.
+// The fake build turn costs 1000 micro-dollars and each of the three reviewer
+// calls another 1000, against a cap of 3000: the build alone leaves room for a
+// second round, the review does not, so the step must end after the first
+// review instead of reviewing round after round without limit. A change
+// that breaks it: leaving review spend out of the loop's total, which let a
+// review round spend more than the whole step was allowed.
+#[test]
+fn review_spending_counts_against_the_step_budget() {
+    const CAPPED: &str = r#"
+protected_paths = ["secrets/**"]
+
+[steps.build_check]
+auth = "api"
+
+[steps.build_check.limits]
+rounds = 5
+budget_microusd = 3000
+
+[checks.build]
+executable = "git"
+args = ["rev-parse", "--git-dir"]
+"#;
+    let world = world("b-review-budget", "plain", false);
+    let agent = reviewing(&world, 100, 90, 1000);
+    let outcome = build_reviewed(&world, CAPPED, &agent);
+    let BuildOutcome::NeedsYou { reason, .. } = outcome else {
+        panic!("the budget should have stopped the step");
+    };
+    assert!(reason.contains("budget"), "{reason}");
+    assert_eq!(calls(&agent), REVIEWERS_WITHOUT_RULES, "no second round");
 }
 
 const NODE_BUILD: &str = r#"

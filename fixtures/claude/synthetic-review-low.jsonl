@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-000000000000","model":"synthetic-model","tools":[]}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Reading the synthetic ticket."}]},"session_id":"00000000-0000-4000-8000-000000000000"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"StructuredOutput","input":{}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":2,"result":"","structured_output":{"findings":[{"path":"src/lib.rs","line":3,"issue":"This might be slow for large inputs.","kind":"other","confidence":40}]},"total_cost_usd":0.001234,"usage":{"input_tokens":10,"output_tokens":5},"session_id":"00000000-0000-4000-8000-000000000000"}
