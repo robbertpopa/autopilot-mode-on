@@ -74,6 +74,10 @@ pub(crate) fn live_status(ui: &mut egui::Ui, view: &TicketView) {
     };
     let name = step_name(card.step);
     let (text, color) = match &card.state {
+        StepState::Running if crate::run::pull_request_approved(view) => (
+            "Pull request approved: waiting for you to open it".to_owned(),
+            theme::BLUE_TEXT(),
+        ),
         StepState::Running => {
             // The ticket's own clock: per-step start times are not recorded.
             let since = crate::now_ms().saturating_sub(view.started_ms);
@@ -89,7 +93,8 @@ pub(crate) fn live_status(ui: &mut egui::Ui, view: &TicketView) {
         }
         _ => return,
     };
-    let running = matches!(card.state, StepState::Running);
+    let running =
+        matches!(card.state, StepState::Running) && !crate::run::pull_request_approved(view);
     ui.horizontal(|ui| {
         if running {
             ui.add(egui::Spinner::new().size(14.0).color(color));
@@ -204,6 +209,7 @@ fn stepper_row(
     tag: &str,
     current: bool,
     (first, last): (bool, bool),
+    approved: bool,
 ) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::click());
@@ -247,7 +253,9 @@ fn stepper_row(
         font,
         text_color,
     );
-    let right = if current && !matches!(card.state, StepState::Idle) {
+    let right = if approved && card.state == StepState::Running {
+        "approved"
+    } else if current && !matches!(card.state, StepState::Idle) {
         short_state(&card.state)
     } else {
         tag
@@ -406,7 +414,13 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(glyph).color(color));
                         ui.label(RichText::new(step_name(card.step)).strong());
-                        ui.label(theme::muted(state_text(&card.state)));
+                        let approved = card.step == Step::PullRequest
+                            && crate::run::pull_request_approved(view);
+                        ui.label(theme::muted(if approved {
+                            "approved, not opened yet".to_owned()
+                        } else {
+                            state_text(&card.state)
+                        }));
                     });
                     if let Some(short) = &card.in_short {
                         ui.label(short);
@@ -548,6 +562,7 @@ impl App {
                     tag,
                     current == Some(card.step),
                     (index == 0, index == last),
+                    card.step == Step::PullRequest && crate::run::pull_request_approved(view),
                 );
                 if theme::named(row, step_name(card.step)).clicked() {
                     open = Some(card.step);
