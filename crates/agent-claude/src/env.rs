@@ -63,7 +63,7 @@ pub fn child_env(
     let mut api_key = None;
     for (name, value) in parent {
         if name_is(&name, API_KEY_SOURCE) {
-            api_key = Some(value);
+            api_key = Some(trimmed(value));
         } else if ALLOWED.iter().any(|allowed| name_is(&name, allowed)) {
             child.push((name, value));
         }
@@ -75,6 +75,15 @@ pub fn child_env(
         }
     }
     Ok(child)
+}
+
+/// A key copied from a file with Windows line endings ends in a carriage
+/// return, which the sandbox proxy refuses as a header value.
+fn trimmed(value: OsString) -> OsString {
+    match value.to_str() {
+        Some(text) => text.trim().into(),
+        None => value,
+    }
 }
 
 /// Settings that leave Git with no way to authenticate.
@@ -125,7 +134,7 @@ pub fn sandbox_env(
     let key = parent
         .into_iter()
         .find(|(name, value)| name_is(name, API_KEY_SOURCE) && !value.is_empty())
-        .map(|(_, value)| value)
+        .map(|(_, value)| trimmed(value))
         .ok_or(EnvError::MissingApiKey)?;
     let mut child: Vec<(OsString, OsString)> = vec![
         (API_KEY_TARGET.into(), key),
@@ -214,6 +223,28 @@ mod tests {
         assert_eq!(key[0].1, "dedicated-key");
         assert!(!names(&env).contains(&"anthropic_auth_token".to_string()));
         assert!(!names(&env).contains(&"github_token".to_string()));
+    }
+
+    // Invariant: whitespace around the dedicated key never reaches the agent.
+    // A change that breaks it: passing the value through, so a key read from a
+    // CRLF file makes every request fail with an invalid header.
+    #[test]
+    fn a_key_with_a_trailing_line_ending_is_trimmed() {
+        let env = sandbox_env(
+            [(
+                "AUTOPILOT_ANTHROPIC_API_KEY".into(),
+                " dedicated-key\r\n".into(),
+            )],
+            "/c",
+            "/t",
+        )
+        .unwrap();
+        let key = env.iter().find(|(name, _)| name == "ANTHROPIC_API_KEY");
+        assert_eq!(
+            key.map(|(_, v)| v.to_string_lossy().into_owned())
+                .as_deref(),
+            Some("dedicated-key")
+        );
     }
 
     // Invariant: a turn inside the boundary gets the dedicated key and a fixed

@@ -105,6 +105,9 @@ pub struct Wsl {
     /// Folders outside the usual places that hold a tool the command runs (the
     /// installed `claude` on a Mac).
     tool_roots: Vec<String>,
+    /// The installed `claude` as a path, where a bare name would not be found
+    /// because the folder it sits in is hidden from the command.
+    claude_path: Option<String>,
 }
 
 /// What one command may touch. Paths are Windows paths (`D:\...`) or absolute
@@ -205,6 +208,13 @@ impl Wsl {
     #[must_use]
     pub(crate) fn tool_roots(&self) -> &[String] {
         &self.tool_roots
+    }
+
+    /// The program that starts Claude Code inside the boundary: its own path
+    /// where the discovery found one, else the bare name on the `PATH`.
+    #[must_use]
+    pub fn claude_program(&self) -> &str {
+        self.claude_path.as_deref().unwrap_or("claude")
     }
 
     /// A path as the boundary's machine names it. A Mac matches Seatbelt rules
@@ -459,7 +469,6 @@ srt="$home/.autopilot/npm/bin/srt"
 node=$(command -v node || true)
 claude=$(command -v claude || true)
 [ -n "$node" ] && add "$(dirname "$node")"
-[ -n "$claude" ] && add "$(dirname "$claude")"
 [ -n "$srt" ] && add "$(dirname "$srt")"
 add "$home/.cargo/bin"
 add /opt/homebrew/bin
@@ -478,8 +487,10 @@ if [ -n "$claude" ]; then
   echo "claude_version=$("$claude" --version 2>/dev/null | head -n 1)"
   link=$(readlink "$claude" || true)
   case "$link" in
-    /*) echo "root=$(dirname "$link")" ;;
+    /*) claude="$link" ;;
   esac
+  echo "claude=$claude"
+  echo "root=$(dirname "$claude")"
 fi
 [ -x /usr/bin/sandbox-exec ] || echo "missing:sandbox-exec"
 [ -n "$srt" ] || echo "missing:srt (run tools/macos/setup.sh)"
@@ -506,6 +517,7 @@ pub(crate) fn parse_discovery(
     let mut seccomp = None;
     let mut hook = None;
     let mut tool_roots = Vec::new();
+    let mut claude_path = None;
     let mut srt_version = None;
     let mut bwrap_version = None;
     let mut claude_version = None;
@@ -519,6 +531,8 @@ pub(crate) fn parse_discovery(
             srt = Some(value.to_owned());
         } else if let Some(value) = line.strip_prefix("seccomp=") {
             seccomp = Some(value.to_owned());
+        } else if let Some(value) = line.strip_prefix("claude=") {
+            claude_path = Some(value.to_owned());
         } else if let Some(value) = line.strip_prefix("root=") {
             tool_roots.push(value.to_owned());
         } else if let Some(value) = line.strip_prefix("hook=") {
@@ -559,7 +573,11 @@ pub(crate) fn parse_discovery(
     let required = [&home, &path, &srt, &hook];
     let unusable = |value: &String| value.is_empty() || value.contains(['\n', '\0']);
     let seccomp_bad = host != Host::Macos && unusable(&seccomp);
-    for value in required.into_iter().chain(&tool_roots) {
+    for value in required
+        .into_iter()
+        .chain(&tool_roots)
+        .chain(claude_path.iter())
+    {
         if unusable(value) {
             return Err(io::Error::other(format!("{place} gave an unusable answer")));
         }
@@ -596,6 +614,7 @@ pub(crate) fn parse_discovery(
         bwrap_version,
         claude_version,
         tool_roots,
+        claude_path,
     })
 }
 

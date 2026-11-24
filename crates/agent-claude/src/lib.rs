@@ -231,7 +231,7 @@ impl ClaudeAgent {
         let settings = command::hook_settings(&shell_quote(sandbox.boundary.wsl().hook())?)?;
         let spec = CommandSpec {
             // The distro's own program, found on its PATH; `self.executable` is the host's.
-            program: PathBuf::from("claude"),
+            program: PathBuf::from(sandbox.boundary.wsl().claude_program()),
             args: command::without_git(command::build_args(
                 &self.config,
                 &settings,

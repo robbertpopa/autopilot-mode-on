@@ -859,7 +859,7 @@ fn sandbox_config(profile: &autopilot_profile::Profile) -> Result<ClaudeConfig, 
 /// every row held; otherwise Build stays refused and the rows are listed.
 fn wsl_boundary(data_dir: &Path, guardian: &Path) -> Result<Validated, Box<dyn Error>> {
     let distro = env::var("AUTOPILOT_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_owned());
-    let folder = data_dir.join("sandbox");
+    let folder = std::path::absolute(data_dir.join("sandbox"))?;
     let (place, setup) = if cfg!(target_os = "macos") {
         ("macOS", "tools/macos/setup.sh")
     } else {
