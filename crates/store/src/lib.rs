@@ -12,6 +12,8 @@ use autopilot_core::{Event, NewEvent, RecordedEvent, Step, TicketId};
 pub enum StoreError {
     #[error("SQLite event storage: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("this request was already answered, and an answer cannot be given twice")]
+    AlreadyAnswered,
     #[error("could not encode or decode stored event state: {0}")]
     Json(#[from] serde_json::Error),
     #[error("event sequence conflict: expected {expected}, found {actual}")]

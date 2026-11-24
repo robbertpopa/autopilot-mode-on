@@ -13,7 +13,7 @@
 use std::{fs, path::Path};
 
 use autopilot_agent::{Agent, StepRequest};
-use autopilot_core::{Design, Event, Step, TicketId};
+use autopilot_core::{Design, Event, RequestId, Step, TicketId};
 use autopilot_pipeline::{
     StepState, fold,
     inbox::{Inbox, Request, RequestBody},
@@ -236,8 +236,9 @@ fn settle(
                 )));
             }
             save(directory, ticket, &design)?;
+            let id = crate::fresh_request(ticket, &store.events(ticket, 0)?, REQUEST);
             let asked = Event::Asked {
-                request: crate::scoped(ticket, REQUEST),
+                request: id.clone(),
             };
             store.append(
                 ticket,
@@ -253,7 +254,7 @@ fn settle(
                     event(at, DESIGN, asked),
                 ],
             )?;
-            Inbox::in_data_dir(directory).write_request(&request(ticket, &design))?;
+            Inbox::in_data_dir(directory).write_request(&request(ticket, &design, id))?;
             Ok(Some(design))
         }
         Pumped::Stopped(reason) => {
@@ -279,9 +280,9 @@ fn settle(
 /// The approval request for a design. It is always asked, and never a
 /// standing allowance: the owner sees every design.
 #[must_use]
-pub fn request(ticket: &TicketId, design: &Design) -> Request {
+pub fn request(ticket: &TicketId, design: &Design, id: RequestId) -> Request {
     Request {
-        id: crate::scoped(ticket, REQUEST),
+        id,
         ticket: ticket.clone(),
         body: RequestBody::Approval {
             action: format!(

@@ -98,7 +98,17 @@ impl Store for SqliteStore {
                     _ => None,
                 };
                 let body = serde_json::to_string(event)?;
-                insert.execute(params![ticket.as_str(), sql_seq, body, answer])?;
+                insert
+                    .execute(params![ticket.as_str(), sql_seq, body, answer])
+                    .map_err(|error| match error {
+                        rusqlite::Error::SqliteFailure(failure, _)
+                            if answer.is_some()
+                                && failure.code == rusqlite::ErrorCode::ConstraintViolation =>
+                        {
+                            StoreError::AlreadyAnswered
+                        }
+                        other => StoreError::Sqlite(other),
+                    })?;
                 written.push(RecordedEvent {
                     ticket: ticket.clone(),
                     seq,

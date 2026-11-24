@@ -45,6 +45,32 @@ fn a_stale_writer_cannot_append_another_event_at_the_same_sequence() {
     assert_eq!(reopened.events(&ticket, 0).unwrap(), written);
 }
 
+// Invariant: answering the same request twice is refused with words an owner can
+// read, not a raw SQLite constraint message, and leaves the history unchanged.
+// A change that let the error through as `Sqlite(..)` shows the owner a banner
+// naming a table and an index.
+#[test]
+fn a_second_answer_to_one_request_says_so_in_plain_words() {
+    let temp = tempfile::tempdir().unwrap();
+    let ticket = TicketId::from("CK-1");
+    let mut store = SqliteStore::open(temp.path().join("events.sqlite3")).unwrap();
+    let answer = || {
+        event(Event::Answered {
+            request: "ask-1".into(),
+            answer: "\"approve\"".into(),
+        })
+    };
+    store.append(&ticket, 0, &[create()]).unwrap();
+    store.append(&ticket, 1, &[answer()]).unwrap();
+    let refused = store.append(&ticket, 2, &[answer()]);
+    assert!(
+        matches!(refused, Err(StoreError::AlreadyAnswered)),
+        "{refused:?}"
+    );
+    assert!(!refused.unwrap_err().to_string().contains("SQLite"));
+    assert_eq!(store.events(&ticket, 0).unwrap().len(), 2);
+}
+
 #[test]
 fn a_failed_batch_does_not_leave_a_partial_history() {
     let temp = tempfile::tempdir().unwrap();
