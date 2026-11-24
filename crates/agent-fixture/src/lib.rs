@@ -15,6 +15,7 @@ use serde::Deserialize;
 pub struct FixtureAgent {
     program: PathBuf,
     guardian: PathBuf,
+    fault: Option<String>,
 }
 
 impl FixtureAgent {
@@ -41,7 +42,21 @@ impl FixtureAgent {
                 format!("process guardian missing at {}", guardian.display()),
             ));
         }
-        Ok(Self { program, guardian })
+        Ok(Self {
+            program,
+            guardian,
+            fault: None,
+        })
+    }
+}
+
+impl FixtureAgent {
+    /// Make the practice program misbehave the way `autopilot-fake-agent
+    /// replay <fault>` does, so tests can see how a run copes.
+    #[must_use]
+    pub fn with_fault(mut self, fault: &str) -> Self {
+        self.fault = Some(fault.to_owned());
+        self
     }
 }
 
@@ -62,7 +77,10 @@ impl Agent for FixtureAgent {
         }
         let spec = CommandSpec {
             program: self.program.clone(),
-            args: vec!["replay".into()],
+            args: ["replay".into()]
+                .into_iter()
+                .chain(self.fault.clone().map(Into::into))
+                .collect(),
             env: child_env,
             cwd: None,
         };

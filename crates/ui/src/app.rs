@@ -935,6 +935,13 @@ pub fn badge_colors(badge: Badge, view: &TicketView) -> (String, Color32, Color3
     let minutes = view.last_ms.saturating_sub(view.started_ms) / 60_000;
     match badge {
         Badge::NeedsYou => ("Needs you".into(), theme::AMBER_FILL(), theme::AMBER()),
+        // The step reads as running, but the owner approved and nothing is
+        // working: the push waits for the owner's click.
+        Badge::Running if crate::run::pull_request_approved(view) => (
+            "Approved · not opened".into(),
+            theme::BLUE_FILL(),
+            theme::BLUE_TEXT(),
+        ),
         Badge::Running => (
             format!("Running · {minutes} min"),
             theme::GREEN_FILL(),

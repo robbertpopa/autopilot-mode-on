@@ -882,17 +882,14 @@ fn orchestrated_first(options: &Options, ticket: &TicketId) {
 
 fn fixture_agent() -> Result<FixtureAgent, String> {
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-    let first = FixtureAgent::beside(&executable);
-    if let Ok(agent) = first {
-        return Ok(agent);
-    }
-    let up = executable
-        .parent()
-        .and_then(Path::parent)
-        .zip(executable.file_name())
-        .map(|(folder, name)| folder.join(name));
-    if let Some(agent) = up.and_then(|path| FixtureAgent::beside(&path).ok()) {
-        return Ok(agent);
+    // A test binary sits a few folders below `target/debug`, and newer cargo
+    // puts it deeper than older cargo did, so every folder above is tried.
+    if let Some(name) = executable.file_name() {
+        for folder in executable.ancestors().skip(1) {
+            if let Ok(agent) = FixtureAgent::beside(&folder.join(name)) {
+                return Ok(agent);
+            }
+        }
     }
     Err("the fixture agent is missing. Build the workspace first: cargo build --workspace".into())
 }
