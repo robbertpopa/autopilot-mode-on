@@ -723,6 +723,7 @@ impl App {
         self.auto_orchestrate();
         self.auto_advance();
         self.follow_system_theme(ctx);
+        self.title_area(ctx);
         if self.is_first_run() {
             self.welcome(ctx);
             return;

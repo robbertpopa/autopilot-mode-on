@@ -39,6 +39,14 @@ pub fn run(options: Options) -> eframe::Result {
     if let Ok(icon) = eframe::icon_data::from_png_bytes(theme::ICON_PNG) {
         viewport = viewport.with_icon(icon);
     }
+    // macOS: the content runs under a transparent title bar and the window
+    // buttons sit over our own header, so there is no second bar.
+    if cfg!(target_os = "macos") {
+        viewport = viewport
+            .with_fullsize_content_view(true)
+            .with_title_shown(false)
+            .with_titlebar_shown(false);
+    }
     let native = eframe::NativeOptions {
         viewport: viewport
             .with_title("Autopilot Mode On")
