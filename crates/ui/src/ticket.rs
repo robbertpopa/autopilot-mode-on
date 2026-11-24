@@ -69,6 +69,34 @@ fn clock(ms: u64) -> String {
 /// One line that says what the ticket is doing right now. Only a running
 /// ticket gets a spinner, so motion always means work is happening.
 pub(crate) fn live_status(ui: &mut egui::Ui, view: &TicketView) {
+    live_status_at(ui, view, crate::now_ms());
+}
+
+/// Seconds as `3s`, or `2:05` from a minute on.
+fn ago(ms: u64) -> String {
+    if ms < 60_000 {
+        format!("{}s", ms / 1000)
+    } else {
+        clock(ms)
+    }
+}
+
+/// The sub-steps of a step, ticked as they happen. They stay after it ends.
+pub(crate) fn sub_step_list(ui: &mut egui::Ui, view: &TicketView, step: Step) {
+    for item in autopilot_engine::sub_steps(view, step) {
+        let (mark, color) = match (item.done, item.ok) {
+            (true, true) => ("✔", theme::GREEN()),
+            (true, false) => ("×", theme::RED()),
+            (false, _) => ("○", theme::TEXT_MUTED()),
+        };
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(mark).color(color));
+            ui.label(theme::muted(item.text));
+        });
+    }
+}
+
+pub(crate) fn live_status_at(ui: &mut egui::Ui, view: &TicketView, now_ms: u64) {
     let Some(card) = current_step(view) else {
         return;
     };
@@ -79,12 +107,40 @@ pub(crate) fn live_status(ui: &mut egui::Ui, view: &TicketView) {
             theme::BLUE_TEXT(),
         ),
         StepState::Running => {
-            // The ticket's own clock: per-step start times are not recorded.
-            let since = crate::now_ms().saturating_sub(view.started_ms);
-            (
-                format!("Running {name} · {} since start", clock(since)),
-                theme::BLUE_TEXT(),
-            )
+            let since = now_ms.saturating_sub(view.started_ms);
+            match autopilot_engine::live_status(view, card.step, now_ms) {
+                Some(live) => {
+                    let beat = match live.liveness {
+                        autopilot_engine::Liveness::Active => {
+                            format!("last activity {} ago", ago(live.idle_ms))
+                        }
+                        autopilot_engine::Liveness::Quiet => {
+                            format!("quiet for {}", ago(live.idle_ms))
+                        }
+                        autopilot_engine::Liveness::Stalled => {
+                            format!("no activity for {}: it may be stuck", ago(live.idle_ms))
+                        }
+                    };
+                    let color = match live.liveness {
+                        autopilot_engine::Liveness::Active => theme::BLUE_TEXT(),
+                        autopilot_engine::Liveness::Quiet => theme::AMBER(),
+                        autopilot_engine::Liveness::Stalled => theme::RED(),
+                    };
+                    (
+                        format!(
+                            "Running {name} · {} · {beat} · {} · {} since start",
+                            live.phase,
+                            dollars(live.spent),
+                            clock(since)
+                        ),
+                        color,
+                    )
+                }
+                None => (
+                    format!("Running {name} · {} since start", clock(since)),
+                    theme::BLUE_TEXT(),
+                ),
+            }
         }
         StepState::Asking(_) => (format!("{name} is waiting for you"), theme::AMBER()),
         StepState::Paused => (format!("Paused at {name}"), theme::GREY_TEXT()),
@@ -104,6 +160,14 @@ pub(crate) fn live_status(ui: &mut egui::Ui, view: &TicketView) {
         }
         ui.label(RichText::new(text).color(color).strong());
     });
+    if running {
+        if let Some(live) = autopilot_engine::live_status(view, card.step, now_ms)
+            && let Some(detail) = live.detail
+        {
+            ui.label(theme::muted(format!("      {detail}")));
+        }
+        sub_step_list(ui, view, card.step);
+    }
 }
 
 /// Steps that count towards progress, finished first. Skipped steps are out.
@@ -622,5 +686,66 @@ impl App {
             }
             self.open_worktree_row(ui, view);
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn drawn(view: &TicketView, now_ms: u64) -> String {
+        let context = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1200.0, 900.0),
+            )),
+            ..Default::default()
+        };
+        let output = context.run(input, |context| {
+            egui::CentralPanel::default().show(context, |ui| {
+                live_status_at(ui, view, now_ms);
+                sub_step_list(ui, view, Step::BuildCheck);
+            });
+        });
+        let mut text = String::new();
+        for clipped in output.shapes {
+            if let Shape::Text(shape) = clipped.shape {
+                text.push_str(shape.galley.text());
+                text.push('\n');
+            }
+        }
+        text
+    }
+
+    fn view_of(name: &str) -> TicketView {
+        let directory = tempfile::tempdir().unwrap();
+        crate::demo::seed(directory.path(), 1_700_000_000_000).unwrap();
+        crate::demo::seed_build_states(directory.path(), 1_700_000_000_000).unwrap();
+        autopilot_engine::load_ticket(directory.path(), &TicketId::from(name)).unwrap()
+    }
+
+    // Invariant: a running build shows its phase and a heartbeat that turns
+    // amber-worded "quiet" and then "stuck" as time passes with no event, and a
+    // finished build keeps its sub-steps. A page that only said "Running" gave
+    // no way to tell a thinking run from a dead one.
+    #[test]
+    fn a_running_step_shows_a_heartbeat_that_goes_quiet_and_stalled() {
+        let view = view_of("demo-timezone");
+        let active = drawn(&view, view.last_ms + 3_000);
+        assert!(active.contains("Running Build"), "{active}");
+        assert!(active.contains("last activity 3s ago"), "{active}");
+        assert!(active.contains("round 2"), "{active}");
+        assert!(active.contains("Round 1: build turn"), "{active}");
+        let quiet = drawn(&view, view.last_ms + 40_000);
+        assert!(quiet.contains("quiet for 40s"), "{quiet}");
+        let stalled = drawn(&view, view.last_ms + 400_000);
+        assert!(stalled.contains("it may be stuck"), "{stalled}");
+        let done = drawn(&view_of("demo-passed"), 1_700_000_000_000);
+        assert!(!done.contains("Running"), "{done}");
+        assert!(
+            done.contains("Round 1: tests"),
+            "the sub-steps stay: {done}"
+        );
     }
 }
