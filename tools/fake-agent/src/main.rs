@@ -68,6 +68,10 @@ fn claude_print() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         return Ok(ExitCode::SUCCESS);
     }
+    if prompt.contains("scenario:unknown-events") {
+        output.write_all(&with_unknowns(CLAUDE_SUCCESS)?)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     if prompt.contains("scenario:hang") {
         output.write_all(init.as_bytes())?;
         output.flush()?;
@@ -222,10 +226,34 @@ fn obey_injection(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The transcript with frame types and fields nobody has heard of added: one
+/// new frame before each line and one after the last, and a new field in
+/// each line's own object. A frame after the result catches a decoder that
+/// lets a stranger undo what it already has.
+fn with_unknowns(transcript: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut out = Vec::new();
+    for line in transcript.split(|&byte| byte == b'\n') {
+        if line.trim_ascii().is_empty() {
+            continue;
+        }
+        let mut frame: serde_json::Value = serde_json::from_slice(line)?;
+        writeln!(
+            out,
+            "{{\"type\":\"zz_future_event\",\"payload\":{{\"nested\":[1,2,3]}}}}"
+        )?;
+        if let Some(object) = frame.as_object_mut() {
+            object.insert("zz_future_field".into(), serde_json::json!({"a": [null]}));
+        }
+        writeln!(out, "{frame}")?;
+    }
+    writeln!(out, "{{\"type\":\"zz_future_event\",\"payload\":null}}")?;
+    Ok(out)
+}
+
 fn replay() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut args = env::args_os().skip(1);
     if args.next().as_deref() != Some(OsStr::new("replay")) {
-        return Err("expected replay [truncated|partial-utf8|oversized|hang|crash]".into());
+        return Err("expected replay [truncated|partial-utf8|oversized|hang|crash|unknown]".into());
     }
     let fault = args.next();
     if args.next().is_some() {
@@ -260,6 +288,7 @@ fn replay() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 output.flush()?;
                 thread::sleep(Duration::from_secs(30));
             }
+            Some("unknown") => output.write_all(&with_unknowns(TRANSCRIPT)?)?,
             Some("crash") => {
                 output.write_all(activity)?;
                 output.flush()?;
