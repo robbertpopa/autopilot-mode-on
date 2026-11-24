@@ -2110,4 +2110,102 @@ effort = \"high\"
             }
         }
     }
+
+    // Invariant: nothing a page draws reaches past the right edge of the window,
+    // in both palettes, at the usual width and at a narrow one. A long request
+    // in the Inbox card once widened the whole page, so its right side was cut
+    // off and "open" ran under the title; no other test measures where things
+    // are drawn.
+    #[test]
+    fn no_page_is_drawn_past_the_window_edge() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        demo::seed_build_states(&options.data_dir, now_ms()).unwrap();
+        backend::mark_welcomed(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        for light in [false, true] {
+            theme::apply(&context, light);
+            for width in [1280.0_f32, 980.0] {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::pos2(0.0, 0.0),
+                        egui::vec2(width, 832.0),
+                    )),
+                    ..Default::default()
+                };
+                let pages = [
+                    (Mode::Today, None),
+                    (Mode::Watch, Some("demo-stopped")),
+                    (Mode::Watch, Some("demo-asked")),
+                    (Mode::Watch, Some("demo-timezone")),
+                ];
+                for (mode, ticket) in pages {
+                    app.mode = mode;
+                    match ticket {
+                        Some(name) => app.open(&autopilot_core::TicketId::from(name)),
+                        None => app.selected = None,
+                    }
+                    let mut output = None;
+                    for _ in 0..3 {
+                        output = Some(context.run(input.clone(), |context| app.ui(context)));
+                    }
+                    for clipped in output.unwrap().shapes {
+                        let bounds = clipped.shape.visual_bounding_rect();
+                        assert!(
+                            !(bounds.max.x > width + 3.0),
+                            "{mode:?} {ticket:?} light={light} width={width}: a shape ends at {} {:?}",
+                            bounds.max.x,
+                            clipped.shape
+                        );
+                    }
+                }
+            }
+        }
+        theme::apply(&context, false);
+    }
+
+    // Invariant: a ticket started in a project names that project from its
+    // first event, before the agent has read anything. Recorded after
+    // Understand, the sidebar listed a new ticket under "no project" for as long
+    // as that step ran (the whole first turn of a real agent).
+    #[test]
+    fn a_new_ticket_names_its_project_before_understand_runs() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        perform(
+            &options,
+            &Action::Start {
+                title: "In a project".into(),
+                description: "Add an export option".into(),
+                attachments: Vec::new(),
+                workspace: Some(directory.path().to_path_buf()),
+                pipeline: None,
+            },
+        )
+        .unwrap();
+        let id = read(&options).tickets[0].id.clone();
+        let history = autopilot_engine::watch(&options.data_dir, &id, 0).unwrap();
+        let at = |wanted: fn(&autopilot_core::Event) -> bool| {
+            history.iter().position(|record| wanted(&record.event.kind))
+        };
+        let workspace = at(|kind| matches!(kind, autopilot_core::Event::Workspace { .. }));
+        let started = at(|kind| matches!(kind, autopilot_core::Event::StepStarted { .. }));
+        assert!(workspace.is_some() && started.is_some());
+        assert!(workspace < started, "{workspace:?} before {started:?}");
+    }
 }

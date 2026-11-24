@@ -1188,11 +1188,6 @@ fn start(
         let _ = std::fs::remove_dir_all(directory.join("attachments").join(id.as_str()));
         return Err(error.to_string());
     }
-    if let Some(folder) = workspace {
-        // Kept in the history so every later step looks at the same project.
-        autopilot_engine::record_workspace(directory, &id, folder)
-            .map_err(|error| format!("the ticket started, but its folder was not kept: {error}"))?;
-    }
     // A ticket with no project runs ask-only; one in a project runs the
     // project's default pipeline, or `full` when it names none.
     if let Ok(profile) = autopilot_engine::load_profile(&options.profile) {

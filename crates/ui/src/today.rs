@@ -48,6 +48,9 @@ fn next_steps(view: &TicketView) -> Vec<&'static str> {
         .collect()
 }
 
+/// Below this width the queue and the detail card are stacked.
+const STACK_BELOW: f32 = 760.0;
+
 fn row(ui: &mut egui::Ui, key: &str, value: &str) {
     ui.horizontal_top(|ui| {
         theme::cell(
@@ -59,7 +62,9 @@ fn row(ui: &mut egui::Ui, key: &str, value: &str) {
                 .strong()
                 .color(theme::TEXT_MUTED()),
         );
-        ui.label(value);
+        // `wrap` because a horizontal row never wraps by itself: a long request
+        // would widen the whole page past the window.
+        ui.add(egui::Label::new(value).wrap());
     });
 }
 
@@ -239,8 +244,15 @@ impl App {
         let picked = self.today_pick();
         let mut select = None;
         let total = ui.available_width();
-        let queue_width = (total * 0.34).clamp(260.0, 380.0);
-        ui.horizontal_top(|ui| {
+        // Side by side needs room for both: the detail card cannot shrink below
+        // its buttons, so a narrow window stacks the queue above it.
+        let stacked = total < STACK_BELOW;
+        let queue_width = if stacked {
+            total
+        } else {
+            (total * 0.34).clamp(260.0, 380.0)
+        };
+        let mut columns = |ui: &mut egui::Ui| {
             ui.spacing_mut().item_spacing.x = 16.0;
             ui.allocate_ui_with_layout(
                 egui::vec2(queue_width, 0.0),
@@ -262,7 +274,12 @@ impl App {
                     self.today_detail(ui, &view);
                 }
             });
-        });
+        };
+        if stacked {
+            ui.vertical(&mut columns);
+        } else {
+            ui.horizontal_top(&mut columns);
+        }
         if select.is_some() {
             self.today_selected = select;
         }
@@ -425,16 +442,26 @@ impl App {
             .inner_margin(Margin::symmetric(18, 16))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                // The link is placed first, so the title only gets what is left
+                // and is cut, never run under it.
                 ui.horizontal(|ui| {
-                    chip(ui, kind, fill, color);
-                    ui.label(RichText::new(&view.title).monospace().size(14.0).strong());
-                    if let Some((step, _)) = &waiting {
-                        ui.label(theme::mono(step_name(*step)).color(theme::TEXT_MUTED()));
-                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.link("open →").clicked() {
                             self.open(&view.id);
                         }
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            chip(ui, kind, fill, color);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&view.title).monospace().size(14.0).strong(),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(&view.title);
+                            if let Some((step, _)) = &waiting {
+                                ui.label(theme::mono(step_name(*step)).color(theme::TEXT_MUTED()));
+                            }
+                        });
                     });
                 });
                 ui.add_space(4.0);

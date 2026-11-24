@@ -248,6 +248,9 @@ pub fn run_understand_in(
     let _owner = lock_run(directory, &ticket.id)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let started_at = timestamp()?;
+    let workspace = workspace.map(|path| {
+        workspace::canonical(path).unwrap_or_else(|| path.to_string_lossy().into_owned())
+    });
     let mut start_events = vec![
         event(
             started_at,
@@ -272,6 +275,15 @@ pub fn run_understand_in(
             },
         ),
     ];
+    // The project is part of the ticket's first write, so a page that reads
+    // the log while the first step runs already knows where the ticket lives.
+    if let Some(path) = &workspace {
+        let at = start_events.len() - 1;
+        start_events.insert(
+            at,
+            event(started_at, None, Event::Workspace { path: path.clone() }),
+        );
+    }
     // Attachments sit between the ticket's words and the step's start.
     let at = start_events.len() - 1;
     for (offset, attachment) in attachments.iter().cloned().enumerate() {
@@ -286,9 +298,6 @@ pub fn run_understand_in(
     };
     let last = start.last().map_or(0, |record| record.seq);
 
-    let workspace = workspace.map(|path| {
-        workspace::canonical(path).unwrap_or_else(|| path.to_string_lossy().into_owned())
-    });
     run_attempt(
         directory,
         &mut store,
