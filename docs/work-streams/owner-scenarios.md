@@ -47,3 +47,28 @@ Tick a scenario with the date and commit once it passed. Never tick one from a t
 7. **Resume.** Choose Resume on the stopped ticket. *Expect:* the conversation continues from where it stopped (same provider session when one exists, otherwise a new one that is told what was done), and the history shows both parts.
 8. **Resume after restart.** Stop a ticket, close the window, reopen, resume. *Expect:* the same as step 7.
 9. **Both places agree.** Do steps 1 to 8 using the ticket page for one ticket and the sidebar for another. *Expect:* the same states and the same wording in both places.
+
+## First run on macOS (2026-11-24, develop at f6aae06)
+
+Observed by driving the real window with computer use (Haiku, API mode, cost $0.21). Plan and Build were not reached. These are observations, not fixes.
+
+**Ticket for scenario A (top bar and pipelines)**
+- Understand and Clarify passed. Design ran although the pipeline chosen was "Normal". Design hit `error_max_budget_usd` at the $0.05 per-call cap and was interrupted with no result.
+
+**Ticket for scenario B (per-step checklist)**
+- Understand, Clarify and Design passed (2 mockups; the forced Design approval was asked).
+- The step list on the ticket page shows only step names and status. There is no per-step checklist plan: scenario B is not implemented.
+
+**Ticket for scenario C (archive, delete, stop, resume)**
+- Understand, Clarify and Design passed. Plan hit `error_max_budget_usd` at $0.05 (interrupted, "Try again" shown).
+- The ticket page "More" menu has only "Open the worktree" and "Open in a terminal". There is no archive, delete, restore, stop or resume: scenario C is not implemented.
+
+**Bugs and risks observed**
+- A ticket shows under "no project" right after creation although a project is set (W14).
+- The Inbox detail pane is clipped on the right edge in a 1280 px window; text and "Open ->" are cut off (W13).
+- The "Reading your request…" and "Making the design…" spinner shows in the page header and inside the card (W15).
+- Built-in pipelines are read-only with only Duplicate; no create or delete pipeline is visible, and the detail view shows all six steps for every pipeline (scenario A, steps 3 to 6).
+- The pipeline's Plan step defaults to auth=subscription, model=opus (cost risk, A13). The orchestrator suggests "Plan: opus · high effort" for tickets.
+- A bare binary shows "autopilot-process-guardian is missing next to the window" unless the sibling binaries (`autopilot-process-guardian`, `autopilot`, `autopilot-fake-agent`) sit beside it.
+- The first-run folder picker is a native NSOpenPanel that cannot be driven in background mode.
+- The per-call $0.05 cap is too small for Haiku Design and Plan on a real repo: Plan fails with no result (A13).
