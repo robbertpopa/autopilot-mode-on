@@ -33,6 +33,8 @@ use crate::{
 /// A preference file the `defaults` tool writes through the `cfprefsd` service.
 /// It must not appear: the sandboxed process may not write outside its folders
 /// by asking a system service to.
+static NEXT_SCENE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 const PREFS_PREFIX: &str = "com.autopilot.isolation-probe";
 
 /// Each line is `ALLOWED label` or `DENIED label`. Positional parameters:
@@ -157,11 +159,10 @@ impl Scene {
         fs::create_dir_all(&root)?;
         // Seatbelt matches real paths, so the scene is built on one.
         let root = fs::canonicalize(&root)?;
-        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let id = format!(
             "{}-{}",
             std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
+            NEXT_SCENE.fetch_add(1, Ordering::Relaxed)
         );
         let scene = Self {
             worktree: root.join("wt"),
