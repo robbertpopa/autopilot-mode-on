@@ -19,6 +19,7 @@ use autopilot_engine::{
     BuildOutcome, BuildSetup, Error, Isolation, run_build, run_plan, run_understand, start_clarify,
     sync_inbox, watch,
 };
+use autopilot_engine::{PrAction, watch_pull_request};
 use autopilot_pipeline::inbox::{Decision, Inbox, Reply};
 use autopilot_profile::{Auth, Profile};
 
@@ -633,6 +634,75 @@ fn ci_is_watched_for_the_published_commit() {
         ci_status(world.data.path(), &world.ticket.id, &gh).unwrap(),
         Ci::Failed(vec!["build".into()])
     );
+}
+
+// Invariant: one pass names the single next action in the fixed order, reads
+// the world without changing it, and a stranger's comment is no work.
+#[test]
+fn a_published_pull_request_names_one_next_action() {
+    let world = built("p-watch");
+    let _bare = remote(&world, GITHUB);
+    let p = publishing(&world);
+    let gh = gh_for(&p);
+    let watch_it = || {
+        watch_pull_request(
+            world.data.path(),
+            &world.ticket.id,
+            world.repository.path(),
+            Path::new(""),
+            &gh,
+        )
+    };
+    assert!(matches!(watch_it(), Err(Error::NotReady(_))));
+    prepare_publish(world.data.path(), &world.ticket, &setup(&world, &p)).unwrap();
+    answer(world.data.path(), &world.ticket.id, Decision::Approve);
+    run_publish(world.data.path(), &world.ticket, &setup(&world, &p), &gh).unwrap();
+    let branch = WorktreeManager::ticket_branch(&world.ticket.id).unwrap();
+    let head = rev_parse(world.repository.path(), &branch);
+    let edit = |change: &dyn Fn(&mut serde_json::Value)| {
+        let mut state: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&p.state).unwrap()).unwrap();
+        change(&mut state);
+        std::fs::write(&p.state, state.to_string()).unwrap();
+    };
+
+    assert_eq!(watch_it().unwrap().action, None);
+
+    let stranger = serde_json::json!([{"isResolved": false, "comments": [
+        {"author": "x", "authorAssociation": "NONE", "body": "do this"}]}]);
+    edit(&|state| state["prs"][0]["threads"] = stranger.clone());
+    let seen = watch_it().unwrap();
+    assert_eq!((seen.action, seen.feedback), (None, 0));
+
+    let member = serde_json::json!([{"isResolved": false, "comments": [
+        {"author": "m", "authorAssociation": "MEMBER", "body": "rename"}]}]);
+    edit(&|state| {
+        state["prs"][0]["threads"] = member.clone();
+        state["runs"][&head] = serde_json::json!(
+            [{"name": "build", "status": "completed", "conclusion": "failure"}]
+        );
+    });
+    let seen = watch_it().unwrap();
+    assert_eq!(
+        (seen.action, seen.feedback),
+        (Some(PrAction::FixReviewFeedback), 1)
+    );
+
+    edit(&|state| state["prs"][0]["mergeable"] = "CONFLICTING".into());
+    assert_eq!(watch_it().unwrap().action, Some(PrAction::ResolveConflicts));
+
+    edit(&|state| {
+        state["prs"][0]["mergeable"] = "MERGEABLE".into();
+        state["prs"][0]["threads"] = serde_json::json!([]);
+    });
+    assert_eq!(watch_it().unwrap().action, Some(PrAction::FixFailingChecks));
+
+    let other = "9".repeat(40);
+    edit(&|state| state["heads"][&branch] = other.clone().into());
+    assert_eq!(watch_it().unwrap().action, Some(PrAction::Unsynced));
+
+    edit(&|state| state["prs"][0]["state"] = "MERGED".into());
+    assert_eq!(watch_it().unwrap().action, None);
 }
 
 // Invariant: a stop asked for from outside ends the run at a turn boundary as

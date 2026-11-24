@@ -40,6 +40,7 @@ mod pipelines;
 mod places;
 mod plan;
 mod pr_rules;
+mod pr_watch;
 mod profile_edit;
 mod proposals;
 mod publish;
@@ -90,6 +91,7 @@ pub use plan::{approved_plan, plan_ticket, run_plan};
 pub use pr_rules::{
     ChecksState, MergeState, PrAction, PrState, PrSummary, ReviewDecision, next_action,
 };
+pub use pr_watch::{PrWatch, watch_pull_request};
 pub use profile_edit::{
     ProfileEditError, ProjectField, ReviewField, StepField, add_detected_check, add_pipeline,
     edit_project, edit_review, edit_step, free_custom_slot, load_profile, remove_custom_step,
