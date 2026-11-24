@@ -33,6 +33,7 @@ mod design;
 mod draft;
 mod explain;
 mod know;
+mod live;
 mod metrics;
 mod notes;
 mod overlap;
@@ -81,6 +82,7 @@ pub use know::{
     CardInfo, DetectedCommand, MAX_CARD_BYTES, ProjectCard, card_changes, card_path, get_to_know,
     read_card, render_card, scan_workspace,
 };
+pub use live::{LiveStatus, Liveness, QUIET_MS, STALLED_MS, SubStep, live_status, sub_steps};
 pub use metrics::{PipelineMetrics, StepMetrics, UsageLine, metrics_of, pipeline_metrics};
 pub use overlap::{TicketOverlap, find_overlaps};
 pub use pipelines::{

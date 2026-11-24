@@ -54,6 +54,12 @@ impl App {
             };
             theme::pill(ui, &state_text(&card.state), fill, color);
         });
+        // What the step went through, kept after it ends.
+        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            crate::ticket::sub_step_list(ui, &view, step);
+        });
+        ui.add_space(6.0);
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
