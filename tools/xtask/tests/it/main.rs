@@ -86,3 +86,23 @@ fn git_uses_the_process_crate_to_spawn() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("worker.rs: direct subprocess"));
 }
+
+#[test]
+fn release_scripts_are_executable_in_git() {
+    // The release workflow runs these scripts by path; a checkout keeps the
+    // mode git recorded, so a script stored as 100644 fails with "Permission
+    // denied" only on the runner, long after merge.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let listing = Command::new("git")
+        .args(["ls-files", "-s", "--", "packaging"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(listing.status.success());
+    let listing = String::from_utf8(listing.stdout).unwrap();
+    let scripts: Vec<&str> = listing.lines().filter(|l| l.ends_with(".sh")).collect();
+    assert!(!scripts.is_empty());
+    for line in scripts {
+        assert!(line.starts_with("100755"), "not executable in git: {line}");
+    }
+}
