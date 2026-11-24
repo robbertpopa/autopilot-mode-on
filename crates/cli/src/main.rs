@@ -125,6 +125,11 @@ enum Command {
         #[arg(long)]
         gh_path: Option<PathBuf>,
     },
+    /// Look at a published pull request.
+    Pr {
+        #[command(subcommand)]
+        action: PrAction,
+    },
     /// Read a project folder into its card (top-level files only, nothing is
     /// run) and show the card and what changed since the last scan.
     Know {
@@ -200,6 +205,23 @@ enum Command {
         /// Keep printing new events as they arrive, until the ticket is done.
         #[arg(long)]
         follow: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PrAction {
+    /// One pass: read the pull request and name the next action. Changes nothing.
+    Watch {
+        ticket: String,
+        /// The project's Git repository.
+        #[arg(long)]
+        repo: PathBuf,
+        /// The GitHub repository, as owner/name.
+        #[arg(long)]
+        github: String,
+        /// Absolute path to gh. Defaults to a PATH search.
+        #[arg(long)]
+        gh_path: Option<PathBuf>,
     },
 }
 
@@ -402,6 +424,19 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             serde_json::to_writer(&mut out, &result)?;
             writeln!(out)?;
         }
+        Command::Pr {
+            action:
+                PrAction::Watch {
+                    ticket,
+                    repo,
+                    github,
+                    gh_path,
+                },
+        } => {
+            let result = pr_watch_command(&cli.data_dir, &ticket, &repo, &github, gh_path)?;
+            serde_json::to_writer(&mut out, &result)?;
+            writeln!(out)?;
+        }
         Command::Know { workspace } => {
             let path = workspace.to_string_lossy().into_owned();
             let (_, info) = autopilot_engine::get_to_know(&cli.data_dir, &path)?;
@@ -600,6 +635,46 @@ fn ci_command(
             }
         },
     )
+}
+
+fn pr_watch_command(
+    data_dir: &Path,
+    ticket: &str,
+    repo_path: &Path,
+    github: &str,
+    gh_path: Option<PathBuf>,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let repo = autopilot_tracker::Repo::parse(github)?;
+    let exe = env::current_exe()?;
+    let guardian = exe.with_file_name(format!(
+        "autopilot-process-guardian{}",
+        env::consts::EXE_SUFFIX
+    ));
+    let program = match gh_path {
+        Some(path) => path,
+        None => {
+            autopilot_engine::resolve_executable("gh", &env::var_os("PATH").unwrap_or_default())
+                .ok_or("gh was not found on PATH; pass --gh-path")?
+        }
+    };
+    let gh = autopilot_tracker::Gh::new(program, guardian.clone(), repo, env::vars_os())?;
+    let watch = autopilot_engine::watch_pull_request(
+        data_dir,
+        &TicketId::from(ticket),
+        repo_path,
+        &guardian,
+        &gh,
+    )?;
+    let action = watch.action.map(|action| match action {
+        autopilot_engine::PrAction::ResolveConflicts => "resolve_conflicts",
+        autopilot_engine::PrAction::FixReviewFeedback => "fix_review_feedback",
+        autopilot_engine::PrAction::FixFailingChecks => "fix_failing_checks",
+        autopilot_engine::PrAction::Unsynced => "unsynced",
+    });
+    Ok(serde_json::json!({
+        "pull_request": watch.number, "url": watch.url,
+        "action": action, "trusted_comments": watch.feedback
+    }))
 }
 
 struct PublishRequest<'a> {
