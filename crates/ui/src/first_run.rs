@@ -1,6 +1,7 @@
 //! First run: four full-screen steps (agents, tools, environment, look) shown
 //! once, with the command that fixes each missing piece.
 
+use autopilot_accounts::Status;
 use eframe::egui::{
     self, Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, Sense, Stroke, StrokeKind,
     TextureHandle, pos2, vec2,
@@ -535,6 +536,17 @@ impl App {
                         _ => chip(ui, "Not signed in", false),
                     });
                 });
+                // Which account, not just "Connected": a GitHub sign-in whose
+                // token was rejected still names the account that needs fixing.
+                if let Some(row) = row.as_ref().filter(|row| {
+                    row.level == Level::Good
+                        || (name == "GitHub" && matches!(accounts.github, Status::SignedIn(_)))
+                }) {
+                    ui.add_space(4.0);
+                    for line in &row.lines {
+                        ui.label(theme::muted(format!("      {line}")));
+                    }
+                }
                 if let Some(row) = row.as_ref().filter(|row| row.level != Level::Good)
                     && let Some(hint) = row.hint
                 {
