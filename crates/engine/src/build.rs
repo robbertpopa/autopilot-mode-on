@@ -326,7 +326,11 @@ fn scratch_folder(directory: &Path, ticket: &TicketId) -> PathBuf {
 
 /// The request a stuck build shows, rebuilt from the log so a lost file comes
 /// back identical. It is forced: no standing allowance can skip it.
-pub(crate) fn stuck_request(ticket: &TicketId, history: &[RecordedEvent]) -> Request {
+pub(crate) fn stuck_request(
+    ticket: &TicketId,
+    history: &[RecordedEvent],
+    id: RequestId,
+) -> Request {
     let last_failure = history
         .iter()
         .rev()
@@ -344,7 +348,7 @@ pub(crate) fn stuck_request(ticket: &TicketId, history: &[RecordedEvent]) -> Req
         });
     let detail = last_failure.unwrap_or_else(|| "no check result was recorded".into());
     Request {
-        id: crate::scoped(ticket, STUCK_REQUEST),
+        id,
         ticket: ticket.clone(),
         body: RequestBody::Approval {
             action: format!(
@@ -586,12 +590,17 @@ fn conclude(
             Ok(BuildOutcome::Ready)
         }
         Ok(Outcome::NeedsYou { stop, .. }) => {
-            let request = crate::scoped(ticket, STUCK_REQUEST);
+            let history = journal.store.events(ticket, 0)?;
+            let request = crate::fresh_request(ticket, &history, STUCK_REQUEST);
             journal.push(Event::Asked {
                 request: request.clone(),
             })?;
             let history = journal.store.events(ticket, 0)?;
-            Inbox::in_data_dir(directory).write_request(&stuck_request(ticket, &history))?;
+            Inbox::in_data_dir(directory).write_request(&stuck_request(
+                ticket,
+                &history,
+                request.clone(),
+            ))?;
             Ok(BuildOutcome::NeedsYou {
                 request,
                 reason: describe(&stop),

@@ -432,16 +432,23 @@ fn pump(
 /// id, so a step that is sent back, rejected or run again asks under a new id
 /// each time: the first is `plan-approval`, then `plan-approval-2`, and so on.
 pub(crate) fn approval_id(ticket: &TicketId, history: &[RecordedEvent], step: Step) -> RequestId {
-    let base = format!("{}-approval", step.as_str());
+    fresh_request(ticket, history, &format!("{}-approval", step.as_str()))
+}
+
+/// A request id nobody has answered yet. The log keeps one answer per id, so
+/// every request that can be asked again (a stuck build, a design after a
+/// re-run, a pull request after a change) takes the next number. Old ids stay
+/// as they were written.
+pub(crate) fn fresh_request(ticket: &TicketId, history: &[RecordedEvent], base: &str) -> RequestId {
     let used = history
         .iter()
         .filter(|record| {
             matches!(&record.event.kind, Event::Answered { request, .. }
-                if request.as_str().starts_with(&base))
+                if request.as_str().starts_with(base))
         })
         .count();
     if used == 0 {
-        scoped(ticket, &base)
+        scoped(ticket, base)
     } else {
         scoped(ticket, &format!("{base}-{}", used + 1))
     }
@@ -628,7 +635,7 @@ pub fn start_clarify(directory: &Path, ticket: &TicketId) -> Result<ClarifyStart
             Ok(ClarifyStart::Skipped(reason))
         }
         ClarifyPlan::Ask(questions) => {
-            let request = scoped(ticket, CLARIFY_REQUEST);
+            let request = fresh_request(ticket, &history, CLARIFY_REQUEST);
             let started = Event::StepStarted {
                 attempt: AttemptId::from("clarify-1"),
                 session: None,
@@ -861,15 +868,15 @@ fn waiting_request(
         });
     }
     if step == Step::BuildCheck && request.as_str().starts_with(build::STUCK_REQUEST) {
-        return Ok(build::stuck_request(ticket, history));
+        return Ok(build::stuck_request(ticket, history, request.clone()));
     }
     if step == Step::PullRequest && request.as_str().starts_with(publish::PUBLISH_REQUEST) {
-        return publish::request(ticket, history);
+        return publish::request(ticket, history, request.clone());
     }
     if step == Step::Design
         && let Some(design) = design::latest(history)
     {
-        return Ok(design::request(ticket, design));
+        return Ok(design::request(ticket, design, request.clone()));
     }
     if step == Step::Plan {
         let plan =
@@ -1064,6 +1071,44 @@ mod lock_tests {
         drop(held);
         assert!(lock_run(data.path(), &one).is_ok());
         drop(other);
+    }
+
+    // Invariant: a step that asks again after an answer asks under a new id, for
+    // every kind of request that can repeat. The log keeps one answer per id, so
+    // a reused id made the second approval fail with a storage error and left
+    // the ticket asking for ever. The first id keeps the form it always had.
+    #[test]
+    fn a_request_asked_again_gets_a_new_id_and_can_be_answered() {
+        let data = tempfile::tempdir().unwrap();
+        let ticket = TicketId::from("t-again");
+        let mut store = SqliteStore::open(data.path().join(DATABASE)).unwrap();
+        let mut last = 0;
+        let mut ids = Vec::new();
+        for base in [build::STUCK_REQUEST, "design-approval", CLARIFY_REQUEST] {
+            for round in 0..3 {
+                let history = store.events(&ticket, 0).unwrap();
+                let id = fresh_request(&ticket, &history, base);
+                assert!(!ids.contains(&id), "{id:?} was used twice");
+                if round == 0 {
+                    assert_eq!(id, scoped(&ticket, base));
+                }
+                let step = Some(Step::BuildCheck);
+                let answer = Event::Answered {
+                    request: id.clone(),
+                    answer: "\"approve\"".into(),
+                };
+                let kinds = [
+                    Event::Asked {
+                        request: id.clone(),
+                    },
+                    answer,
+                ];
+                let events: Vec<_> = kinds.into_iter().map(|kind| event(1, step, kind)).collect();
+                let committed = store.append(&ticket, last, &events).unwrap();
+                last = committed.last().unwrap().seq;
+                ids.push(id);
+            }
+        }
     }
 
     // Invariant: the same kind of request from two tickets gets two ids, and the

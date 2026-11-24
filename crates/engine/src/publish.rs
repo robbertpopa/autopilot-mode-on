@@ -124,7 +124,11 @@ pub(crate) fn last_offer(history: &[RecordedEvent]) -> Option<Offer> {
 
 /// The request for a prepared publish, rebuilt from the log. Always forced:
 /// publishing leaves the machine, so no checkbox or standing allowance skips it.
-pub(crate) fn request(ticket: &TicketId, history: &[RecordedEvent]) -> Result<Request, Error> {
+pub(crate) fn request(
+    ticket: &TicketId,
+    history: &[RecordedEvent],
+    id: RequestId,
+) -> Result<Request, Error> {
     let offer = last_offer(history).ok_or_else(|| Error::History("no publish offer".into()))?;
     let approval = &offer.approval;
     let mut action = format!(
@@ -138,7 +142,7 @@ pub(crate) fn request(ticket: &TicketId, history: &[RecordedEvent]) -> Result<Re
         let _ = write!(action, ". Asks anyway: {}", offer.reasons.join(", "));
     }
     Ok(Request {
-        id: crate::scoped(ticket, PUBLISH_REQUEST),
+        id,
         ticket: ticket.clone(),
         body: RequestBody::Approval {
             action,
@@ -246,7 +250,7 @@ pub fn prepare_publish(
             summary: format!("{OFFER_PREFIX}{json}"),
         },
     )?;
-    let id = crate::scoped(&ticket.id, PUBLISH_REQUEST);
+    let id = crate::fresh_request(&ticket.id, &history, PUBLISH_REQUEST);
     push_event(
         &mut store,
         &ticket.id,
@@ -256,7 +260,7 @@ pub fn prepare_publish(
         },
     )?;
     let history = store.events(&ticket.id, 0)?;
-    Inbox::in_data_dir(directory).write_request(&request(&ticket.id, &history)?)?;
+    Inbox::in_data_dir(directory).write_request(&request(&ticket.id, &history, id.clone())?)?;
     Ok(id)
 }
 
