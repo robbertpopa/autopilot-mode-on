@@ -25,6 +25,7 @@ mod settings;
 mod step;
 mod theme;
 mod ticket;
+mod ticket_menu;
 mod today;
 
 pub use app::{App, Mode, Screen, Tab};
@@ -2207,5 +2208,85 @@ effort = \"high\"
         let started = at(|kind| matches!(kind, autopilot_core::Event::StepStarted { .. }));
         assert!(workspace.is_some() && started.is_some());
         assert!(workspace < started, "{workspace:?} before {started:?}");
+    }
+
+    // Invariant: archiving hides a ticket from the lists but keeps it
+    // restorable from the Archived section; delete asks first and then lists
+    // the ticket nowhere; a running ticket can be neither. Without the
+    // confirmation a stray click would remove a ticket, and archive must not
+    // lose the ticket or its history.
+    #[test]
+    fn archive_restore_and_delete_work_from_the_window_and_delete_asks_first() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        backend::mark_welcomed(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        demo::seed_build_states(&options.data_dir, now_ms()).unwrap();
+        let passed = autopilot_core::TicketId::from("demo-passed");
+        let running = autopilot_core::TicketId::from("demo-timezone");
+        let count = |options: &Options| (read(options).tickets.len(), read(options).archived.len());
+        let (listed, _) = count(&options);
+
+        perform(&options, &Action::Archive(passed.clone())).unwrap();
+        assert_eq!(count(&options), (listed - 1, 1));
+        assert!(perform(&options, &Action::Archive(running.clone())).is_err());
+        assert!(perform(&options, &Action::Delete(running.clone())).is_err());
+        perform(&options, &Action::Restore(passed.clone())).unwrap();
+        assert_eq!(count(&options), (listed, 0));
+
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        app.apply_choice(Some(ticket_menu::Choice::ConfirmDelete(passed.clone())));
+        let _ = drawn_text(&mut app, &context);
+        let asked = drawn_text(&mut app, &context);
+        assert!(asked.contains("Delete this ticket?"), "{asked}");
+        assert_eq!(count(&options), (listed, 0), "nothing is deleted by asking");
+
+        perform(&options, &Action::Delete(passed.clone())).unwrap();
+        assert_eq!(count(&options), (listed - 1, 0));
+        let history = autopilot_engine::watch(&options.data_dir, &passed, 0).unwrap();
+        assert!(!history.is_empty(), "the history stays");
+
+        // An archived ticket is listed apart and its page offers the way back.
+        let away = autopilot_core::TicketId::from("demo-approved");
+        perform(&options, &Action::Archive(away.clone())).unwrap();
+        app.set_snapshot(read(&options));
+        let list = drawn_text(&mut app, &context);
+        assert!(list.contains("Archived  1"), "{list}");
+        app.open(&away);
+        let _ = drawn_text(&mut app, &context);
+        let page = drawn_text(&mut app, &context);
+        assert!(page.contains("Archived: hidden from the lists."), "{page}");
+        assert!(page.contains("Restore"), "{page}");
+    }
+
+    // Invariant: a stopped ticket offers to carry on from the step that
+    // stopped, and a ticket that did not stop offers nothing to resume.
+    #[test]
+    fn a_stopped_ticket_resumes_from_its_stopped_step() {
+        let directory = tempfile::tempdir().unwrap();
+        demo::seed(directory.path(), now_ms()).unwrap();
+        let failed = autopilot_engine::load_ticket(
+            directory.path(),
+            &autopilot_core::TicketId::from("demo-csrf"),
+        )
+        .unwrap();
+        assert!(matches!(
+            ticket_menu::resume_action(&failed),
+            Some(Action::RerunUnderstand(_))
+        ));
+        let building = autopilot_engine::load_ticket(
+            directory.path(),
+            &autopilot_core::TicketId::from("demo-timezone"),
+        )
+        .unwrap();
+        assert!(ticket_menu::resume_action(&building).is_none());
     }
 }

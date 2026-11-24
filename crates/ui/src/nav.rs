@@ -436,6 +436,7 @@ impl App {
         let grouped = groups(&self.snapshot.tickets, self.group_by_status);
         let mut open = None;
         let mut toggled = None;
+        let mut menu = None;
         egui::ScrollArea::vertical()
             .max_height(room)
             .auto_shrink([false, true])
@@ -471,17 +472,70 @@ impl App {
                         continue;
                     }
                     for view in members {
-                        if ticket_row(ui, view, self.selected.as_ref() == Some(&view.id)) {
+                        let row = ticket_row(ui, view, self.selected.as_ref() == Some(&view.id));
+                        if row.clicked() {
                             open = Some(view.id.clone());
                         }
+                        row.context_menu(|ui| {
+                            if let Some(picked) = crate::ticket_menu::ticket_menu(ui, view) {
+                                menu = Some(picked);
+                            }
+                        });
                     }
                 }
             });
+        self.apply_choice(menu);
+        self.archived_list(ui);
         if let Some(name) = toggled
             && !self.closed_groups.remove(&name)
         {
             self.closed_groups.insert(name);
         }
+        if let Some(id) = open {
+            self.open(&id);
+        }
+    }
+
+    /// Tickets put away: hidden until the owner opens this list, restorable.
+    fn archived_list(&mut self, ui: &mut egui::Ui) {
+        if self.snapshot.archived.is_empty() {
+            return;
+        }
+        let count = self.snapshot.archived.len();
+        let arrow = if self.show_archived { "▼" } else { "▶" };
+        if ui
+            .add(
+                egui::Button::new(
+                    RichText::new(format!("{arrow} Archived  {count}"))
+                        .monospace()
+                        .size(12.0)
+                        .color(theme::TEXT_MUTED()),
+                )
+                .fill(Color32::TRANSPARENT)
+                .stroke(Stroke::NONE)
+                .truncate(),
+            )
+            .clicked()
+        {
+            self.show_archived = !self.show_archived;
+        }
+        if !self.show_archived {
+            return;
+        }
+        let mut open = None;
+        let mut menu = None;
+        for view in &self.snapshot.archived {
+            let row = ticket_row(ui, view, self.selected.as_ref() == Some(&view.id));
+            if row.clicked() {
+                open = Some(view.id.clone());
+            }
+            row.context_menu(|ui| {
+                if let Some(picked) = crate::ticket_menu::ticket_menu(ui, view) {
+                    menu = Some(picked);
+                }
+            });
+        }
+        self.apply_choice(menu);
         if let Some(id) = open {
             self.open(&id);
         }

@@ -42,8 +42,10 @@ The owner runs a ticket from the window from start to a pull request, sees every
 
 - The window is a thin client: it shows what the engine records and sends actions to the engine. Do not copy engine logic into `ui`; if a screen needs a fact the engine does not give, add it to `engine::view`.
 - Never describe a screen you did not look at, in a commit, a pull request or a report.
+- [x] **W20. Archive, delete, restore, stop and resume a ticket** (owner scenario C). Events `Archived`, `Restored` and `Deleted` (`core`, folded in `pipeline`, never destroying history), `engine::archive_ticket`/`restore_ticket`/`delete_ticket`, a menu on the ticket page and on the sidebar row, an Archived list, a confirmation before delete. *Not done:* removing the worktree and branch on delete, and resuming into the provider's session (see the requests below).
 
 ## Requests to other streams
 
 - Stream 3: a way to start a terminal in a folder from `ui` without a subprocess in `ui` (W4). An `autopilot isolation check` output format the Sandbox page can reuse (W3).
 - Stream 1: the pull request feedback card needs `PrSummary` and the next action (L2, L4).
+- Stream 1: `git` needs a deliberate `remove` for a ticket's worktree and branch (W20), refusing while the worktree has uncommitted work unless told otherwise; the window's Delete will call it after its confirmation.

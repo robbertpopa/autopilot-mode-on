@@ -233,6 +233,9 @@ impl TicketState {
             | Event::Triaged { .. }
             | Event::DesignResult { .. }
             | Event::CustomResult { .. }
+            | Event::Archived
+            | Event::Restored
+            | Event::Deleted
             | Event::SettingsOverridden { .. } => {}
         }
         self.last_seq = record.seq;

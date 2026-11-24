@@ -158,7 +158,9 @@ pub(crate) fn live_status_at(ui: &mut egui::Ui, view: &TicketView, now_ms: u64) 
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(500));
         }
-        ui.label(RichText::new(text).color(color).strong());
+        // Wraps: the heartbeat line is long, and a horizontal row would widen
+        // the whole page past the window.
+        ui.add(egui::Label::new(RichText::new(text).color(color).strong()).wrap());
     });
     if running {
         if let Some(live) = autopilot_engine::live_status(view, card.step, now_ms)
@@ -378,6 +380,14 @@ impl App {
             return;
         };
         self.run_header(ui, &view);
+        if view.archived {
+            ui.horizontal(|ui| {
+                ui.label(theme::muted("Archived: hidden from the lists."));
+                if ui.button("Restore").clicked() {
+                    self.act(Action::Restore(view.id.clone()));
+                }
+            });
+        }
         ui.horizontal(|ui| {
             let project = crate::nav::project_name(&view);
             theme::pill(

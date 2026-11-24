@@ -220,6 +220,10 @@ pub struct TicketView {
     pub subscription: Money,
     pub started_ms: u64,
     pub last_ms: u64,
+    /// Put away by the owner: hidden from the lists, restorable.
+    pub archived: bool,
+    /// Deleted by the owner: listed nowhere, history kept.
+    pub deleted: bool,
     pub asking: Option<(Step, RequestId)>,
     pub last_seq: u64,
 }
@@ -519,6 +523,8 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         subscription,
         started_ms: first.event.at_ms,
         last_ms: history.last().map_or(0, |record| record.event.at_ms),
+        archived: state.is_archived(),
+        deleted: state.is_deleted(),
         asking,
         last_seq: history.last().map_or(0, |record| record.seq),
     })
