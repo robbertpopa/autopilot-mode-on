@@ -49,6 +49,9 @@ pub struct StepView {
     pub in_short: Option<String>,
     pub api: Money,
     pub subscription: Money,
+    /// When the step's latest attempt started: a step run again counts from
+    /// the new start, not from the first one.
+    pub started_ms: Option<u64>,
 }
 
 /// One check inside a round.
@@ -302,6 +305,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     let mut api = Money::default();
     let mut subscription = Money::default();
     let mut per_step: Vec<(Step, Money, Money)> = Vec::new();
+    let mut attempt_starts: Vec<(Step, u64)> = Vec::new();
     let mut rounds: Vec<RoundView> = Vec::new();
     let mut since_check = Money::default();
     let mut timeline = Vec::new();
@@ -396,6 +400,15 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
                     spend(&mut per_step, step, *amount, *estimated);
                 }
             }
+            other @ Event::StepStarted { .. } => {
+                if let Some(step) = step {
+                    attempt_starts.retain(|(each, _)| *each != step);
+                    attempt_starts.push((step, at_ms));
+                }
+                if let Some(text) = timeline_text(step, other) {
+                    timeline.push(line(at_ms, text));
+                }
+            }
             Event::RoundStarted { round } => {
                 since_check = Money::default();
                 rounds.push(RoundView {
@@ -474,6 +487,10 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
                     .map(|(_, text)| text.clone()),
                 api: step_api,
                 subscription: step_sub,
+                started_ms: attempt_starts
+                    .iter()
+                    .find(|(each, _)| *each == step)
+                    .map(|(_, at)| *at),
             }
         })
         .collect::<Vec<_>>();
@@ -849,6 +866,26 @@ mod tests {
     fn a_missing_data_directory_has_no_tickets() {
         let directory = tempfile::tempdir().unwrap();
         assert_eq!(tickets(&directory.path().join("nothing")).unwrap(), vec![]);
+    }
+
+    // Invariant: a step run again counts its time from the new start, so the
+    // window never shows a ticket's age as the length of the current attempt.
+    #[test]
+    fn a_step_run_again_counts_from_its_latest_start() {
+        let view = ticket_view(&history(vec![
+            created(),
+            (Some(Step::Understand), started()),
+            (Some(Step::Understand), Event::Failed { reason: "x".into() }),
+            (
+                Some(Step::Understand),
+                Event::StepReset { and_after: false },
+            ),
+            (Some(Step::Understand), started()),
+        ]))
+        .unwrap();
+        let card = view.step(Step::Understand).unwrap();
+        assert_eq!(card.started_ms, Some(5000));
+        assert_eq!(view.step(Step::Plan).unwrap().started_ms, None);
     }
 
     // Invariant: the review's findings, the round each came from and what the
