@@ -859,10 +859,16 @@ fn sandbox_config(profile: &autopilot_profile::Profile) -> Result<ClaudeConfig, 
 /// every row held; otherwise Build stays refused and the rows are listed.
 fn wsl_boundary(data_dir: &Path, guardian: &Path) -> Result<Validated, Box<dyn Error>> {
     let distro = env::var("AUTOPILOT_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_owned());
-    let folder = data_dir.join("sandbox");
+    let folder = std::path::absolute(data_dir.join("sandbox"))?;
+    let (place, setup) = if cfg!(target_os = "macos") {
+        ("macOS", "tools/macos/setup.sh")
+    } else {
+        ("Linux", "tools/wsl")
+    };
     let refused = |error: &dyn std::fmt::Display| -> Box<dyn Error> {
         format!(
-            "a real agent cannot run the Build step: the Linux sandbox is not ready ({error}).              Set it up with tools/wsl (docs/spikes/S6-containment.md, S6) or use --agent fake"
+            "a real agent cannot run the Build step: the {place} sandbox is not ready ({error}). \
+             Set it up with {setup} (docs/spikes/S6-containment.md, S6) or use --agent fake"
         )
         .into()
     };

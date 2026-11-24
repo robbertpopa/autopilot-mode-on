@@ -105,6 +105,7 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
                 .iter()
                 .chain(&[HOOK_ROOT])
                 .map(|root| wsl.under_home(root))
+                .chain(wsl.tool_roots().iter().map(PathBuf::from))
                 .collect(),
             protect: vec![worktree.join(".git")],
             hide: Vec::new(),
@@ -196,6 +197,10 @@ pub struct Report {
 /// # Errors
 /// Returns an error if the probe could not be set up.
 pub fn check(wsl: &Wsl, work: &Path) -> io::Result<Report> {
+    #[cfg(unix)]
+    if wsl.host() == Host::Macos {
+        return mac::check(wsl, work, &|_, _| {});
+    }
     let wsl = Arc::new(wsl.clone());
     let scene = Scene::build(work)?;
     let listener = Listener::start(&wsl, &scene)?;
@@ -599,6 +604,9 @@ fn host_findings(scene: &Scene, name: &str) -> Vec<String> {
     }
     found
 }
+
+#[cfg(unix)]
+mod mac;
 
 #[cfg(test)]
 mod tests;

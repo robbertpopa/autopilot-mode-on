@@ -54,18 +54,33 @@ pub const RUST_ROOTS: &[&str] = &[".cargo", ".rustup"];
 /// inside them.
 const HIDDEN_ROOTS: &[&str] = &["/mnt", "/media", "/home", "/root", "/srv"];
 
+/// The same for a Mac: every user's folder and every other volume.
+const MAC_HIDDEN_ROOTS: &[&str] = &["/Users", "/Volumes"];
+
 /// A file under a tool prefix that holds a credential. It is hidden even when
 /// its prefix is readable.
 pub const CARGO_CREDENTIALS: &str = ".cargo/credentials.toml";
 
 /// Where the boundary runs: in a WSL2 distro reached through `wsl.exe` on
-/// Windows, or directly on a Linux host. macOS is not supported: Seatbelt has
-/// no network namespace and treats loopback and Unix sockets differently, so
-/// the probe's rows would mean something else and have not been written.
+/// Windows, directly on a Linux host, or directly on a Mac, where `srt` uses
+/// Seatbelt. Seatbelt has no network namespace and treats loopback and Unix
+/// sockets differently, so a Mac is judged on its own rows, not the Linux ones.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Host {
     Wsl,
     Linux,
+    Macos,
+}
+
+impl Host {
+    /// Where this system keeps `bash`.
+    pub(crate) fn bash(self) -> &'static str {
+        if self == Self::Macos {
+            "/bin/bash"
+        } else {
+            "/usr/bin/bash"
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -87,6 +102,12 @@ pub struct Wsl {
     srt_version: String,
     bwrap_version: Option<String>,
     claude_version: Option<String>,
+    /// Folders outside the usual places that hold a tool the command runs (the
+    /// installed `claude` on a Mac).
+    tool_roots: Vec<String>,
+    /// The installed `claude` as a path, where a bare name would not be found
+    /// because the folder it sits in is hidden from the command.
+    claude_path: Option<String>,
 }
 
 /// What one command may touch. Paths are Windows paths (`D:\...`) or absolute
@@ -137,23 +158,20 @@ impl Wsl {
     /// # Errors
     /// Returns an error on any other system, or if a tool is missing.
     pub fn discover_local(settings_dir: PathBuf, guardian: PathBuf) -> io::Result<Self> {
-        if !cfg!(target_os = "linux") {
+        let (host, script) = if cfg!(target_os = "linux") {
+            (Host::Linux, DISCOVER)
+        } else if cfg!(target_os = "macos") {
+            (Host::Macos, DISCOVER_MACOS)
+        } else {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "the sandbox runs on a Linux host, or through WSL2 on Windows; macOS has not been validated",
+                "the sandbox runs on a Linux host, on a Mac, or through WSL2 on Windows",
             ));
-        }
+        };
         let launcher = PathBuf::from("/usr/bin/env");
-        let args = ["/usr/bin/bash", "-c", DISCOVER];
+        let args = [host.bash(), "-c", script];
         let text = ask(&launcher, &args, "this machine", &guardian)?;
-        parse_discovery(
-            &text,
-            Host::Linux,
-            "local",
-            launcher,
-            guardian,
-            settings_dir,
-        )
+        parse_discovery(&text, host, "local", launcher, guardian, settings_dir)
     }
 
     #[must_use]
@@ -175,7 +193,7 @@ impl Wsl {
                 .into_iter()
                 .map(OsString::from)
                 .collect(),
-            Host::Linux => Vec::new(),
+            Host::Linux | Host::Macos => Vec::new(),
         };
         (self.launcher.clone(), prefix)
     }
@@ -184,7 +202,41 @@ impl Wsl {
     /// cannot be made from the Windows side, but on a Linux host it can.
     #[must_use]
     pub(crate) fn can_make(&self, folder: &Path) -> bool {
-        self.host == Host::Linux || !folder.to_string_lossy().starts_with('/')
+        self.host != Host::Wsl || !folder.to_string_lossy().starts_with('/')
+    }
+
+    #[must_use]
+    pub(crate) fn tool_roots(&self) -> &[String] {
+        &self.tool_roots
+    }
+
+    /// The program that starts Claude Code inside the boundary: its own path
+    /// where the discovery found one, else the bare name on the `PATH`.
+    #[must_use]
+    pub fn claude_program(&self) -> &str {
+        self.claude_path.as_deref().unwrap_or("claude")
+    }
+
+    /// A path as the boundary's machine names it. A Mac matches Seatbelt rules
+    /// against real paths (`/tmp` is `/private/tmp`), so a path that exists is
+    /// resolved first; elsewhere it passes through unchanged.
+    fn path_text(&self, path: &Path) -> io::Result<String> {
+        let text = linux_path(path)?;
+        if self.host != Host::Macos {
+            return Ok(text);
+        }
+        let given = Path::new(&text);
+        let real = fs::canonicalize(given).or_else(|error| {
+            match (given.parent().map(fs::canonicalize), given.file_name()) {
+                (Some(Ok(parent)), Some(name)) => Ok(parent.join(name)),
+                _ => Err(error),
+            }
+        });
+        Ok(real.map_or(text, |real| real.to_string_lossy().into_owned()))
+    }
+
+    fn path_texts(&self, paths: &[PathBuf]) -> io::Result<Vec<String>> {
+        paths.iter().map(|path| self.path_text(path)).collect()
     }
 
     /// The tool versions the probe ran with, for the probe's output and logs.
@@ -226,22 +278,28 @@ impl Wsl {
     /// # Errors
     /// Returns an error if a path cannot be translated.
     pub fn settings(&self, boundary: &Boundary) -> io::Result<String> {
-        let mut write = linux_paths(&boundary.write)?;
+        let mut write = self.path_texts(&boundary.write)?;
         if let Some(tmp) = &boundary.tmp {
-            write.push(linux_path(tmp)?);
+            write.push(self.path_text(tmp)?);
         }
-        let mut read = linux_paths(&boundary.read)?;
+        let mut read = self.path_texts(&boundary.read)?;
         read.extend(write.iter().cloned());
-        read.push(self.seccomp.clone());
-        let hide = linux_paths(&boundary.hide)?;
-        let protect = linux_paths(&boundary.protect)?;
+        if !self.seccomp.is_empty() {
+            read.push(self.seccomp.clone());
+        }
+        let hide = self.path_texts(&boundary.hide)?;
+        let protect = self.path_texts(&boundary.protect)?;
         // Where a person's own files live: other drives (`/mnt`, `/media`), every
         // home folder, root's and service data. System folders (`/usr`, `/etc`,
         // `/lib`) stay readable because programs need them, and so does `/tmp`:
         // the sandbox's own proxy socket lives there, and hiding it cuts off the
         // one host an agent may reach.
-        let mut deny_read: Vec<String> =
-            HIDDEN_ROOTS.iter().map(|root| (*root).to_owned()).collect();
+        let hidden: &[&str] = if self.host == Host::Macos {
+            MAC_HIDDEN_ROOTS
+        } else {
+            HIDDEN_ROOTS
+        };
+        let mut deny_read: Vec<String> = hidden.iter().map(|root| (*root).to_owned()).collect();
         let covered = deny_read
             .iter()
             .any(|root| self.home == *root || self.home.starts_with(&format!("{root}/")));
@@ -331,14 +389,14 @@ impl Wsl {
         }
 
         let (launcher, mut args) = self.entry();
-        args.extend(["/usr/bin/bash", "-c", LAUNCH].map(OsString::from));
+        args.extend([self.host.bash(), "-c", LAUNCH].map(OsString::from));
         args.push("ap-sandbox".into());
         args.push(self.srt.clone().into());
-        args.push(linux_path(&settings_file)?.into());
-        args.push(linux_path(cwd)?.into());
+        args.push(self.path_text(&settings_file)?.into());
+        args.push(self.path_text(cwd)?.into());
         args.push(secrets.join(" ").into());
         args.push(match &boundary.tmp {
-            Some(tmp) => linux_path(tmp)?.into(),
+            Some(tmp) => self.path_text(tmp)?.into(),
             None => OsString::new(),
         });
         args.extend(vars.into_iter().map(OsString::from));
@@ -399,6 +457,52 @@ else
 fi
 "#;
 
+/// The same facts on a Mac. `srt` is looked for where `tools/macos/setup.sh`
+/// puts it, then on the `PATH`. It is a Node program, so the folder of `node`
+/// goes into the `PATH` the command gets. There is no seccomp helper and no
+/// bubblewrap. `root=` names the folder an installed `claude` really lives in.
+const DISCOVER_MACOS: &str = r#"home=$HOME
+dirs=""
+add() { [ -d "$1" ] && dirs="${dirs:+$dirs:}$1"; return 0; }
+srt="$home/.autopilot/npm/bin/srt"
+[ -x "$srt" ] || srt=$(command -v srt || true)
+node=$(command -v node || true)
+claude=$(command -v claude || true)
+[ -n "$node" ] && add "$(dirname "$node")"
+[ -n "$srt" ] && add "$(dirname "$srt")"
+add "$home/.cargo/bin"
+add /opt/homebrew/bin
+add /usr/local/bin
+add /usr/bin
+add /bin
+export PATH="$dirs"
+echo "home=$home"
+echo "path=$dirs"
+echo "seccomp=none"
+if [ -n "$srt" ]; then
+  echo "srt=$srt"
+  echo "srt_version=$("$srt" --version 2>/dev/null | head -n 1)"
+fi
+if [ -n "$claude" ]; then
+  echo "claude_version=$("$claude" --version 2>/dev/null | head -n 1)"
+  link=$(readlink "$claude" || true)
+  case "$link" in
+    /*) claude="$link" ;;
+  esac
+  echo "claude=$claude"
+  echo "root=$(dirname "$claude")"
+fi
+[ -x /usr/bin/sandbox-exec ] || echo "missing:sandbox-exec"
+[ -n "$srt" ] || echo "missing:srt (run tools/macos/setup.sh)"
+[ -n "$node" ] || echo "missing:node"
+[ -n "$claude" ] || echo "missing:claude"
+if [ -x "$home/.autopilot/bin/autopilot-hook" ]; then
+  echo "hook=$home/.autopilot/bin/autopilot-hook"
+else
+  echo "missing:autopilot-hook (run tools/macos/setup.sh)"
+fi
+"#;
+
 pub(crate) fn parse_discovery(
     text: &str,
     host: Host,
@@ -412,6 +516,8 @@ pub(crate) fn parse_discovery(
     let mut srt = None;
     let mut seccomp = None;
     let mut hook = None;
+    let mut tool_roots = Vec::new();
+    let mut claude_path = None;
     let mut srt_version = None;
     let mut bwrap_version = None;
     let mut claude_version = None;
@@ -425,6 +531,10 @@ pub(crate) fn parse_discovery(
             srt = Some(value.to_owned());
         } else if let Some(value) = line.strip_prefix("seccomp=") {
             seccomp = Some(value.to_owned());
+        } else if let Some(value) = line.strip_prefix("claude=") {
+            claude_path = Some(value.to_owned());
+        } else if let Some(value) = line.strip_prefix("root=") {
+            tool_roots.push(value.to_owned());
         } else if let Some(value) = line.strip_prefix("hook=") {
             hook = Some(value.to_owned());
         } else if let Some(value) = line.strip_prefix("srt_version=") {
@@ -439,7 +549,7 @@ pub(crate) fn parse_discovery(
     }
     let place = match host {
         Host::Wsl => format!("the WSL distro {distro}"),
-        Host::Linux => "this machine".to_owned(),
+        Host::Linux | Host::Macos => "this machine".to_owned(),
     };
     if !missing.is_empty() {
         return Err(io::Error::other(format!(
@@ -454,10 +564,24 @@ pub(crate) fn parse_discovery(
             "{place} gave an incomplete answer"
         )));
     };
-    for value in [&home, &path, &srt, &seccomp, &hook] {
-        if value.is_empty() || value.contains(['\n', '\0']) {
-            return Err(io::Error::other(format!("{place} gave an unusable answer")));
-        }
+    // A Mac has no seccomp helper; its discovery answers "none".
+    let seccomp = if host == Host::Macos {
+        String::new()
+    } else {
+        seccomp
+    };
+    let unusable = |value: &String| value.contains(['\n', '\0']);
+    let plain = [&home, &path, &srt, &hook]
+        .into_iter()
+        .all(|v| !v.is_empty());
+    let seccomp_ok = host == Host::Macos || !seccomp.is_empty();
+    let clean = [&home, &path, &srt, &hook, &seccomp]
+        .into_iter()
+        .chain(&tool_roots)
+        .chain(claude_path.iter())
+        .all(|value| !unusable(value));
+    if !(plain && seccomp_ok && clean) {
+        return Err(io::Error::other(format!("{place} gave an unusable answer")));
     }
     // The probe's rows were checked against these versions only. A newer `srt`
     // can change what a setting means, so an unlisted one is refused, not
@@ -487,6 +611,8 @@ pub(crate) fn parse_discovery(
         srt_version,
         bwrap_version,
         claude_version,
+        tool_roots,
+        claude_path,
     })
 }
 
@@ -512,10 +638,17 @@ fn version_word(line: &str) -> Option<String> {
 
 /// Run a discovery command and return what it printed.
 fn ask(program: &Path, args: &[&str], what: &str, guardian: &Path) -> io::Result<String> {
+    let mut env = passthrough_env();
+    // On a Mac the tools (`node`, `claude`) are found on the user's own PATH.
+    if cfg!(target_os = "macos")
+        && let Some(path) = std::env::var_os("PATH")
+    {
+        env.push((OsString::from("PATH"), path));
+    }
     let spec = CommandSpec {
         program: program.to_path_buf(),
         args: args.iter().map(OsString::from).collect(),
-        env: passthrough_env(),
+        env,
         cwd: None,
     };
     let limits = Limits {
@@ -589,10 +722,6 @@ fn is_variable_name(name: &str) -> bool {
 
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message.to_owned())
-}
-
-fn linux_paths(paths: &[PathBuf]) -> io::Result<Vec<String>> {
-    paths.iter().map(PathBuf::as_path).map(linux_path).collect()
 }
 
 /// Translate `D:\a\b` to `/mnt/d/a/b`. A path that is already absolute and

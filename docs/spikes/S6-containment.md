@@ -129,7 +129,7 @@ Limits of this evidence:
 - **Refused on purpose:**
   - *Subscription mode.* Its sign-in would have to be readable inside the sandbox, and a token the agent can read can be sent to the provider host under an attacker's own key and read back from their console. `srt` can mask a credential file as it masks the key, but without a request filter that does not close the path, so it is not shipped.
   - *Git inside the sandbox.* A linked worktree's `.git` names a Windows path. Making the repository behind it readable exposes `.git/config` (a remote URL can hold a token), and making any of it writable lets the agent plant `core.fsmonitor` or a hook that the host's own `git` runs. The turn is told git is off; the host records the work.
-  - *macOS hosts.* Still refused, now with a Mac to test on. The product runs on macOS (build, tests and the window pass, see the macOS section at the end), but no Seatbelt boundary has been validated, so `Wsl::discover_local` returns `Unsupported` there and a real Build does not start. Reasons from the experiment below: the per-domain rule the agent needs cannot be written in Seatbelt, and a profile that allows by default leaks through system services.
+  - *macOS hosts.* No longer refused: `srt` 0.0.83 runs on a Mac and the macOS probe passes (see the last section). A hand-written Seatbelt profile stays refused: its per-domain rule cannot be written and a profile that allows by default leaks through system services.
 - The direct MXC run above stays preliminary evidence for one Windows CLI version and profile.
 
 ## macOS experiment, 2026-11-24
@@ -159,4 +159,22 @@ What this means for a macOS boundary:
 - Loopback and Unix sockets are one rule (`network*`) rather than the separate rows the Linux probe has, so the rows need rewriting, not reuse. Mach lookups, `open`, `osascript` and the pasteboard are new escape routes with no Linux counterpart; the probe needs a row for each that the profile claims to block.
 - There is no child subreaper and no network namespace on macOS. `crates/process/src/macos.rs` kills the process group, and a descendant that calls `setsid` survives.
 
-Next step if the owner wants macOS: install the pinned `srt`, run its macOS mode against this table's rows plus mach and `open` rows, and only then write `discover_local` for it. The probe code in `crates/process/src/isolation.rs` stays the gate.
+The next section is what happened when `srt` was used instead of a hand-written profile.
+
+## macOS sandbox with srt, 2026-11-24
+
+`srt` 0.0.83 (the version already pinned in `VALIDATED_SRT`) runs on a Mac with Seatbelt and its own domain proxy. It closed every row the hand-written profile above failed: a write through `cfprefsd` (`defaults write`) is refused, loopback and a Unix socket are refused, only `api.anthropic.com` is reachable (`example.com` gets 403 from the proxy), and the API key is masked: the agent holds a placeholder and the proxy substitutes the real key on requests to the provider. A real Claude Haiku call through it succeeded (about $0.001).
+
+How it is wired (`crates/process/src/wsl.rs`, `crates/process/src/isolation/mac.rs`, `tools/macos/setup.sh`):
+
+- `Host::Macos` runs `srt` directly through `/usr/bin/env -i`, like a Linux host. Discovery looks for `srt` in `~/.autopilot/npm`, then on the `PATH`, and records the folder `claude` really lives in so the agent role can read it and nothing else under the home folder.
+- The settings hide `/Users` and `/Volumes` and open only what the boundary names. Paths are resolved to their real form first, because Seatbelt matches real paths (`/tmp` is `/private/tmp`).
+- The probe is its own set of 21 rows, not the Linux rows. A row that must be refused has a control: the host connects to its own TCP and Unix listeners, reads its own decoy files in the home folder (a note, a file named `claude_key.txt`, a repository), and reads `~/.ssh` and `~/.claude` when they exist. After each role the host checks that nothing landed: Git config, sibling marker, `.git/hooks/pre-push`, the preference file, the listeners' hit flags.
+- Mutation checks (`isolation::mac::tests`, run with `--ignored` on a Mac): a writable parent folder, `.git` unprotected, the hook folder writable, another host allowed to the agent, network given to a check, the provider not listed, the key not masked, and the home folder readable each make the named row fail. With no boundary at all, the loopback, Unix socket, write-through-service, home-file and sibling-write rows are allowed.
+
+Result on this Mac (arm64, macOS 27.0.1, Claude Code 2.1.330): the probe passes for the agent, check, fetch and fetch-node roles. A data folder under `/tmp` fails `read-sibling` on every role, which is the probe doing its job: `/tmp` stays readable so the proxy can work.
+
+End-to-end Build, CLI, API-key mode, Haiku, against a clone of `robbertpopa/autopilot-pr-test` (a small Rust crate): Understand, Clarify (recommended answers), Plan, approval, then `autopilot build --agent claude`. The agent added `multiply` and its test inside the sandbox and the five checks (build, test and the rest of the profile's) passed in round 1: `{"build":"ready"}`. Cost of that whole ticket $0.015. Two earlier runs showed what to expect: a plan whose criteria name shell commands the profile does not define stops the build with a request to the owner (`criteria cannot pass yet`), and a key read from a file with Windows line endings made every request fail until the key was trimmed (now done in `env.rs`).
+
+Not covered: Intel Macs and other macOS versions; the window's Build button (same code path, not clicked); the draft pull request (not opened on purpose); a descendant that calls `setsid` escapes the process-group cleanup (macOS has no subreaper); Git inside the sandbox stays off, as on Linux; subscription mode stays refused.
+

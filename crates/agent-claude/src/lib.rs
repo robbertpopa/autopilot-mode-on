@@ -51,8 +51,8 @@ pub struct BuildConfig {
 /// needs; Windows ignores it.
 ///
 /// # Errors
-/// Returns an error if the machine is not ready, is neither of those (macOS is
-/// not validated), or any row of the probe failed.
+/// Returns an error if the machine is not ready, is none of those (a Mac runs
+/// the boundary directly), or any row of the probe failed.
 pub fn sandbox_boundary(
     distro: &str,
     folder: &std::path::Path,
@@ -231,7 +231,7 @@ impl ClaudeAgent {
         let settings = command::hook_settings(&shell_quote(sandbox.boundary.wsl().hook())?)?;
         let spec = CommandSpec {
             // The distro's own program, found on its PATH; `self.executable` is the host's.
-            program: PathBuf::from("claude"),
+            program: PathBuf::from(sandbox.boundary.wsl().claude_program()),
             args: command::without_git(command::build_args(
                 &self.config,
                 &settings,

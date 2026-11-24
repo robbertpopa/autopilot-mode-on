@@ -27,7 +27,7 @@ The ticket flow, from the command line and from the window: **Understand, Clarif
 - **No real pull request has been opened on GitHub.** The PR path ran against a local bare repository and a fake `gh`. A throwaway private repository `robbertpopa/autopilot-pr-test` exists (it holds only `main`), and ticket `live-5` in `D:\autopilot-live\data` is waiting for the owner's approval of its publish. Do not approve, push or open anything there without the owner saying so.
 - **The window's new screens were never looked at** by the people who wrote them.
 - **The multi-reviewer review has not run against the real model.**
-- Subscription mode, git inside the sandbox, macOS hosts: refused on purpose, with reasons in the S6 document.
+- Subscription mode and git inside the sandbox: refused on purpose, with reasons in the S6 document. macOS hosts run the same `srt` boundary with their own probe (S-d, done on one Mac).
 - The checkboxes in `docs/IMPLEMENTATION-PLAN.md` and the milestone files are partly stale (M2 to M9 show `[ ]` although most of M1 to M5 exists). Trust the code and `git log`, and update the boxes you touch.
 
 ## Decisions only the owner can make (they block work; ask once, do not guess)
@@ -36,7 +36,7 @@ The ticket flow, from the command line and from the window: **Understand, Clarif
 2. **Computer use scope.** Operate a disposable VM or container only, or also the real desktop? The recommendation is the first only. (Blocks stream 3 past its spike document.)
 3. **Which open-source agents to adopt** besides Claude and Codex (OpenCode, others). The official `anthropics/claude-code` repository publishes no agent source and its licence is proprietary; leaked copies must not be used. (Stream 2.)
 4. **Subscription mode** inside the sandbox stays refused unless the owner accepts the exfiltration path described in the S6 document or stream 3 finds a way to close it.
-5. **A Mac** is needed to validate a macOS sandbox. Without one, macOS stays refused.
+5. **A Mac** was needed to validate a macOS sandbox. It exists, and the macOS probe passes on it (S6 document, last section).
 
 ## Rules for every stream (from AGENTS.md; they are not relaxed)
 
