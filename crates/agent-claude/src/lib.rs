@@ -1177,7 +1177,11 @@ mod tests {
     #[test]
     fn a_live_denied_tool_call_shows_as_activity_and_the_run_still_finishes() {
         let (activity, finish) = decode(HOOK_DENIED);
-        assert!(activity.iter().any(|a| a == "tool requested: Bash"));
+        assert!(
+            activity
+                .iter()
+                .any(|a| a == "tool requested: Bash: Push local main branch to origin")
+        );
         assert_eq!(finish.unwrap().subtype, "success");
     }
 
