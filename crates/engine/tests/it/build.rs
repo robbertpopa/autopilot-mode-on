@@ -16,8 +16,8 @@ use autopilot_core::{
     Ambiguity, Clarity, Criterion, Event, Plan, Ticket, TicketId, Understanding, Verify,
 };
 use autopilot_engine::{
-    BuildOutcome, BuildSetup, Error, Isolation, run_build, run_plan, run_understand, start_clarify,
-    sync_inbox, watch,
+    BuildOutcome, BuildSetup, Error, Isolation, build_awaits_run, run_build, run_plan,
+    run_understand, start_clarify, sync_inbox, watch,
 };
 use autopilot_engine::{PrAction, watch_pull_request};
 use autopilot_pipeline::inbox::{Decision, Inbox, Reply};
@@ -322,10 +322,14 @@ fn the_owner_can_continue_or_reject_a_stuck_build() {
         &world.ticket.id,
         Decision::Edit("FAILED: write fixed.txt".into()),
     );
+    assert!(build_awaits_run(world.data.path(), &world.ticket.id).unwrap());
     assert_eq!(build(&world, ONE_ROUND).unwrap(), BuildOutcome::Ready);
+    assert!(!build_awaits_run(world.data.path(), &world.ticket.id).unwrap());
 
     let world = world_stuck("b-reject");
+    assert!(!build_awaits_run(world.data.path(), &world.ticket.id).unwrap());
     answer(world.data.path(), &world.ticket.id, Decision::Reject);
+    assert!(!build_awaits_run(world.data.path(), &world.ticket.id).unwrap());
     assert!(matches!(
         kinds(&world).last(),
         Some(Event::Interrupted { .. })

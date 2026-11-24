@@ -62,6 +62,27 @@ impl Environment {
     }
 }
 
+/// The fixed environment of a command inside the boundary. The registry cache
+/// is filled by `prepare`, so nothing here may reach the network and cargo
+/// should fail at once instead of retrying. Git gets no global or system
+/// configuration: the boundary hides the owner's home, and Git treats a
+/// config file it may not open as a fatal error, which fails every check that
+/// runs `git`.
+fn sandbox_environment() -> Environment {
+    Environment(
+        [
+            ("CARGO_NET_OFFLINE", "true"),
+            ("CARGO_TERM_COLOR", "never"),
+            ("NO_COLOR", "1"),
+            ("LANG", "C.UTF-8"),
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+        ]
+        .map(|(name, value)| (name.into(), value.into()))
+        .to_vec(),
+    )
+}
+
 /// Find an executable by name in `path_var`. A name with a separator is only
 /// accepted as an absolute path: the profile names tools, not locations
 /// relative to the project.
@@ -218,18 +239,7 @@ impl Toolbox {
                 (name.clone(), launch)
             })
             .collect();
-        // The registry cache is filled by `prepare`; nothing here may reach the
-        // network, so cargo should fail at once instead of retrying.
-        let environment = Environment(
-            [
-                ("CARGO_NET_OFFLINE", "true"),
-                ("CARGO_TERM_COLOR", "never"),
-                ("NO_COLOR", "1"),
-                ("LANG", "C.UTF-8"),
-            ]
-            .map(|(name, value)| (name.into(), value.into()))
-            .to_vec(),
-        );
+        let environment = sandbox_environment();
         Arc::new(Self {
             commands,
             runner,
@@ -499,7 +509,24 @@ impl Check for CommandCheck {
 mod tests {
     use std::path::Path;
 
-    use super::plain_directory;
+    use super::{plain_directory, sandbox_environment};
+
+    // Invariant: a check in the boundary never reads the owner's Git config.
+    // Dropping these two variables makes `git rev-parse` die with "unable to
+    // access ~/.gitconfig" on a Mac, where the boundary denies the home read.
+    #[test]
+    fn a_sandboxed_command_gets_no_git_config() {
+        let environment = sandbox_environment();
+        let get = |name: &str| {
+            environment
+                .0
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.to_string_lossy().into_owned())
+        };
+        assert_eq!(get("GIT_CONFIG_GLOBAL").as_deref(), Some("/dev/null"));
+        assert_eq!(get("GIT_CONFIG_NOSYSTEM").as_deref(), Some("1"));
+    }
 
     // Invariant: a canonical worktree path reaches the build tool as a plain
     // drive path. The MinGW linker fails from a `\\?\` working directory, and

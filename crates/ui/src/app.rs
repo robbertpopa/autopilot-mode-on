@@ -205,6 +205,9 @@ impl App {
         theme::apply(context, light);
         let (sender, receiver) = mpsc::channel();
         if watch {
+            // Before the first look at the data: a ticket the last run left
+            // running has no worker now, and must not show as running.
+            let _ = autopilot_engine::recover_all(&options.data_dir);
             backend::watch(options.clone(), context.clone(), sender.clone());
             backend::fetch_accounts(context.clone(), sender.clone());
         }

@@ -384,6 +384,19 @@ fn answered(history: &[RecordedEvent]) -> bool {
     })
 }
 
+/// Whether the owner has answered a stuck build and nothing has picked the
+/// answer up yet. An answer only records the decision; the build continues when
+/// `run_build` runs again, so a caller that answers on the owner's behalf asks
+/// this to know it must start that run.
+///
+/// # Errors
+/// Returns an error for an unknown ticket or an unreadable history.
+pub fn build_awaits_run(directory: &Path, ticket: &TicketId) -> Result<bool, Error> {
+    let history = crate::watch(directory, ticket, 0)?;
+    let state = fold(&history).map_err(|error| Error::History(error.to_string()))?;
+    Ok(state.step(Step::BuildCheck) == &StepState::Running && answered(&history))
+}
+
 /// The note the owner attached when approving with an edit.
 fn owner_note(history: &[RecordedEvent]) -> Option<String> {
     match &history.last()?.event.kind {
