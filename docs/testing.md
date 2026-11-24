@@ -44,5 +44,8 @@ If you cannot write all three, do not add the test. The exception is a regressio
 - **Hostile input** for every parser (stream-json, profile, inbox files, structured output): truncation, bit flips, unknown types and fields. Never a panic.
 - **Determinism:** `fold(events)` is the state; replay after a crash gives the same state; the clock is injected.
 - **Policy tables:** every forced-confirmation rule, and that the checkbox can never loosen a rule.
-- **Windows is a first-class CI job.** Process control, paths and file locks are where the risk is.
+- **Windows is a first-class CI job**, next to Linux and macOS (`ci.yml` runs all three). Process control, paths and file locks are where the risk is. Use `cargo nextest run --workspace`; plain `cargo test` shares one process and some window tests are flaky under it.
+- **One conformance suite for every agent adapter.** `agent::conformance` holds the rules a run must obey (one result, ordered events, unknown fields ignored, prompt cancel, cost never backwards). `agent-claude` and `agent-fixture` run the same suite, and a deliberately broken adapter fails each rule.
+- **The sandbox probe needs the real boundary.** Tests that start `srt` are `#[ignore]` (`the_real_boundary_passes_the_probe` in the WSL distro, `..._on_a_linux_host`, `..._on_a_mac`). Run them by hand with `cargo test -p autopilot-process -- --ignored <name>`; `sandbox-probe.yml` runs the Linux one in CI. A weakened boundary must fail the row it is meant to catch (the mutation tests).
+- **The fake `gh`** (`tools/fake-gh`) keeps a JSON world of issues, pull requests, review threads and check runs and records every call, so tracker and `autopilot pr watch` tests never touch the network.
 - **Cutting tests** happens in its own pull request per crate, listing every removed test with its reason.

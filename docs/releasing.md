@@ -37,6 +37,8 @@ The update is one click, not silent: the owner sees what is installed and when.
 
 ## What is not covered yet
 
+- No release has been published yet; `master` has never been tagged. The first release exercises every step above.
+- The sandbox tools (`srt`, the deny hook, WSL) are not in the installer. A user sets them up with `tools/wsl/*.sh` or `tools/macos/setup.sh` (see the [README](../README.md#real-build-needs-the-sandbox-and-an-api-key)).
 - Linux packages (the window builds and passes CI on Linux, but no installer is shipped).
 - Delta updates and silent background install.
 - The macOS build, signing and notarization and the Windows installer are only exercised by `release.yml`, on the first release.
