@@ -100,9 +100,10 @@ fn release_scripts_are_executable_in_git() {
         .unwrap();
     assert!(listing.status.success());
     let listing = String::from_utf8(listing.stdout).unwrap();
-    let scripts: Vec<&str> = listing.lines().filter(|l| l.ends_with(".sh")).collect();
-    assert!(!scripts.is_empty());
-    for line in scripts {
+    let mut seen = 0;
+    for line in listing.lines().filter(|l| l.contains(".sh")) {
+        seen += 1;
         assert!(line.starts_with("100755"), "not executable in git: {line}");
     }
+    assert!(seen > 0, "no script found under packaging");
 }
