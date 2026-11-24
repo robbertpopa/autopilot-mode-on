@@ -33,12 +33,12 @@ use crate::{
 /// A preference file the `defaults` tool writes through the `cfprefsd` service.
 /// It must not appear: the sandboxed process may not write outside its folders
 /// by asking a system service to.
-const PREFS_DOMAIN: &str = "com.autopilot.isolation-probe";
+const PREFS_PREFIX: &str = "com.autopilot.isolation-probe";
 
 /// Each line is `ALLOWED label` or `DENIED label`. Positional parameters:
 /// worktree, sibling, port, scratch folder, config folder, socket, hook, secret,
-/// decoy folder, `~/.ssh`, `~/.claude`.
-const PROBE: &str = r#"w=$1; s=$2; port=$3; tmp=$4; cfg=$5; sock=$6; hook=$7; secret=$8; decoy=$9; ssh=${10}; claude=${11}
+/// decoy folder, `~/.ssh`, `~/.claude`, the preference domain.
+const PROBE: &str = r#"w=$1; s=$2; port=$3; tmp=$4; cfg=$5; sock=$6; hook=$7; secret=$8; decoy=$9; ssh=${10}; claude=${11}; domain=${12}
 push='{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}'
 status='{"tool_name":"Bash","tool_input":{"command":"git status"}}'
 r() { if "$@" </dev/null >/dev/null 2>&1; then echo "ALLOWED $LABEL"; else echo "DENIED $LABEL"; fi; }
@@ -49,7 +49,7 @@ LABEL=write-sibling r /bin/bash -c 'echo x > "$0/new.txt"' "$s"
 LABEL=write-git-config r /bin/bash -c 'echo "[x]" >> "$0/.git/config"' "$w"
 LABEL=write-git-hook r /bin/bash -c 'echo x > "$0/.git/hooks/pre-push"' "$w"
 LABEL=write-hook r /bin/bash -c 'echo x >> "$0"' "$hook"
-LABEL=write-prefs-by-service r /usr/bin/defaults write com.autopilot.isolation-probe key 1
+LABEL=write-prefs-by-service r /usr/bin/defaults write "$domain" key 1
 LABEL=read-sibling r /bin/cat "$s/marker.txt"
 LABEL=read-home-file r /bin/cat "$decoy/note.txt"
 LABEL=read-key-file r /bin/cat "$decoy/claude_key.txt"
@@ -133,9 +133,20 @@ struct Scene {
     decoy: PathBuf,
     ssh: PathBuf,
     claude: PathBuf,
+    /// Makes the socket, the decoys and the preference domain unique, so two
+    /// probes running at once do not see each other's files.
+    id: String,
 }
 
 impl Scene {
+    fn prefs_domain(&self) -> String {
+        format!("{PREFS_PREFIX}-{}", self.id)
+    }
+
+    fn prefs_file(&self, wsl: &Wsl) -> PathBuf {
+        PathBuf::from(wsl.home()).join(format!("Library/Preferences/{}.plist", self.prefs_domain()))
+    }
+
     fn build(wsl: &Wsl, work: &Path) -> io::Result<Self> {
         let root = work.join("isolation-check");
         match fs::remove_dir_all(&root) {
@@ -146,18 +157,25 @@ impl Scene {
         fs::create_dir_all(&root)?;
         // Seatbelt matches real paths, so the scene is built on one.
         let root = fs::canonicalize(&root)?;
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let id = format!(
+            "{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        );
         let scene = Self {
             worktree: root.join("wt"),
             sibling: root.join("sibling"),
             config: root.join("config"),
             tmp: root.join("tmp"),
             // A socket path is limited to about 100 bytes, so it sits in a short folder.
-            sock: PathBuf::from(format!("/private/tmp/ap-probe-{}.sock", std::process::id())),
+            sock: PathBuf::from(format!("/private/tmp/ap-probe-{id}.sock")),
             decoy: PathBuf::from(wsl.home())
                 .join(".autopilot")
-                .join("isolation-decoy"),
+                .join(format!("isolation-decoy-{id}")),
             ssh: PathBuf::from(wsl.home()).join(".ssh"),
             claude: PathBuf::from(wsl.home()).join(".claude"),
+            id,
         };
         fs::create_dir_all(scene.worktree.join(".git").join("hooks"))?;
         fs::create_dir_all(&scene.sibling)?;
@@ -357,9 +375,7 @@ fn probe_spec(wsl: &Wsl, scene: &Scene, listeners: &Listeners, role: &Role) -> C
             tmp.clone()
         }
     };
-    let _ = fs::remove_file(
-        PathBuf::from(wsl.home()).join(format!("Library/Preferences/{PREFS_DOMAIN}.plist")),
-    );
+    let _ = fs::remove_file(scene.prefs_file(wsl));
     CommandSpec {
         program: PathBuf::from("/bin/bash"),
         args: vec![
@@ -380,6 +396,7 @@ fn probe_spec(wsl: &Wsl, scene: &Scene, listeners: &Listeners, role: &Role) -> C
             scene.decoy.clone().into(),
             scene.ssh.clone().into(),
             scene.claude.clone().into(),
+            scene.prefs_domain().into(),
         ],
         env: if agent {
             vec![(OsString::from(API_KEY), OsString::from(PROBE_SECRET))]
@@ -444,7 +461,7 @@ fn host_findings(wsl: &Wsl, scene: &Scene, listeners: &Listeners, name: &str) ->
         listeners.unix_hit.swap(false, Ordering::Relaxed),
         "the Unix socket listener was reached",
     );
-    let prefs = PathBuf::from(wsl.home()).join(format!("Library/Preferences/{PREFS_DOMAIN}.plist"));
+    let prefs = scene.prefs_file(wsl);
     for landed in [
         scene.sibling.join("new.txt"),
         scene.worktree.join(".git").join("hooks").join("pre-push"),
@@ -637,8 +654,6 @@ mod tests {
             let expected = format!("agent: {row} was allowed");
             assert!(failures.contains(&expected), "{row}: {failures:?}");
         }
-        let _ = fs::remove_file(
-            PathBuf::from(wsl.home()).join(format!("Library/Preferences/{PREFS_DOMAIN}.plist")),
-        );
+        let _ = fs::remove_file(scene.prefs_file(&wsl));
     }
 }

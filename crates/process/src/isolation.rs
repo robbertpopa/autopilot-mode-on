@@ -197,6 +197,7 @@ pub struct Report {
 /// # Errors
 /// Returns an error if the probe could not be set up.
 pub fn check(wsl: &Wsl, work: &Path) -> io::Result<Report> {
+    #[cfg(unix)]
     if wsl.host() == Host::Macos {
         return mac::check(wsl, work, &|_, _| {});
     }
@@ -604,6 +605,7 @@ fn host_findings(scene: &Scene, name: &str) -> Vec<String> {
     found
 }
 
+#[cfg(unix)]
 mod mac;
 
 #[cfg(test)]

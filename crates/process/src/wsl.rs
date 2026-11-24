@@ -570,19 +570,17 @@ pub(crate) fn parse_discovery(
     } else {
         seccomp
     };
-    let required = [&home, &path, &srt, &hook];
-    let unusable = |value: &String| value.is_empty() || value.contains(['\n', '\0']);
-    let seccomp_bad = host != Host::Macos && unusable(&seccomp);
-    for value in required
+    let unusable = |value: &String| value.contains(['\n', '\0']);
+    let plain = [&home, &path, &srt, &hook]
+        .into_iter()
+        .all(|v| !v.is_empty());
+    let seccomp_ok = host == Host::Macos || !seccomp.is_empty();
+    let clean = [&home, &path, &srt, &hook, &seccomp]
         .into_iter()
         .chain(&tool_roots)
         .chain(claude_path.iter())
-    {
-        if unusable(value) {
-            return Err(io::Error::other(format!("{place} gave an unusable answer")));
-        }
-    }
-    if seccomp_bad {
+        .all(|value| !unusable(value));
+    if !(plain && seccomp_ok && clean) {
         return Err(io::Error::other(format!("{place} gave an unusable answer")));
     }
     // The probe's rows were checked against these versions only. A newer `srt`
