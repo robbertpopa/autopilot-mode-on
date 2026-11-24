@@ -483,3 +483,71 @@ fn stop_pause_and_resume_leave_and_clear_flags() {
     assert!(!data.join("control").join("t-1.pause").exists());
     assert!(!autopilot(&["stop", "../x"], &data).status.success());
 }
+
+// Invariant: a build that cannot start (here: the repository is not a Git
+// repository) leaves no attempt running, so a later build is not told the first
+// one is still going.
+#[test]
+fn a_build_that_cannot_start_does_not_leave_build_check_running() {
+    let scratch = tempfile::tempdir().unwrap();
+    let data = scratch.path().join("data");
+    assert!(run_claude("plain", &data, scratch.path()).status.success());
+    autopilot(&["clarify", "e2e-1"], &data);
+    let ticket = scratch.path().join("ticket.json");
+    let fake = fake_claude();
+    autopilot(
+        &[
+            "run-step",
+            "--step",
+            "plan",
+            "--agent",
+            "claude",
+            "--claude-path",
+            fake.to_str().unwrap(),
+            "--ticket",
+            ticket.to_str().unwrap(),
+        ],
+        &data,
+    );
+    let waiting = json_line(&autopilot(&["inbox", "list"], &data));
+    json_line(&autopilot(
+        &["inbox", "approve", waiting["id"].as_str().unwrap()],
+        &data,
+    ));
+    let profile = scratch.path().join("profile.toml");
+    std::fs::write(&profile, "[steps.build_check]\nauth = \"api\"\n").unwrap();
+    let build = || {
+        autopilot(
+            &[
+                "build",
+                "--agent",
+                "fake",
+                "--ticket",
+                ticket.to_str().unwrap(),
+                "--repo",
+                scratch.path().to_str().unwrap(),
+                "--base",
+                "main",
+                "--worktrees",
+                scratch.path().join("wt").to_str().unwrap(),
+                "--profile",
+                profile.to_str().unwrap(),
+            ],
+            &data,
+        )
+    };
+    for _ in 0..2 {
+        let output = build();
+        assert!(!output.status.success());
+        let message = String::from_utf8_lossy(&output.stderr);
+        assert!(!message.contains("already running"), "{message}");
+    }
+    let status = json_line(&autopilot(&["status", "e2e-1", "--json"], &data));
+    let build_check = status["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["step"] == "build_check")
+        .unwrap();
+    assert_eq!(build_check["state"], "idle", "{status}");
+}
