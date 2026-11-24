@@ -23,6 +23,7 @@ The Linux x64 2.1.330 CLI help was checked in a network-isolated container. It l
 - [ ] With the same authorized login, run a headless `--print --verbose --output-format stream-json` trial on a synthetic brief. Preserve session state for the resume test. Record the exact version, settings, publish decision and sanitized shape of the resulting events or failure. Confirm the final URL opens to a Design canvas and record the reported artifact type.
 - [ ] Resume with a revision request and compare the artifact identity and URL. Check audience and permissions without publishing a public link. If the account supports organization comments, confirm whether the headless session can read a synthetic comment and keep the project's approval in the inbox.
 - [ ] Verify what content is uploaded and the narrow permission grant, if any, needed to publish in print mode.
+- [ ] Follow-ups once publishing works (tracked as A14 in [stream 2](../work-streams/02-agents-and-adapters.md)): revise the same page for the same ticket; read the page's comments; keep one page per project that holds every ticket's mockups, and check that a second ticket adds a section to the same URL.
 
 ## Result
 
