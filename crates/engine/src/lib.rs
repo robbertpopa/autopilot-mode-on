@@ -116,9 +116,9 @@ pub use tuning::{
     undo_tuning,
 };
 pub use view::{
-    AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,
-    TimelineLine, dollars, load_ticket, name_custom_steps, spent_since, step_name, ticket_view,
-    tickets,
+    AttachmentView, Badge, CheckFinding, CheckRow, CostLine, LogLine, RoundView, StepView,
+    TicketView, TimelineLine, dollars, load_ticket, name_custom_steps, spent_since, step_name,
+    ticket_view, tickets,
 };
 pub use workspace::{
     canonical as canonical_folder, of as workspace_of, record as record_workspace,

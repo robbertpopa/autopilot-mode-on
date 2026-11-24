@@ -623,31 +623,30 @@ impl App {
             ui.label(theme::muted(
                 "Checks, cheapest first. The run stops at the first failure.",
             ));
-            if let Some(round) = latest {
-                for check in &round.checks {
-                    let (mark, color) = if check.passed {
-                        ("✔", theme::GREEN())
-                    } else {
-                        ("×", theme::RED())
-                    };
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(mark).color(color));
-                        ui.label(&check.name);
+            for round in view.rounds.iter().rev() {
+                let is_latest = latest.is_some_and(|last| last.round == round.round);
+                egui::CollapsingHeader::new(format!("Round {}", round.round))
+                    .id_salt((view.id.as_str(), round.round))
+                    .default_open(is_latest)
+                    .show(ui, |ui| {
+                        for check in &round.checks {
+                            check_lines(ui, check);
+                        }
+                        if is_latest && running {
+                            for name in self
+                                .profile
+                                .as_ref()
+                                .map(|profile| profile.checks.keys().collect::<Vec<_>>())
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter(|name| {
+                                    !round.checks.iter().any(|check| &&check.name == name)
+                                })
+                            {
+                                ui.label(theme::muted(format!("○ {name}   waiting")));
+                            }
+                        }
                     });
-                }
-                let waiting: Vec<&String> = self
-                    .profile
-                    .as_ref()
-                    .map(|profile| profile.checks.keys().collect())
-                    .unwrap_or_default();
-                if running {
-                    for name in waiting
-                        .into_iter()
-                        .filter(|name| !round.checks.iter().any(|check| &&check.name == name))
-                    {
-                        ui.label(theme::muted(format!("○ {name}   waiting")));
-                    }
-                }
             }
             if let Some(failed) = view
                 .rounds
@@ -804,5 +803,43 @@ impl App {
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.stepper_panel(ui, &view));
             });
+    }
+}
+
+/// One check of a round: its verdict, its note, the review's findings as
+/// `path:line [kind, confidence%] issue`, and what the check cost.
+fn check_lines(ui: &mut egui::Ui, check: &autopilot_engine::CheckRow) {
+    let (mark, color) = if check.passed {
+        ("✔", theme::GREEN())
+    } else {
+        ("×", theme::RED())
+    };
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(mark).color(color));
+        ui.label(&check.name);
+        if check.cost != autopilot_core::Money::default() {
+            ui.label(theme::muted(format!("{}", dollars(check.cost))));
+        }
+    });
+    if check.findings.is_empty() {
+        if let Some(first) = check.note.lines().next().filter(|line| !line.is_empty()) {
+            ui.label(theme::muted(format!("      {first}")));
+        }
+        return;
+    }
+    if let Some(header) = check.note.lines().next() {
+        ui.label(theme::muted(format!("      {header}")));
+    }
+    for finding in &check.findings {
+        ui.label(format!(
+            "      {}:{} [{}, {}%] {}",
+            finding.path, finding.line, finding.kind, finding.confidence, finding.issue
+        ));
+    }
+    if check.more_findings > 0 {
+        ui.label(theme::muted(format!(
+            "      and {} more",
+            check.more_findings
+        )));
     }
 }

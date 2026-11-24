@@ -58,6 +58,66 @@ pub struct CheckRow {
     pub passed: bool,
     pub note: String,
     pub unknowns: Vec<String>,
+    /// What the review reported, one entry per finding. Empty for every other
+    /// check.
+    pub findings: Vec<CheckFinding>,
+    /// Findings the note counted but did not list.
+    pub more_findings: usize,
+    /// What the check's own model calls cost. Only the review spends; the
+    /// build agent's turns are not a check.
+    pub cost: Money,
+}
+
+/// One line of the review's note: `path:line [kind, confidence%] issue`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckFinding {
+    pub path: String,
+    pub line: u32,
+    pub kind: String,
+    pub confidence: u8,
+    pub issue: String,
+}
+
+/// The check the agent review reports under.
+const REVIEW_CHECK: &str = "review";
+
+fn finding_line(text: &str) -> Option<CheckFinding> {
+    let (place, rest) = text.split_once(" [")?;
+    let (path, line) = place.rsplit_once(':')?;
+    let (tag, issue) = rest.split_once("] ")?;
+    let (kind, confidence) = tag.split_once(", ")?;
+    Some(CheckFinding {
+        path: path.to_owned(),
+        line: line.parse().ok()?,
+        kind: kind.to_owned(),
+        confidence: confidence.strip_suffix('%')?.parse().ok()?,
+        issue: issue.to_owned(),
+    })
+}
+
+/// Read the findings out of the review's note, and how many more the note
+/// counted without listing. A line that does not fit is kept as more words of
+/// the finding above it (an issue may run over several lines), or dropped when
+/// there is none: the note itself stays whole in `CheckRow::note`.
+#[must_use]
+pub fn review_findings(note: &str) -> (Vec<CheckFinding>, usize) {
+    let mut found: Vec<CheckFinding> = Vec::new();
+    let mut more = 0;
+    for text in note.lines().skip(1) {
+        if let Some(finding) = finding_line(text) {
+            found.push(finding);
+        } else if let Some(count) = text
+            .strip_prefix("and ")
+            .and_then(|rest| rest.strip_suffix(" more"))
+            .and_then(|count| count.parse::<usize>().ok())
+        {
+            more = count;
+        } else if let Some(last) = found.last_mut() {
+            last.issue.push(' ');
+            last.issue.push_str(text.trim());
+        }
+    }
+    (found, more)
 }
 
 /// One pass of Build ⟲ Check.
@@ -243,6 +303,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
     let mut subscription = Money::default();
     let mut per_step: Vec<(Step, Money, Money)> = Vec::new();
     let mut rounds: Vec<RoundView> = Vec::new();
+    let mut since_check = Money::default();
     let mut timeline = Vec::new();
     let mut log = Vec::new();
     let mut costs = Vec::new();
@@ -315,6 +376,10 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
                 timeline.push(line(at_ms, format!("Attached {name}")));
             }
             Event::CostTick { amount, estimated } => {
+                // The review's calls are charged just before its result.
+                if step == Some(Step::BuildCheck) {
+                    since_check = since_check.checked_add(*amount).unwrap_or(since_check);
+                }
                 costs.push(CostLine {
                     step,
                     at_ms,
@@ -332,6 +397,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
                 }
             }
             Event::RoundStarted { round } => {
+                since_check = Money::default();
                 rounds.push(RoundView {
                     round: *round,
                     checks: vec![],
@@ -347,12 +413,26 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
                 ..
             } => {
                 if let Some(round) = rounds.last_mut() {
+                    let is_review = check == REVIEW_CHECK;
+                    let (findings, more_findings) = if is_review {
+                        review_findings(note)
+                    } else {
+                        (Vec::new(), 0)
+                    };
                     round.checks.push(CheckRow {
                         name: check.clone(),
                         passed: *passed,
                         note: note.clone(),
                         unknowns: unknowns.clone(),
+                        findings,
+                        more_findings,
+                        cost: if is_review {
+                            since_check
+                        } else {
+                            Money::default()
+                        },
                     });
+                    since_check = Money::default();
                     let outcome = if *passed { "passed" } else { "failed" };
                     let text = if note.is_empty() {
                         format!("Check {check} {outcome} (round {})", round.round)
@@ -769,6 +849,80 @@ mod tests {
     fn a_missing_data_directory_has_no_tickets() {
         let directory = tempfile::tempdir().unwrap();
         assert_eq!(tickets(&directory.path().join("nothing")).unwrap(), vec![]);
+    }
+
+    // Invariant: the review's findings, the round each came from and what the
+    // review cost come from the log alone. A parser that lost the kind or the
+    // multi-line issue, or charged the review's calls to another check, would
+    // show the owner something the log does not say.
+    #[test]
+    fn the_review_note_becomes_findings_with_their_round_and_cost() {
+        let note = "2 finding(s) at 80% or above from 4 reviewers:\nsrc/a.rs:12 [error handling, 91%] the error is dropped\nso the caller sees success\nsrc/b.rs:3 [bug, 85%] off by one\nand 3 more";
+        let tick = |micro| Event::CostTick {
+            amount: Money::from_microusd(micro),
+            estimated: false,
+        };
+        let result = |name: &str, passed, note: &str| Event::CheckResult {
+            check: name.into(),
+            passed,
+            note: note.into(),
+            artifacts: vec![],
+            unknowns: vec![],
+            reused: false,
+        };
+        let build = Some(Step::BuildCheck);
+        let view = ticket_view(&history(vec![
+            created(),
+            (build, started()),
+            (build, Event::RoundStarted { round: 1 }),
+            (build, tick(500_000)),
+            (build, result("tests", true, "")),
+            (build, tick(30_000)),
+            (build, tick(20_000)),
+            (build, result("review", false, note)),
+            (build, Event::RoundStarted { round: 2 }),
+            (
+                build,
+                result(
+                    "review",
+                    true,
+                    "4 reviewers read the change and found nothing at 80% or above",
+                ),
+            ),
+        ]))
+        .unwrap();
+        let first = &view.rounds[0];
+        assert_eq!(first.checks[0].cost, Money::default());
+        let review = &first.checks[1];
+        assert_eq!(review.cost, Money::from_microusd(50_000));
+        assert_eq!(review.more_findings, 3);
+        assert_eq!(review.findings.len(), 2);
+        assert_eq!(review.findings[0].path, "src/a.rs");
+        assert_eq!(review.findings[0].line, 12);
+        assert_eq!(review.findings[0].kind, "error handling");
+        assert_eq!(review.findings[0].confidence, 91);
+        assert_eq!(
+            review.findings[0].issue,
+            "the error is dropped so the caller sees success"
+        );
+        assert_eq!(view.rounds[1].checks[0].findings, vec![]);
+        assert_eq!(view.rounds[1].checks[0].cost, Money::default());
+    }
+
+    // Invariant: a note that is not in the review's layout never panics and
+    // never invents a finding.
+    #[test]
+    fn a_hostile_review_note_yields_no_findings() {
+        for note in [
+            "",
+            "x",
+            ":[,%] ",
+            "a:b [c, d%] e",
+            "a:1 [b, 999%] c",
+            "\n\n\u{0}",
+        ] {
+            assert_eq!(review_findings(note).0, vec![], "{note:?}");
+        }
     }
 }
 
