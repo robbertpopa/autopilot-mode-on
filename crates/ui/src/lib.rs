@@ -2327,12 +2327,18 @@ effort = \"high\"
         for _ in 0..3 {
             output = Some(context.run(input.clone(), |context| app.ui(context)));
         }
+        // On macOS the panels start under the slim title row.
+        let title = if cfg!(target_os = "macos") {
+            nav::TITLE_HEIGHT
+        } else {
+            0.0
+        };
         let panels: Vec<egui::Rect> = output
             .unwrap()
             .shapes
             .iter()
             .filter_map(|clipped| match &clipped.shape {
-                egui::Shape::Rect(rect) if rect.rect.height() >= 832.0 => Some(rect.rect),
+                egui::Shape::Rect(rect) if rect.rect.height() >= 832.0 - title => Some(rect.rect),
                 _ => None,
             })
             .collect();
