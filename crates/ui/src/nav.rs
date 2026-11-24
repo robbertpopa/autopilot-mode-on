@@ -497,7 +497,11 @@ impl App {
                                         .color(theme::TEXT_SOFT()),
                                 )
                                 .fill(Color32::TRANSPARENT)
-                                .stroke(Stroke::NONE),
+                                .stroke(Stroke::NONE)
+                                // A long project name must be cut, not widen the
+                                // sidebar's content past its panel: the panel then
+                                // grows beyond what it paints and the gap shows black.
+                                .truncate(),
                             )
                             .clicked()
                         {
