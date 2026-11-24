@@ -20,6 +20,8 @@ One JSON object per line. Types seen: `system`, `assistant`, `user`, `rate_limit
 | `rate_limit_event` | `rate_limit_info.status` | Subscription runs only. The API-key runs had none. |
 | `result` | `subtype`, `is_error`, `structured_output`, `total_cost_usd`, `usage`, `terminal_reason`, `errors` | One per run. |
 
+The Bash tool's input carries a short `description` of why the command runs; the adapter keeps it, bounded and redacted, in the activity history (PR 146). The same version, 2.1.330, also ran on macOS under the sandbox (S6) without a change in the frames.
+
 ## Result subtypes seen
 
 | Case | `subtype` | `is_error` | Exit | Notes |

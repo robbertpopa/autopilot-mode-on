@@ -60,7 +60,7 @@ Scope -> Inventory (code) -> Review (agents, read-only, parallel) -> Verify -> T
 Rules: no finding without `where`, `evidence` and `impact`; `nit` findings are prefixed "Nit:" and never block; style that rustfmt handles is never a finding; the same rule raised twice at one location is one finding.
 
 ## Rule packs and presets
-Rules live in `docs/rules/` (later in `rules/*.toml`, see M9). Each has an id, a source, a check kind (`lint`, `script`, `tool`, `agent`), a default severity and fix guidance. Projects choose presets in `profile.toml`:
+Rules live in `docs/rules/` and the `rules` crate loads them from there. Each has an id, a source, a check kind (`lint`, `script`, `tool`, `agent`), a default severity and fix guidance. Projects choose presets in `profile.toml`:
 
 | Preset | Contains | Origin |
 |---|---|---|

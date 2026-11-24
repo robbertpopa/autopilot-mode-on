@@ -4,9 +4,9 @@
 
 Local Rust program (repo and crate name `autopilot-mode-on`). Input: a codebase plus stories, bugs and wishes. It clarifies the need in plain language (only when it
 has something to ask), designs the UI when there is UI, plans, builds in isolated worktrees, checks, and opens PRs.
-Tested first on Contest Keeper, built for any project. Not a repo yet: this is the scratch to create the open-source repo from.
+Tested first on Contest Keeper, built for any project. The repository is `robbertpopa/autopilot-mode-on` on GitHub; what is built and what is left is in the [implementation plan](IMPLEMENTATION-PLAN.md#0-status-and-next-step).
 
-Status: draft 2026-11-20. Survey numbers come from web snippets and blogs and are indicative, not verified.
+Status: written 2026-11-20 and kept as the statement of intent; where the code has moved on, a note says so (sections 6, 7, 8a, 8b). Survey numbers come from web snippets and blogs and are indicative, not verified.
 Visual design: Claude Design canvas "Pipeline Canvas" (private artifact); style follows craft-anything's screens.
 
 ## 1. Decided and open
@@ -21,7 +21,7 @@ Decided by the user:
 - A Design step produces a local HTML mockup and needs approval. The remote Claude Design option depends on S4.
 
 Decided later the same day: the name is `autopilot-mode-on`; **subscription is the default auth**; Codex can be used too (section 7a).
-Still open: where the repo lives (own account recommended) and the real-world behaviour of plan limits (spike S2).
+Still open: the real-world behaviour of plan limits (spike S2).
 
 ## 2. What the survey says
 
@@ -124,13 +124,14 @@ L5  engine       tool definitions once -> CLI command, MCP tool, UI action
 L6  cli, mcp, ui-egui     thin clients; the UI never runs programs or writes files itself
 ```
 
-Use the process boundary and containment rules in the implementation plan. The agent adapters, check runner, Git and tracker each own their launch policy. The CLI, desktop and MCP share engine actions.
+This is the layering as designed. The crates that exist and their layers are in [the plan, section 5](IMPLEMENTATION-PLAN.md#5-repository-layout-apache-20-repo-autopilot-mode-on) and are enforced by `cargo xtask layers` (`tools/xtask/src/layers.rs`). Use the process boundary and containment rules in the implementation plan. The agent adapters, check runner, Git and tracker each own their launch policy. The CLI, desktop and MCP share engine actions.
 
 ## 7. Auth and cost
 
 - Each step has `auth = "api" | "subscription"`. The tool launches `claude` and sets the environment per child process. API: the key from a
-  dedicated variable (for example `CK_PIPELINE_ANTHROPIC_KEY`) is passed as `ANTHROPIC_API_KEY`. Subscription: the tool strips
+  dedicated variable (`AUTOPILOT_ANTHROPIC_API_KEY`; the ordinary `ANTHROPIC_API_KEY` is never read) is passed as `ANTHROPIC_API_KEY` to the child. Subscription: the tool strips
   `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_USE_*` from the child, because a key outranks the login. A dedicated key may be passed to a verified provider-only environment. Keep credentials out of storage, logs and repository tool processes.
+- Real Build and Check run only inside the validated sandbox and only in API mode (subscription mode there is refused; see [security](security.md)).
 - API steps get dollar caps (`--max-budget-usd`, a Console workspace limit). Subscription steps get turn caps and an estimate.
 - Caches are per account and model: keep a session's prefix on one auth; start each step as a fresh session and pass the previous output as a file.
 - Cheap steps (intake, understand, PR text) on the API at cents per ticket; heavy steps (plan, build, review) on the subscription.
@@ -155,8 +156,7 @@ Use the process boundary and containment rules in the implementation plan. The a
 
 A node graph where each step shows its settings, with a profile file as the source of truth. Simple view: four steps (Plan, Build, Check, Ready);
 Advanced view: the full graph. Every step has an "Ask me after this step" checkbox; a step that is asking is amber. Style follows craft-anything's screens: dark shell, ticket sidebar with
-status chips, amber approval cards, progress stepper, cost bar. See [the UI reference](ui.md) for the local export.
-Pending canvas changes: remove the three gate nodes, add the "Ask me after this step" checkbox to every step, Build and Check as one looping node, a Design node, Simple and Advanced views.
+status chips, amber approval cards, progress stepper, cost bar. See [the window page](ui.md) for what the window shows today.
 
 ## 8a. Live status of every ticket
 
@@ -164,7 +164,7 @@ Requirement: for every ticket you can watch its pipeline run in real time.
 
 - **One source of truth:** an append-only event log per ticket (`store`). Events: `StepStarted`, `AgentActivity` (a tool call or a line of output,
   truncated and secret-redacted), `RoundStarted`, `CheckResult`, `Asked`, `Answered`, `StepSkipped` (with the reason), `CostTick`,
-  `Paused`, `Failed`, `Done`. The engine publishes each event on a broadcast channel; the window, the CLI and the MCP server all subscribe.
+  `Paused`, `Failed`, `Done`. `engine::follow` replays from a sequence number and then polls the store, so the window, the CLI (`autopilot watch --follow`) and a writer in another process all see the same events.
   A subscriber that connects late replays the log, so reopening the window shows the full history. The current state is a fold over the events,
   so after a crash or restart the view is still correct and a run that was cut off shows as `Interrupted`.
 - **Where the events come from:** the agent's `stream-json` output (turns, tool calls, token usage), the check runner, the inbox and the scheduler.
@@ -176,12 +176,14 @@ Requirement: for every ticket you can watch its pipeline run in real time.
 - **Sidebar:** every ticket with a status chip that updates live (running, needs you, queued, CI failing, interrupted, done).
 - **Attention:** a desktop notification and a chip when a ticket needs you, fails or finishes; a "stalled" flag when a running step sends no event
   for a set time (configurable per step).
-- **Headless:** `pipeline watch <ticket>` tails the same events; `pipeline status --json` prints the folded state.
+- **Headless:** `autopilot watch <ticket>` replays the same events (add `--follow` to keep tailing); `autopilot status <ticket> --json` prints the folded state.
 - **Rendering:** repaint when an event arrives, not every frame. craft-anything's pitfalls note that egui's Spinner and ProgressBar request a
   repaint every frame, so we use paced widgets.
 - **Estimates:** time left is the step's average from past runs, labelled as an estimate.
 
 ## 8b. Step details, actions and change requests
+
+Built so far: the step page and its tabs, re-run for Understand, Design and Plan, and "Ask for a change" through a fixed grammar. Shown off with the reason: Open in a terminal and re-running a finished Build ([ui](ui.md), stream 4 task W4).
 
 - **Click any step** (on the graph, the live strip or the sidebar's ticket) to open its detail. Tabs: Overview (why it ran or was skipped, who decided,
   rounds), Input (what it received), Prompt (the exact prompt and project rules, secrets removed), Output (its structured result), Log (agent console),
@@ -221,7 +223,7 @@ PR added and a rubric. Record resolve rate, dollars, wall time, questions asked,
 
 See the [implementation order](IMPLEMENTATION-PLAN.md#0a-implementation-order-and-deliverables) for the executable roadmap and milestone dependencies.
 
-## 11. Before M0 (superseded: see IMPLEMENTATION-PLAN.md, section 3, spikes S1 to S8)
+## 11. Before M0 (superseded: see IMPLEMENTATION-PLAN.md, section 3, spikes S1 to S10)
 
 - Read Gru and oven-cli; decide contribute or build.
 - Read Codex CLI's source for the sandbox and approval design.
