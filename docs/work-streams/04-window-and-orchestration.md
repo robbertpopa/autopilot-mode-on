@@ -43,6 +43,7 @@ The owner runs a ticket from the window from start to a pull request, sees every
 - The window is a thin client: it shows what the engine records and sends actions to the engine. Do not copy engine logic into `ui`; if a screen needs a fact the engine does not give, add it to `engine::view`.
 - Never describe a screen you did not look at, in a commit, a pull request or a report.
 - [x] **W20. Archive, delete, restore, stop and resume a ticket** (owner scenario C). Events `Archived`, `Restored` and `Deleted` (`core`, folded in `pipeline`, never destroying history), `engine::archive_ticket`/`restore_ticket`/`delete_ticket`, a menu on the ticket page and on the sidebar row, an Archived list, a confirmation before delete. *Not done:* removing the worktree and branch on delete, and resuming into the provider's session (see the requests below).
+- [x] **W21. A plan checklist on every step** (owner scenario B). `engine::live::sub_steps` gives each step an ordered plan; items tick from `TicketView.facts` (new, read from the log), with pending, in progress, done, failed, stopped-with-reason and skipped-with-reason; shown before, during and after the step, and after a restart because it is read from the log. *Not done:* an agent changing a step's plan.
 
 ## Requests to other streams
 

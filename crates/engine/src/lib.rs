@@ -84,7 +84,9 @@ pub use know::{
     CardInfo, DetectedCommand, MAX_CARD_BYTES, ProjectCard, card_changes, card_path, get_to_know,
     read_card, render_card, scan_workspace,
 };
-pub use live::{LiveStatus, Liveness, QUIET_MS, STALLED_MS, SubStep, live_status, sub_steps};
+pub use live::{
+    LiveStatus, Liveness, QUIET_MS, STALLED_MS, SubState, SubStep, live_status, sub_steps,
+};
 pub use metrics::{PipelineMetrics, StepMetrics, UsageLine, metrics_of, pipeline_metrics};
 pub use overlap::{TicketOverlap, find_overlaps};
 pub use pipelines::{
@@ -98,8 +100,8 @@ pub use pr_rules::{
 pub use pr_watch::{PrWatch, watch_pull_request};
 pub use profile_edit::{
     ProfileEditError, ProjectField, ReviewField, StepField, add_detected_check, add_pipeline,
-    edit_project, edit_review, edit_step, free_custom_slot, load_profile, remove_custom_step,
-    save_pipeline, set_custom_step,
+    delete_pipeline, edit_project, edit_review, edit_step, free_custom_slot, load_profile,
+    remove_custom_step, rename_pipeline, save_pipeline, set_custom_step, set_pipeline_order,
 };
 pub use proposals::{Suggestion, dismiss_proposal, proposals_for};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
@@ -120,7 +122,7 @@ pub use tuning::{
     undo_tuning,
 };
 pub use view::{
-    AttachmentView, Badge, CheckFinding, CheckRow, CostLine, LogLine, RoundView, StepView,
+    AttachmentView, Badge, CheckFinding, CheckRow, CostLine, Fact, LogLine, RoundView, StepView,
     TicketView, TimelineLine, dollars, load_ticket, name_custom_steps, spent_since, step_name,
     ticket_view, tickets,
 };

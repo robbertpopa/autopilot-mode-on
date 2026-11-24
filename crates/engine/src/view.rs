@@ -54,6 +54,59 @@ pub struct StepView {
     pub started_ms: Option<u64>,
 }
 
+/// Something a step did, as the log records it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Fact {
+    Started,
+    /// The step's result was recorded.
+    Result,
+    Asked,
+    Answered,
+    /// The owner approved the plan.
+    Approved,
+    Finished,
+    Skipped(String),
+    Failed(String),
+    Interrupted(String),
+}
+
+/// The facts of every step, newest attempt only: running a step again drops
+/// what its last attempt recorded about stopping.
+fn facts_of(history: &[RecordedEvent]) -> Vec<(Step, Fact)> {
+    let mut facts: Vec<(Step, Fact)> = Vec::new();
+    for record in history {
+        let Some(step) = record.event.step else {
+            continue;
+        };
+        let fact = match &record.event.kind {
+            Event::StepStarted { .. } => {
+                facts.retain(|(each, fact)| {
+                    *each != step || !matches!(fact, Fact::Failed(_) | Fact::Interrupted(_))
+                });
+                Fact::Started
+            }
+            Event::StepReset { and_after } => {
+                facts.retain(|(each, _)| *each < step || (!*and_after && *each != step));
+                continue;
+            }
+            Event::UnderstandResult { .. }
+            | Event::PlanResult { .. }
+            | Event::DesignResult { .. }
+            | Event::CustomResult { .. } => Fact::Result,
+            Event::Asked { .. } => Fact::Asked,
+            Event::Answered { .. } => Fact::Answered,
+            Event::PlanApproved { .. } => Fact::Approved,
+            Event::StepFinished => Fact::Finished,
+            Event::StepSkipped { reason } => Fact::Skipped(reason.clone()),
+            Event::Failed { reason } => Fact::Failed(reason.clone()),
+            Event::Interrupted { reason } => Fact::Interrupted(reason.clone()),
+            _ => continue,
+        };
+        facts.push((step, fact));
+    }
+    facts
+}
+
 /// One check inside a round.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckRow {
@@ -188,6 +241,9 @@ pub struct TicketView {
     pub description: String,
     pub badge: Badge,
     pub steps: Vec<StepView>,
+    /// What each step has done so far, read from the log, so a step's
+    /// checklist can tick items from recorded events and not from guesses.
+    pub facts: Vec<(Step, Fact)>,
     pub rounds: Vec<RoundView>,
     pub timeline: Vec<TimelineLine>,
     pub log: Vec<LogLine>,
@@ -521,6 +577,7 @@ pub fn ticket_view(history: &[RecordedEvent]) -> Result<TicketView, Error> {
         description,
         badge,
         steps,
+        facts: facts_of(history),
         rounds,
         timeline,
         log,

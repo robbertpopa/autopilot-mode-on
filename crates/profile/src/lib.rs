@@ -218,11 +218,15 @@ pub struct Profile {
     /// Projects by normalised workspace path.
     pub projects: BTreeMap<String, Project>,
     custom_pipelines: BTreeMap<String, Pipeline>,
+    pipeline_order: Vec<String>,
 }
 
 #[derive(Default, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 struct ProfileFile {
+    /// The order the Pipelines list shows, by name. A name not listed here
+    /// follows the listed ones in the default order.
+    pipeline_order: Vec<String>,
     steps: BTreeMap<Step, StepOverrides>,
     custom_steps: BTreeMap<Step, CustomStepFile>,
     checks: BTreeMap<String, CheckCommand>,
@@ -331,14 +335,23 @@ impl Profile {
             advisor: file.advisor,
             projects,
             custom_pipelines,
+            pipeline_order: file.pipeline_order,
         })
     }
 
-    /// Built-in pipelines first, then the custom ones by name.
+    /// The owner's order first, then the rest: built-in pipelines, then the
+    /// custom ones by name.
     #[must_use]
     pub fn pipelines(&self) -> Vec<Pipeline> {
-        let mut all = builtin_pipelines();
-        all.extend(self.custom_pipelines.values().cloned());
+        let mut rest = builtin_pipelines();
+        rest.extend(self.custom_pipelines.values().cloned());
+        let mut all = Vec::with_capacity(rest.len());
+        for name in &self.pipeline_order {
+            if let Some(at) = rest.iter().position(|each| &each.name == name) {
+                all.push(rest.remove(at));
+            }
+        }
+        all.extend(rest);
         all
     }
 

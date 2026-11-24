@@ -14,6 +14,17 @@ use eframe::egui::{self, Color32, RichText};
 use crate::app::App;
 use crate::theme;
 
+/// What the owner is doing to a pipeline on the page, with the name typed.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) enum PipelineEdit {
+    #[default]
+    None,
+    /// A new pipeline: its name, and whether it starts as a copy of the open one.
+    New(String, bool),
+    Rename(String),
+    ConfirmDelete,
+}
+
 const fn mode_word(mode: StepMode) -> &'static str {
     match mode {
         StepMode::On => "on",
@@ -74,6 +85,7 @@ impl App {
         ui.add_space(8.0);
         let width = (ui.available_width() * 0.28).clamp(220.0, 300.0);
         let mut pick = None;
+        let mut moved = None;
         let default_name = Some(autopilot_profile::DEFAULT_PIPELINE.to_owned());
         let selected = self
             .pipeline_selected
@@ -88,6 +100,7 @@ impl App {
                 |ui| {
                     ui.set_width(width);
                     ui.spacing_mut().item_spacing.y = 6.0;
+                    let names: Vec<String> = all.iter().map(|each| each.name.clone()).collect();
                     for pipeline in &all {
                         let chosen =
                             self.pipeline_selected.as_deref() == Some(pipeline.name.as_str());
@@ -98,39 +111,20 @@ impl App {
                         } else {
                             "custom"
                         };
-                        if pipeline_card(ui, pipeline, word, chosen) {
+                        // Dragging a card onto another puts it above that one.
+                        let id = egui::Id::new(("pipeline-drag", pipeline.name.as_str()));
+                        let shown = ui.dnd_drag_source(id, pipeline.name.clone(), |ui| {
+                            pipeline_card(ui, pipeline, word, chosen)
+                        });
+                        if shown.inner {
                             pick = Some(pipeline.name.clone());
                         }
+                        if let Some(from) = shown.response.dnd_release_payload::<String>() {
+                            moved = Some(moved_before(&names, &from, &pipeline.name));
+                        }
                     }
-                    let review = egui::Frame::new()
-                        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER()))
-                        .corner_radius(egui::CornerRadius::same(8))
-                        .inner_margin(egui::Margin::symmetric(12, 9))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new("review")
-                                        .monospace()
-                                        .strong()
-                                        .color(theme::TEXT_MUTED()),
-                                );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        theme::pill(
-                                            ui,
-                                            "soon",
-                                            theme::GREY_FILL(),
-                                            theme::GREY_TEXT(),
-                                        );
-                                    },
-                                );
-                            });
-                        });
-                    review
-                        .response
-                        .on_hover_text("soon: the review pipeline arrives with M9");
+                    self.new_pipeline_form(ui, selected.as_ref());
+                    review_placeholder(ui);
                 },
             );
             ui.vertical(|ui| {
@@ -148,7 +142,88 @@ impl App {
             });
         });
         if let Some(name) = pick {
+            if !matches!(self.pipeline_edit, PipelineEdit::New(..)) {
+                self.pipeline_edit = PipelineEdit::None;
+            }
             self.pipeline_selected = Some(name);
+        }
+        if let Some(order) = moved {
+            self.save_order(&order);
+        }
+    }
+
+    fn save_order(&mut self, order: &[String]) {
+        match autopilot_engine::set_pipeline_order(&self.options.profile, order) {
+            Ok(profile) => self.profile = Ok(profile),
+            Err(error) => self.pipeline_notice = Some((false, error.to_string())),
+        }
+    }
+
+    /// "New pipeline": a name, then an empty pipeline (Understand only) or a
+    /// copy of the open one.
+    fn new_pipeline_form(&mut self, ui: &mut egui::Ui, open: Option<&Pipeline>) {
+        let PipelineEdit::New(mut name, mut copy) = std::mem::take(&mut self.pipeline_edit) else {
+            if ui.button("+ New pipeline").clicked() {
+                self.pipeline_edit = PipelineEdit::New(String::new(), false);
+            }
+            return;
+        };
+        let mut make = false;
+        let mut cancel = false;
+        theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new("New pipeline").strong());
+            ui.add(
+                egui::TextEdit::singleline(&mut name)
+                    .hint_text("name, e.g. docs-only")
+                    .desired_width(f32::INFINITY),
+            );
+            ui.radio_value(&mut copy, false, "Start empty");
+            if let Some(open) = open {
+                ui.radio_value(&mut copy, true, format!("Copy {}", open.name));
+            }
+            ui.horizontal(|ui| {
+                make = ui
+                    .add_enabled(!name.trim().is_empty(), theme::primary("Create"))
+                    .clicked();
+                cancel = ui.button("Cancel").clicked();
+            });
+        });
+        if make {
+            let name = name.trim().to_owned();
+            self.create_pipeline(&name, open.filter(|_| copy));
+        } else if !cancel {
+            self.pipeline_edit = PipelineEdit::New(name, copy);
+        }
+    }
+
+    pub(crate) fn create_pipeline(&mut self, name: &str, copy_of: Option<&Pipeline>) {
+        if self
+            .profile
+            .as_ref()
+            .is_ok_and(|profile| profile.pipeline(name).is_some())
+        {
+            self.pipeline_notice = Some((false, format!("{name:?} is already a pipeline")));
+            self.pipeline_edit = PipelineEdit::New(name.to_owned(), copy_of.is_some());
+            return;
+        }
+        let modes: Vec<(Step, StepMode)> = match copy_of {
+            Some(source) => copied_modes(source),
+            None => Step::ALL
+                .iter()
+                .map(|step| {
+                    let mode = if *step == Step::Understand {
+                        StepMode::On
+                    } else {
+                        StepMode::Off
+                    };
+                    (*step, mode)
+                })
+                .collect(),
+        };
+        self.write_pipeline(name, &modes, copy_of.and_then(|source| source.rounds));
+        if self.pipeline_notice.as_ref().is_some_and(|(ok, _)| *ok) {
+            self.pipeline_selected = Some(name.to_owned());
         }
     }
 
@@ -322,18 +397,27 @@ impl App {
             ));
         } else {
             ui.label(theme::muted(
-                "Click a step to see and change what it does. Switch a step on or off with the buttons.",
+                "Click a step to see and change what it does. \"Leave out\" takes it out of this pipeline only.",
             ));
         }
         ui.add_space(6.0);
+        self.rename_delete_bar(ui, pipeline);
         let steps = self.listed_steps();
         let mut modes: Vec<(Step, StepMode)> = steps
             .iter()
             .map(|step| (*step, pipeline.mode(*step)))
             .collect();
         let mut changed = false;
-        for (number, (step, mode)) in modes.iter_mut().enumerate() {
-            if self.step_row(ui, pipeline, number + 1, *step, mode) {
+        // Only the steps this pipeline has are shown; the others are in the
+        // "Add a step" menu. A step left out stays in `modes`, so saving does
+        // not turn it back on.
+        let mut number = 0;
+        for (step, mode) in &mut modes {
+            if *mode == StepMode::Off {
+                continue;
+            }
+            number += 1;
+            if self.step_row(ui, pipeline, number, *step, mode) {
                 changed = true;
             }
             ui.add_space(4.0);
@@ -348,6 +432,7 @@ impl App {
             self.save_pipeline_modes(pipeline, &modes);
         }
         ui.add_space(6.0);
+        self.add_step_menu(ui, pipeline);
         self.add_step_form(ui, pipeline);
         ui.add_space(8.0);
         ui.horizontal(|ui| {
@@ -463,7 +548,7 @@ impl App {
         let mut changed = false;
         // Shown right to left, so list them in reverse.
         let all = [
-            (StepMode::Off, "off"),
+            (StepMode::Off, "leave out"),
             (StepMode::IfNeeded, "if needed"),
             (StepMode::On, "on"),
         ];
@@ -486,6 +571,13 @@ impl App {
             theme::pill(ui, tag, theme::GREY_FILL(), theme::GREY_TEXT());
             ui.label(theme::muted(text));
         });
+        if step == Step::Design {
+            self.design_explainer(ui);
+        } else if !step.is_custom() {
+            ui.label(theme::muted(
+                "Its instruction is built into the app and is not editable here. Its model, effort and limits are below, and \"Edit with AI\" can propose different ones.",
+            ));
+        }
         if step.is_custom() {
             self.custom_editor(ui, step);
         }
@@ -500,6 +592,7 @@ impl App {
         };
         ui.add_space(4.0);
         let edit = self.settings_fields(ui, step, &settings);
+        self.ai_step_box(ui, step, &settings);
         let locked = crate::settings::locked(step);
         let mut ask = settings.ask_after || locked;
         let label = if step == Step::PullRequest {
@@ -523,6 +616,185 @@ impl App {
         }
     }
 
+    /// The Design step in plain words, and what "Design draws from" changes.
+    fn design_explainer(&self, ui: &mut egui::Ui) {
+        ui.add_space(4.0);
+        for line in [
+            "What it does: draws the screens the ticket changes as HTML mockups, using the plan's words, in the look of your own application, and shows them to you.",
+            "When it runs: in a pipeline where Design is \"if needed\", only when Understand reports that the ticket changes a screen; where it is \"on\", every time.",
+            "What it produces: one to six mockup pages and short notes on the choices.",
+            "It always asks: you approve the mockups, or send feedback and it redraws the same ones, before Plan starts.",
+        ] {
+            ui.label(theme::muted(line));
+        }
+        self.design_mode_picker(ui);
+    }
+
+    /// "Edit with AI" for one step: say what to change, see the proposal as a
+    /// before and after, and nothing is saved until Apply.
+    fn ai_step_box(
+        &mut self,
+        ui: &mut egui::Ui,
+        step: Step,
+        settings: &autopilot_profile::StepSettings,
+    ) {
+        ui.add_space(6.0);
+        ui.label(RichText::new("Edit with AI").strong());
+        ui.add(
+            egui::TextEdit::singleline(&mut self.ai.step_request)
+                .hint_text("e.g. make this step ask fewer questions")
+                .desired_width(f32::INFINITY),
+        );
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt(("ai-model", step.as_str()))
+                .selected_text(crate::ai_edit::HELPERS[self.ai.step_model])
+                .show_ui(ui, |ui| {
+                    for (at, name) in crate::ai_edit::HELPERS.iter().enumerate() {
+                        ui.selectable_value(&mut self.ai.step_model, at, *name);
+                    }
+                });
+            let ready = !self.ai.step_request.trim().is_empty();
+            if ui
+                .add_enabled(ready, theme::primary("Propose a change"))
+                .clicked()
+            {
+                self.propose_step_change(step, settings);
+            }
+        });
+        if let Some((ok, text)) = &self.ai.note {
+            let color = if *ok { theme::GREEN() } else { theme::RED() };
+            ui.label(RichText::new(text).color(color));
+        }
+        if let Some(proposal) = self.ai.step.clone() {
+            self.step_proposal_view(ui, step, settings, &proposal);
+        }
+    }
+
+    fn propose_step_change(&mut self, step: Step, settings: &autopilot_profile::StepSettings) {
+        let custom = self
+            .profile
+            .as_ref()
+            .ok()
+            .and_then(|profile| profile.custom_step(step))
+            .cloned();
+        let name = custom
+            .as_ref()
+            .map_or_else(|| step_name(step).to_owned(), |each| each.name.clone());
+        let ask = crate::ai_edit::step_prompt(
+            &name,
+            custom.as_ref().map(|each| each.prompt.as_str()),
+            settings.model.as_deref().unwrap_or("default"),
+            settings.effort.as_deref().unwrap_or("default"),
+            &self.ai.step_request,
+        );
+        let helper = crate::ai_edit::HELPERS[self.ai.step_model];
+        let result = crate::backend::ask_text(&self.options, helper, &ask).and_then(|asked| {
+            crate::ai_edit::read_step_proposal(
+                &asked.text,
+                &name,
+                custom.is_some(),
+                &asked.cost_note,
+            )
+        });
+        match result {
+            Ok(proposal) => {
+                self.ai.step = Some(proposal);
+                self.ai.note = None;
+            }
+            Err(why) => {
+                self.ai.step = None;
+                self.ai.note = Some((false, why));
+            }
+        }
+    }
+
+    fn step_proposal_view(
+        &mut self,
+        ui: &mut egui::Ui,
+        step: Step,
+        settings: &autopilot_profile::StepSettings,
+        proposal: &crate::ai_edit::StepProposal,
+    ) {
+        use crate::ai_edit::{Line, line_diff};
+        let custom = self
+            .profile
+            .as_ref()
+            .ok()
+            .and_then(|profile| profile.custom_step(step))
+            .cloned();
+        egui::Frame::new()
+            .stroke(egui::Stroke::new(1.0_f32, theme::BORDER_STRONG()))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.label(RichText::new("Proposed change").strong());
+                if !proposal.why.is_empty() {
+                    ui.label(&proposal.why);
+                }
+                if let (Some(new), Some(old)) = (&proposal.prompt, &custom) {
+                    for line in line_diff(&old.prompt, new) {
+                        match line {
+                            Line::Same(text) => ui.label(theme::muted(text)),
+                            Line::Removed(text) => {
+                                ui.label(RichText::new(format!("- {text}")).color(theme::RED()))
+                            }
+                            Line::Added(text) => {
+                                ui.label(RichText::new(format!("+ {text}")).color(theme::GREEN()))
+                            }
+                        };
+                    }
+                }
+                if let Some(model) = &proposal.model {
+                    ui.label(format!(
+                        "model: {} -> {model}",
+                        settings.model.as_deref().unwrap_or("default")
+                    ));
+                }
+                if let Some(effort) = &proposal.effort {
+                    ui.label(format!(
+                        "effort: {} -> {effort}",
+                        settings.effort.as_deref().unwrap_or("default")
+                    ));
+                }
+                ui.label(theme::muted(format!("made by {}", proposal.cost_note)));
+                ui.horizontal(|ui| {
+                    if ui.add(theme::primary("Apply")).clicked() {
+                        self.apply_step_proposal(step, proposal);
+                    }
+                    if ui.button("Discard").clicked() {
+                        self.ai.step = None;
+                    }
+                });
+            });
+    }
+
+    fn apply_step_proposal(&mut self, step: Step, proposal: &crate::ai_edit::StepProposal) {
+        let custom = self
+            .profile
+            .as_ref()
+            .ok()
+            .and_then(|profile| profile.custom_step(step))
+            .cloned();
+        if let (Some(prompt), Some(old)) = (&proposal.prompt, &custom)
+            && let Err(error) = set_custom_step(&self.options.profile, step, &old.name, prompt)
+        {
+            self.ai.note = Some((false, error.to_string()));
+            return;
+        }
+        if let Some(model) = &proposal.model {
+            self.apply_edit(step, &autopilot_engine::StepField::Model(model.clone()));
+        }
+        if let Some(effort) = &proposal.effort {
+            self.apply_edit(step, &autopilot_engine::StepField::Effort(effort.clone()));
+        }
+        if let Ok(profile) = autopilot_engine::load_profile(&self.options.profile) {
+            self.profile = Ok(profile);
+        }
+        self.custom_edit = None;
+        self.ai.step = None;
+        self.ai.note = Some((true, "applied".to_owned()));
+    }
+
     /// The name and prompt of one of the owner's steps, with Save and Remove.
     fn custom_editor(&mut self, ui: &mut egui::Ui, step: Step) {
         let saved = self
@@ -537,10 +809,31 @@ impl App {
         if self.custom_edit.as_ref().map(|(each, _, _)| *each) != Some(step) {
             self.custom_edit = Some((step, saved.name.clone(), saved.prompt.clone()));
         }
+        let shared: Vec<String> = self.profile.as_ref().map_or_else(
+            |_| Vec::new(),
+            |profile| {
+                profile
+                    .pipelines()
+                    .into_iter()
+                    .filter(|each| each.mode(step) != StepMode::Off)
+                    .map(|each| each.name)
+                    .collect()
+            },
+        );
         let Some((_, name, prompt)) = self.custom_edit.as_mut() else {
             return;
         };
         ui.add_space(4.0);
+        if shared.len() > 1 {
+            ui.label(
+                RichText::new(format!(
+                    "This step is in {} pipelines ({}). Saving it changes all of them.",
+                    shared.len(),
+                    shared.join(", ")
+                ))
+                .color(theme::AMBER()),
+            );
+        }
         ui.label(theme::muted("Name"));
         ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
         ui.label(theme::muted(
@@ -583,7 +876,7 @@ impl App {
         // Held outside `self` while it is edited, and put back unless the
         // owner added the step or cancelled.
         let Some((mut name, mut prompt)) = self.new_step.take() else {
-            if ui.button("+ Add a step").clicked() {
+            if pipeline.builtin && ui.button("+ Add a step").clicked() {
                 self.new_step = Some((String::new(), String::new()));
             }
             return;
@@ -597,7 +890,7 @@ impl App {
             .show(ui, |ui| {
                 ui.label(RichText::new("Add a step").strong());
                 ui.label(theme::muted(
-                    "It runs after Build and Check and before the pull request.",
+                    "It runs after Build and Check and before the pull request. It is saved once: add it to any other pipeline from the Add a step menu.",
                 ));
                 ui.add(
                     egui::TextEdit::singleline(&mut name)
@@ -670,6 +963,134 @@ impl App {
         self.step_open = Some(slot);
     }
 
+    /// Rename and delete, for a custom pipeline; deleting asks first.
+    fn rename_delete_bar(&mut self, ui: &mut egui::Ui, pipeline: &Pipeline) {
+        if pipeline.builtin {
+            return;
+        }
+        match std::mem::take(&mut self.pipeline_edit) {
+            PipelineEdit::Rename(mut name) => {
+                let mut save = false;
+                let mut cancel = false;
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut name).desired_width(180.0));
+                    save = ui
+                        .add_enabled(!name.trim().is_empty(), theme::primary("Rename"))
+                        .clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+                if save {
+                    self.rename_to(&pipeline.name, name.trim());
+                } else if !cancel {
+                    self.pipeline_edit = PipelineEdit::Rename(name);
+                }
+            }
+            PipelineEdit::ConfirmDelete => {
+                let mut delete = false;
+                let mut cancel = false;
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(format!(
+                        "Delete {}? Tickets that used it keep the steps they ran.",
+                        pipeline.name
+                    ));
+                    delete = ui.add(theme::primary("Delete")).clicked();
+                    cancel = ui.button("Keep it").clicked();
+                });
+                if delete {
+                    self.delete_selected(&pipeline.name);
+                } else if !cancel {
+                    self.pipeline_edit = PipelineEdit::ConfirmDelete;
+                }
+            }
+            other => {
+                self.pipeline_edit = other;
+                ui.horizontal(|ui| {
+                    if ui.small_button("Rename").clicked() {
+                        self.pipeline_edit = PipelineEdit::Rename(pipeline.name.clone());
+                    }
+                    if ui.small_button("Delete").clicked() {
+                        self.pipeline_edit = PipelineEdit::ConfirmDelete;
+                    }
+                });
+            }
+        }
+    }
+
+    fn rename_to(&mut self, from: &str, to: &str) {
+        match autopilot_engine::rename_pipeline(&self.options.profile, from, to) {
+            Ok(profile) => {
+                self.profile = Ok(profile);
+                self.pipeline_selected = Some(to.to_owned());
+                self.pipeline_notice = Some((true, format!("renamed to {to}")));
+            }
+            Err(error) => self.pipeline_notice = Some((false, error.to_string())),
+        }
+    }
+
+    pub(crate) fn delete_selected(&mut self, name: &str) {
+        match autopilot_engine::delete_pipeline(&self.options.profile, name) {
+            Ok(profile) => {
+                self.pipeline_selected = None;
+                self.step_open = None;
+                self.profile = Ok(profile);
+                self.pipeline_notice = Some((true, format!("deleted {name}")));
+            }
+            Err(error) => self.pipeline_notice = Some((false, error.to_string())),
+        }
+    }
+
+    /// "Add a step": the steps this pipeline leaves out, the owner's saved
+    /// steps it does not use yet, and a new one. A saved step is the same step
+    /// in every pipeline that uses it.
+    fn add_step_menu(&mut self, ui: &mut egui::Ui, pipeline: &Pipeline) {
+        if pipeline.builtin || self.new_step.is_some() {
+            return;
+        }
+        let steps = self.listed_steps();
+        let leftover: Vec<Step> = steps
+            .iter()
+            .copied()
+            .filter(|step| pipeline.mode(*step) == StepMode::Off)
+            .collect();
+        let mut add = None;
+        let mut new = false;
+        ui.menu_button("+ Add a step", |ui| {
+            for step in &leftover {
+                let word = if step.is_custom() {
+                    format!("{} (saved step)", step_name(*step))
+                } else {
+                    step_name(*step).to_owned()
+                };
+                if ui.button(word).clicked() {
+                    add = Some(*step);
+                    ui.close();
+                }
+            }
+            if !leftover.is_empty() {
+                ui.separator();
+            }
+            if ui.button("New step…").clicked() {
+                new = true;
+                ui.close();
+            }
+        });
+        if new {
+            self.new_step = Some((String::new(), String::new()));
+        }
+        if let Some(step) = add {
+            let mut modes: Vec<(Step, StepMode)> = steps
+                .iter()
+                .map(|each| (*each, pipeline.mode(*each)))
+                .collect();
+            for (each, mode) in &mut modes {
+                if *each == step {
+                    *mode = StepMode::On;
+                }
+            }
+            self.write_pipeline(&pipeline.name, &modes, pipeline.rounds);
+        }
+    }
+
     fn set_default_button(&mut self, ui: &mut egui::Ui, name: &str) {
         let Some(project) = self.project_selected.clone() else {
             ui.add_enabled(false, egui::Button::new("Set as default"))
@@ -707,10 +1128,7 @@ impl App {
         let Some(source) = profile.pipeline(name) else {
             return;
         };
-        let modes: Vec<(Step, StepMode)> = Step::ALL
-            .iter()
-            .map(|step| (*step, source.mode(*step)))
-            .collect();
+        let modes = copied_modes(&source);
         self.write_pipeline(&copy, &modes, source.rounds);
         self.pipeline_selected = Some(copy);
     }
@@ -749,6 +1167,57 @@ impl App {
     pub(crate) fn write_pipeline_for_test(&mut self, name: &str, modes: &[(Step, StepMode)]) {
         self.write_pipeline(name, modes, None);
     }
+}
+
+/// The review pipeline is not built yet; the list says so.
+fn review_placeholder(ui: &mut egui::Ui) {
+    let review = egui::Frame::new()
+        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER()))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(12, 9))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("review")
+                        .monospace()
+                        .strong()
+                        .color(theme::TEXT_MUTED()),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    theme::pill(ui, "soon", theme::GREY_FILL(), theme::GREY_TEXT());
+                });
+            });
+        });
+    review
+        .response
+        .on_hover_text("soon: the review pipeline arrives with M9");
+}
+
+/// Every step of a pipeline with its mode, the saved steps it uses included.
+fn copied_modes(source: &Pipeline) -> Vec<(Step, StepMode)> {
+    let mut modes: Vec<(Step, StepMode)> = Step::ALL
+        .iter()
+        .map(|step| (*step, source.mode(*step)))
+        .collect();
+    modes.extend(
+        source
+            .custom_steps()
+            .into_iter()
+            .map(|step| (step, StepMode::On)),
+    );
+    modes
+}
+
+/// The list with `from` moved to just above `target`.
+fn moved_before(names: &[String], from: &str, target: &str) -> Vec<String> {
+    let mut order: Vec<String> = names.iter().filter(|name| *name != from).cloned().collect();
+    let at = order
+        .iter()
+        .position(|name| name == target)
+        .unwrap_or(order.len());
+    order.insert(at, from.to_owned());
+    order
 }
 
 /// One pipeline in the list: name, a chip, and the six step dots.

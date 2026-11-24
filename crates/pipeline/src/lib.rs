@@ -39,12 +39,20 @@ impl StepState {
     }
 }
 
+/// Where the owner put the ticket: in the lists, away, or deleted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Shelf {
+    #[default]
+    Listed,
+    Archived,
+    Deleted,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TicketState {
     created: bool,
     done: bool,
-    archived: bool,
-    deleted: bool,
+    shelf: Shelf,
     steps: BTreeMap<Step, StepState>,
     cost: Money,
     /// True once any cost tick was an estimate, so a total is never shown as a bill.
@@ -75,13 +83,13 @@ impl TicketState {
     /// The owner put the ticket away. Its history is whole; it is only hidden.
     #[must_use]
     pub fn is_archived(&self) -> bool {
-        self.archived
+        self.shelf == Shelf::Archived
     }
 
     /// The owner deleted the ticket. It is listed nowhere and takes no event.
     #[must_use]
     pub fn is_deleted(&self) -> bool {
-        self.deleted
+        self.shelf == Shelf::Deleted
     }
 
     #[must_use]
@@ -108,7 +116,7 @@ impl TicketState {
     )]
     fn transition(&mut self, event: &NewEvent) -> Result<(), TransitionError> {
         use TransitionError as E;
-        if self.deleted {
+        if self.is_deleted() {
             return Err(E::AfterDeleted);
         }
         if self.done {
@@ -223,22 +231,22 @@ impl TicketState {
                 if let Some(active) = self.active() {
                     return Err(E::StepBusy { active });
                 }
-                if self.archived {
+                if self.is_archived() {
                     return Err(E::AlreadyArchived);
                 }
-                self.archived = true;
+                self.shelf = Shelf::Archived;
             }
             Event::Restored => {
-                if !self.archived {
+                if !self.is_archived() {
                     return Err(E::NotArchived);
                 }
-                self.archived = false;
+                self.shelf = Shelf::Listed;
             }
             Event::Deleted => {
                 if let Some(active) = self.active() {
                     return Err(E::StepBusy { active });
                 }
-                self.deleted = true;
+                self.shelf = Shelf::Deleted;
             }
             Event::Done => {
                 if let Some(active) = self.active() {

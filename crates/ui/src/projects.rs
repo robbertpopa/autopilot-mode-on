@@ -476,6 +476,83 @@ impl App {
         }
     }
 
+    /// "Improve with AI": the model proposes a clearer `rules.md`; Apply puts
+    /// it in the editor above, unsaved, so Save is still the owner's call.
+    fn improve_rules(&mut self, ui: &mut egui::Ui) {
+        use crate::ai_edit::{HELPERS, Line, line_diff, read_rules_proposal, rules_prompt};
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("ai-rules-model")
+                .selected_text(HELPERS[self.ai.rules_model])
+                .show_ui(ui, |ui| {
+                    for (at, name) in HELPERS.iter().enumerate() {
+                        ui.selectable_value(&mut self.ai.rules_model, at, *name);
+                    }
+                });
+            let ready = !self.rules_text.trim().is_empty();
+            let button = ui
+                .add_enabled(ready, egui::Button::new("Improve with AI"))
+                .on_hover_text(
+                    "Sends this text to Claude and shows a proposed rewrite as a before and after. Nothing changes until you apply it and save.",
+                );
+            if button.clicked() {
+                let result = crate::backend::ask_text(
+                    &self.options,
+                    HELPERS[self.ai.rules_model],
+                    &rules_prompt(&self.rules_text),
+                )
+                .and_then(|asked| read_rules_proposal(&asked.text, &asked.cost_note));
+                match result {
+                    Ok(proposal) => {
+                        self.ai.rules = Some(proposal);
+                        self.ai.rules_note = None;
+                    }
+                    Err(why) => {
+                        self.ai.rules = None;
+                        self.ai.rules_note = Some((false, why));
+                    }
+                }
+            }
+        });
+        if let Some((_, text)) = &self.ai.rules_note {
+            ui.label(RichText::new(text).color(theme::RED()));
+        }
+        let Some(proposal) = self.ai.rules.clone() else {
+            return;
+        };
+        egui::Frame::new()
+            .stroke(egui::Stroke::new(1.0_f32, theme::BORDER_STRONG()))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.label(RichText::new("Proposed rules.md").strong());
+                if !proposal.why.is_empty() {
+                    ui.label(&proposal.why);
+                }
+                for line in line_diff(&self.rules_text, &proposal.text) {
+                    match line {
+                        Line::Same(text) => ui.label(theme::muted(text)),
+                        Line::Removed(text) => {
+                            ui.label(RichText::new(format!("- {text}")).color(theme::RED()))
+                        }
+                        Line::Added(text) => {
+                            ui.label(RichText::new(format!("+ {text}")).color(theme::GREEN()))
+                        }
+                    };
+                }
+                ui.label(theme::muted(format!("made by {}", proposal.cost_note)));
+                ui.horizontal(|ui| {
+                    if ui.add(theme::primary("Apply to the editor")).clicked() {
+                        self.rules_text.clone_from(&proposal.text);
+                        self.ai.rules = None;
+                    }
+                    if ui.button("Reject").clicked() {
+                        self.ai.rules = None;
+                    }
+                });
+            });
+    }
+
     fn rules_editor(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("rules.md").strong());
@@ -514,6 +591,7 @@ impl App {
             let color = if *ok { theme::GREEN() } else { theme::RED() };
             ui.label(RichText::new(text).color(color));
         }
+        self.improve_rules(ui);
         ui.label(theme::muted(
             "Kept outside the project. It guides the agent and cannot loosen what asks, what is protected or any budget.",
         ));

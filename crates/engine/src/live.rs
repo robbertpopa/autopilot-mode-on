@@ -5,7 +5,7 @@
 use autopilot_core::{Money, Step};
 use autopilot_pipeline::StepState;
 
-use crate::view::TicketView;
+use crate::view::{Fact, TicketView};
 
 /// No event for this long reads as "quiet": a model can think for a while.
 pub const QUIET_MS: u64 = 30_000;
@@ -107,53 +107,186 @@ pub fn live_status(view: &TicketView, step: Step, now_ms: u64) -> Option<LiveSta
     })
 }
 
-/// One sub-step of a step and whether it happened.
+/// Where one item of a step's checklist stands.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SubState {
+    Pending,
+    /// The item the step is on now.
+    Active,
+    Done,
+    /// The step stopped here, with the reason in its own words.
+    Stopped(String),
+    /// The step was skipped, with its reason.
+    Skipped(String),
+    /// A check or turn that ran and did not pass.
+    Failed,
+}
+
+/// One item of a step's checklist.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SubStep {
     pub text: String,
-    pub done: bool,
-    /// False for a check that ran and failed.
-    pub ok: bool,
+    pub state: SubState,
 }
 
-/// The sub-steps a step went through, in order. They are read from the log, so
-/// they are the same before, during and after the step runs.
+/// What an item waits for in the log.
+#[derive(Clone, Copy)]
+enum Need {
+    Started,
+    Worked,
+    Result,
+    Asked,
+    Answered,
+    Approved,
+    Finished,
+}
+
+const fn plan_of(step: Step) -> &'static [(&'static str, Need)] {
+    match step {
+        Step::Understand => &[
+            ("Read your request and attachments", Need::Started),
+            ("Look through the project", Need::Worked),
+            ("Write down what it understood", Need::Result),
+            ("Keep the result", Need::Finished),
+        ],
+        Step::Clarify => &[
+            ("Check whether anything is unclear", Need::Started),
+            ("Ask you the open questions", Need::Asked),
+            ("Take your answers", Need::Answered),
+            ("Settle Clarify", Need::Finished),
+        ],
+        Step::Design => &[
+            ("Start the design", Need::Started),
+            ("Draw the mockups", Need::Result),
+            ("Wait for your approval", Need::Answered),
+            ("Settle the design", Need::Finished),
+        ],
+        Step::Plan => &[
+            ("Start the plan", Need::Started),
+            ("Write the criteria and the test plan", Need::Result),
+            ("Wait for your approval of the plan", Need::Approved),
+            ("Settle the plan", Need::Finished),
+        ],
+        Step::BuildCheck => &[
+            ("Build turn", Need::Started),
+            ("Checks, cheapest first", Need::Worked),
+            ("Review of the change", Need::Result),
+        ],
+        Step::PullRequest => &[
+            ("Prepare the commit", Need::Started),
+            ("Ask you to approve the push", Need::Asked),
+            ("Take your approval", Need::Answered),
+            ("Push and open the draft pull request", Need::Finished),
+        ],
+        Step::Custom(_) => &[
+            ("Start your step", Need::Started),
+            ("Do the work", Need::Result),
+            ("Finish", Need::Finished),
+        ],
+    }
+}
+
+fn happened(view: &TicketView, step: Step, need: Need) -> bool {
+    let has = |wanted: &dyn Fn(&Fact) -> bool| {
+        view.facts
+            .iter()
+            .any(|(each, fact)| *each == step && wanted(fact))
+    };
+    match need {
+        Need::Started => has(&|fact| matches!(fact, Fact::Started)),
+        Need::Worked => view.log.iter().any(|line| line.step == Some(step)),
+        Need::Result => has(&|fact| matches!(fact, Fact::Result)),
+        Need::Asked => has(&|fact| matches!(fact, Fact::Asked)),
+        Need::Answered => has(&|fact| matches!(fact, Fact::Answered)),
+        Need::Approved => has(&|fact| matches!(fact, Fact::Approved)),
+        Need::Finished => has(&|fact| matches!(fact, Fact::Finished)),
+    }
+}
+
+/// The checklist of a step: what it will do, in order, with what has happened
+/// ticked. It reads only the log, so it is the same before the step starts,
+/// while it runs, after it ends and after a restart.
 #[must_use]
 pub fn sub_steps(view: &TicketView, step: Step) -> Vec<SubStep> {
     let Some(card) = view.step(step) else {
         return Vec::new();
     };
-    let item = |text: &str, done: bool| SubStep {
-        text: text.to_owned(),
-        done,
-        ok: true,
-    };
-    if step == Step::BuildCheck {
-        let mut items = Vec::new();
-        for round in &view.rounds {
-            items.push(item(&format!("Round {}: build turn", round.round), true));
-            for check in &round.checks {
-                items.push(SubStep {
-                    text: format!("Round {}: {}", round.round, check.name),
-                    done: true,
-                    ok: check.passed,
-                });
-            }
-        }
-        if card.state == StepState::Running {
-            items.push(item("Next: the following check or turn", false));
-        }
-        return items;
+    if let StepState::Skipped(reason) = &card.state {
+        return plan_of(step)
+            .iter()
+            .map(|(text, _)| SubStep {
+                text: (*text).to_owned(),
+                state: SubState::Skipped(reason.clone()),
+            })
+            .collect();
     }
-    let worked = view.log.iter().any(|line| line.step == Some(step));
-    let has_result = view.outputs.iter().any(|(each, _)| *each == step);
-    let started = !matches!(card.state, StepState::Idle | StepState::Skipped(_));
-    vec![
-        item("Started", started),
-        item("The agent worked on it", worked || has_result),
-        item("A result was recorded", has_result),
-        item("Finished", card.state == StepState::Passed),
-    ]
+    if step == Step::BuildCheck && !view.rounds.is_empty() {
+        return build_rounds(view, card);
+    }
+    let settled = card.state == StepState::Passed;
+    let mut items = Vec::new();
+    let mut marked = false;
+    for (text, need) in plan_of(step) {
+        let state = if settled || happened(view, step, *need) {
+            SubState::Done
+        } else if marked {
+            SubState::Pending
+        } else {
+            marked = true;
+            match &card.state {
+                StepState::Running | StepState::Asking(_) | StepState::Paused => SubState::Active,
+                StepState::Failed(reason) | StepState::Interrupted(reason) => {
+                    SubState::Stopped(reason.clone())
+                }
+                _ => SubState::Pending,
+            }
+        };
+        items.push(SubStep {
+            text: (*text).to_owned(),
+            state,
+        });
+    }
+    items
+}
+
+/// A build that has begun lists what actually ran, round by round.
+fn build_rounds(view: &TicketView, card: &crate::view::StepView) -> Vec<SubStep> {
+    let mut items = Vec::new();
+    for round in &view.rounds {
+        items.push(SubStep {
+            text: format!("Round {}: build turn", round.round),
+            state: SubState::Done,
+        });
+        for check in &round.checks {
+            items.push(SubStep {
+                text: format!("Round {}: {}", round.round, check.name),
+                state: if check.passed {
+                    SubState::Done
+                } else {
+                    SubState::Failed
+                },
+            });
+        }
+    }
+    let state = match &card.state {
+        StepState::Running | StepState::Asking(_) | StepState::Paused => Some(SubState::Active),
+        StepState::Failed(reason) | StepState::Interrupted(reason) => {
+            Some(SubState::Stopped(reason.clone()))
+        }
+        _ => None,
+    };
+    if let Some(state) = state {
+        let text = if matches!(state, SubState::Active) {
+            "Next: the following check or turn"
+        } else {
+            "Stopped here"
+        };
+        items.push(SubStep {
+            text: text.to_owned(),
+            state,
+        });
+    }
+    items
 }
 
 #[cfg(test)]
@@ -287,11 +420,126 @@ mod tests {
                 "Next: the following check or turn"
             ]
         );
-        assert!(items[1].ok && !items[2].ok && !items[3].done);
+        assert_eq!(items[1].state, SubState::Done);
+        assert_eq!(items[2].state, SubState::Failed);
+        assert_eq!(items[3].state, SubState::Active);
         let mut finished = vec![result("build", true)];
         finished.push((build, Event::StepFinished));
         let done = running_build(finished);
         assert!(live_status(&done, Step::BuildCheck, done.last_ms).is_none());
         assert_eq!(sub_steps(&done, Step::BuildCheck).len(), 2);
+    }
+
+    fn plan_view(extra: Vec<(Option<Step>, autopilot_core::Event)>) -> TicketView {
+        use autopilot_core::Event;
+        let mut kinds = vec![(None, Event::TicketCreated { title: "t".into() })];
+        kinds.extend(extra);
+        crate::view::ticket_view(&history(kinds)).unwrap()
+    }
+
+    fn states(view: &TicketView, step: Step) -> Vec<SubState> {
+        sub_steps(view, step)
+            .into_iter()
+            .map(|item| item.state)
+            .collect()
+    }
+
+    // Invariant: a step's checklist is the same list before it starts, while
+    // it runs, and after it ends, and every tick comes from a recorded event: a
+    // step that has not begun shows every item pending, the item it is on is
+    // marked, a step that stopped marks where and why, a skipped one says why.
+    // A list that only appeared once the step ran, or ticked by guesses, would
+    // show the owner something the log does not say.
+    #[test]
+    fn a_checklist_is_the_same_list_before_during_and_after_a_step() {
+        use autopilot_core::{AttemptId, Event, Understanding};
+        let step = Some(Step::Understand);
+        let started = (
+            step,
+            Event::StepStarted {
+                attempt: AttemptId::from("a"),
+                session: None,
+            },
+        );
+        let before = plan_view(vec![]);
+        assert_eq!(
+            states(&before, Step::Understand),
+            vec![SubState::Pending; 4]
+        );
+        let texts_before: Vec<String> = sub_steps(&before, Step::Understand)
+            .into_iter()
+            .map(|item| item.text)
+            .collect();
+
+        let running = plan_view(vec![
+            started.clone(),
+            said_for(step, "tool requested: Read"),
+        ]);
+        assert_eq!(
+            states(&running, Step::Understand),
+            [
+                SubState::Done,
+                SubState::Done,
+                SubState::Active,
+                SubState::Pending
+            ]
+        );
+
+        let result = Understanding {
+            summary: "s".into(),
+            ambiguity: autopilot_core::Ambiguity::all(autopilot_core::Clarity::Clear),
+            open_questions: vec![],
+            assumptions: vec![],
+            needs_design: false,
+            ui_files: vec![],
+            files_touched: vec![],
+        };
+        let finished = plan_view(vec![
+            started.clone(),
+            (step, Event::UnderstandResult { result }),
+            (step, Event::StepFinished),
+        ]);
+        assert_eq!(states(&finished, Step::Understand), vec![SubState::Done; 4]);
+        let texts_after: Vec<String> = sub_steps(&finished, Step::Understand)
+            .into_iter()
+            .map(|item| item.text)
+            .collect();
+        assert_eq!(texts_before, texts_after);
+
+        let stopped = plan_view(vec![
+            started,
+            (
+                step,
+                Event::Failed {
+                    reason: "the agent stopped after 20 turns".into(),
+                },
+            ),
+        ]);
+        assert_eq!(states(&stopped, Step::Understand)[0], SubState::Done);
+        assert_eq!(
+            states(&stopped, Step::Understand)[1],
+            SubState::Stopped("the agent stopped after 20 turns".into())
+        );
+
+        let skipped = plan_view(vec![(
+            Some(Step::Clarify),
+            Event::StepSkipped {
+                reason: "no open questions".into(),
+            },
+        )]);
+        assert!(
+            states(&skipped, Step::Clarify)
+                .iter()
+                .all(|state| *state == SubState::Skipped("no open questions".into()))
+        );
+    }
+
+    fn said_for(step: Option<Step>, text: &str) -> (Option<Step>, autopilot_core::Event) {
+        (
+            step,
+            autopilot_core::Event::AgentActivity {
+                summary: text.into(),
+            },
+        )
     }
 }

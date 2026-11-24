@@ -283,7 +283,50 @@ fn nav_row(
     theme::named(response, name).clicked()
 }
 
+/// Height of the slim title row on macOS, where the traffic lights sit over our
+/// own header instead of a second bar.
+pub(crate) const TITLE_HEIGHT: f32 = 30.0;
+
 impl App {
+    /// macOS only: the window draws under its title bar, so this row holds the
+    /// window buttons' place, paints the nav colour behind them and lets the
+    /// owner drag the window by it. Other systems keep their own title bar.
+    pub(crate) fn title_area(ctx: &egui::Context) {
+        if !cfg!(target_os = "macos") {
+            return;
+        }
+        let narrow = ctx.content_rect().width() < COLLAPSE_BELOW;
+        let side = if narrow { NARROW } else { WIDE };
+        egui::TopBottomPanel::top("title-area")
+            .exact_height(TITLE_HEIGHT)
+            .frame(Frame::new().fill(theme::BACKGROUND()))
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                let rect = ui.max_rect();
+                let nav = egui::Rect::from_min_size(rect.min, egui::vec2(side, rect.height()));
+                ui.painter().rect_filled(nav, 0.0, theme::SIDEBAR());
+                let response =
+                    ui.interact(rect, ui.id().with("drag"), egui::Sense::click_and_drag());
+                if response.drag_started() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                if response.double_clicked() {
+                    let zoomed = ctx.input(|input| input.viewport().maximized.unwrap_or(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!zoomed));
+                }
+                ui.painter().text(
+                    egui::pos2(
+                        rect.left() + side + (rect.width() - side) / 2.0,
+                        rect.center().y,
+                    ),
+                    egui::Align2::CENTER_CENTER,
+                    "Autopilot Mode On",
+                    egui::FontId::proportional(12.0),
+                    theme::TEXT_MUTED(),
+                );
+            });
+    }
+
     pub(crate) fn nav(&mut self, ctx: &egui::Context) {
         let narrow = ctx.content_rect().width() < COLLAPSE_BELOW;
         egui::SidePanel::left("nav")

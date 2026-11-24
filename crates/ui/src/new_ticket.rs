@@ -212,7 +212,7 @@ impl App {
                 .on_hover_text(
                     "Claude reads the application first (read-only): its screens, colours, fonts and names, so the mockups match the real pages. Costs more.",
                 );
-            ui.selectable_value(&mut choice, false, "Normal")
+            ui.selectable_value(&mut choice, false, "Ticket words only")
                 .on_hover_text(
                     "A plain request from the ticket's words alone. Cheaper, but it cannot see the application.",
                 );

@@ -824,6 +824,36 @@ fn advise(options: &Options, ticket: &TicketId, question: &str) -> Result<String
     .map_err(|error| error.to_string())
 }
 
+/// What a one-shot AI help call produced and what it may have cost.
+pub(crate) struct Asked {
+    pub text: String,
+    /// Model, how it is paid and the most one call can cost, for the page.
+    pub cost_note: String,
+}
+
+/// One call to Claude that reads and writes text only: no project, no tools.
+/// Paid the way the profile's Understand step is (API key or subscription),
+/// with that step's per-call dollar cap.
+pub(crate) fn ask_text(options: &Options, model: &str, prompt: &str) -> Result<Asked, String> {
+    if AgentChoice::read(&options.data_dir) != AgentChoice::Claude {
+        return Err("AI help needs the Claude agent: choose it in Settings".to_owned());
+    }
+    let mut config = profile_config(options, Step::Understand);
+    model.clone_into(&mut config.model);
+    config.effort = None;
+    let paid = match (config.auth, config.max_budget_usd.as_deref()) {
+        (autopilot_profile::Auth::Api, Some(cap)) => format!("API key, at most ${cap} a call"),
+        (autopilot_profile::Auth::Api, None) => "API key".to_owned(),
+        (autopilot_profile::Auth::Subscription, _) => "your subscription".to_owned(),
+    };
+    let cost_note = format!("{model} · {paid}");
+    let agent = claude_agent(config, None)?;
+    let text = agent
+        .orchestrate(prompt)
+        .map_err(|error| error.to_string())?;
+    Ok(Asked { text, cost_note })
+}
+
 /// The model for a step's chat: the cheap one by default, the stronger one
 /// when the orchestrator judged the ticket high in complexity or the question
 /// is long enough to need real reading.
