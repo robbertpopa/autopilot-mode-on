@@ -818,7 +818,7 @@ fn check_lines(ui: &mut egui::Ui, check: &autopilot_engine::CheckRow) {
         ui.label(RichText::new(mark).color(color));
         ui.label(&check.name);
         if check.cost != autopilot_core::Money::default() {
-            ui.label(theme::muted(format!("{}", dollars(check.cost))));
+            ui.label(theme::muted(dollars(check.cost)));
         }
     });
     if check.findings.is_empty() {
