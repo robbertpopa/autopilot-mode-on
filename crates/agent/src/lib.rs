@@ -1,5 +1,7 @@
 //! Provider-independent agent execution and events.
 
+pub mod conformance;
+
 use std::{
     io,
     panic::{self, AssertUnwindSafe},
