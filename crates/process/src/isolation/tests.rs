@@ -235,3 +235,25 @@ fn the_real_boundary_passes_the_probe_on_a_linux_host() {
     assert_eq!(wsl.host(), Host::Linux);
     super::validate(wsl, directory.path()).expect("the boundary holds");
 }
+
+#[cfg(target_os = "macos")]
+fn mac_wsl(directory: &std::path::Path) -> Wsl {
+    // A Mac supervises without a guardian program.
+    let wsl = Wsl::discover_local(directory.join("settings"), PathBuf::new()).expect("discover");
+    assert_eq!(wsl.host(), Host::Macos);
+    wsl
+}
+
+// Needs `tools/macos/setup.sh`, `claude` and `node` on this Mac.
+// Invariant: on a Mac set up with the script, the real probe passes for every
+// role, so a real launch can start.
+#[test]
+#[ignore = "needs the sandbox tools"]
+#[cfg(target_os = "macos")]
+fn the_real_boundary_passes_the_probe_on_a_mac() {
+    let directory = tempfile::tempdir_in(std::env::var_os("HOME").expect("HOME")).expect("dir");
+    let wsl = mac_wsl(directory.path());
+    let report = super::check(&wsl, directory.path()).expect("probe runs");
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    assert!(report.rows.iter().all(|row| row.ok));
+}
