@@ -9,6 +9,7 @@
 
 mod body;
 mod names;
+mod state;
 
 use std::{ffi::OsString, path::PathBuf, sync::atomic::AtomicBool, time::Duration};
 
@@ -18,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 pub use body::{CheckLine, description, redact};
 pub use names::{Repo, valid_branch};
+pub use state::{Decision, Feedback, Mergeable, PrState, PullState, feedback_block};
 
 const LIMITS: Limits = Limits {
     timeout: Duration::from_secs(60),
@@ -359,6 +361,70 @@ impl Gh {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// The facts about one pull request that decide what to do next. Comments
+    /// from people outside the repository are dropped here.
+    ///
+    /// # Errors
+    /// Returns an error if `gh` fails or an answer cannot be read.
+    pub fn pr_state(&self, number: u64) -> Result<PrState, Error> {
+        let number_text = number.to_string();
+        let repo = self.repo.to_string();
+        let text = self.run(
+            &[
+                "pr",
+                "view",
+                &number_text,
+                "--repo",
+                &repo,
+                "--json",
+                "number,headRefOid,isDraft,state,mergeable,reviewDecision",
+            ],
+            &[],
+        )?;
+        let view = state::decode_view(&text)?;
+        let (owner, name) = repo
+            .split_once('/')
+            .ok_or_else(|| Error::InvalidName(repo.clone()))?;
+        let owner_arg = format!("owner={owner}");
+        let name_arg = format!("name={name}");
+        let number_arg = format!("number={number}");
+        let query = format!(
+            "query=query($owner:String!,$name:String!,$number:Int!){{repository(owner:$owner,name:$name)\
+             {{pullRequest(number:$number){{reviewThreads(first:{}){{nodes{{isResolved \
+             comments(first:{}){{nodes{{author{{login}} authorAssociation body}}}}}}}}}}}}}}}}",
+            state::MAX_THREADS,
+            state::MAX_THREAD_COMMENTS
+        );
+        let text = self.run(
+            &[
+                "api",
+                "graphql",
+                "-F",
+                &owner_arg,
+                "-F",
+                &name_arg,
+                "-F",
+                &number_arg,
+                "-f",
+                &query,
+            ],
+            &[],
+        )?;
+        let threads = state::decode_threads(&text)?;
+        let ci = self.ci(&view.head)?;
+        Ok(PrState {
+            number: view.number,
+            head: view.head,
+            draft: view.draft,
+            state: view.state,
+            mergeable: view.mergeable,
+            decision: view.decision,
+            unresolved_threads: threads.unresolved,
+            feedback: threads.feedback,
+            ci,
+        })
     }
 
     /// CI for one exact commit, not for whatever the branch points at now.
