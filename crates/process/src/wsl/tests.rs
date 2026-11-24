@@ -434,3 +434,78 @@ fn the_reported_tool_versions_are_kept_for_the_probe_output() {
         "srt 0.0.83, bubblewrap 0.9.0, claude 2.1.330"
     );
 }
+
+fn mac(settings_dir: PathBuf) -> Wsl {
+    let text = "home=/Users/u\npath=/Users/u/.local/bin:/usr/bin\nsrt=/Users/u/.autopilot/npm/bin/srt\n\
+                seccomp=none\nroot=/Users/u/.local/share/claude/versions\n\
+                hook=/Users/u/.autopilot/bin/autopilot-hook\nsrt_version=0.0.83\n";
+    parse_discovery(
+        text,
+        Host::Macos,
+        "local",
+        PathBuf::from("/usr/bin/env"),
+        PathBuf::new(),
+        settings_dir,
+    )
+    .expect("a Mac's answer parses without a seccomp helper")
+}
+
+// Invariant: on a Mac the settings hide every user's folder and other volumes,
+// open only what the boundary names, and name no seccomp helper (there is none,
+// and a bogus read entry would hide a mistake). A change that breaks it: reusing
+// the Linux hidden roots, which leave `/Users` readable.
+#[test]
+fn a_mac_hides_users_and_has_no_seccomp_entry() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let wsl = mac(directory.path().to_path_buf());
+    let boundary = Boundary {
+        write: vec![PathBuf::from("/Users/u/work/wt")],
+        read: vec![PathBuf::from("/Users/u/.local/share/claude/versions")],
+        protect: vec![PathBuf::from("/Users/u/work/wt/.git")],
+        hide: Vec::new(),
+        domains: vec!["api.anthropic.com".into()],
+        tmp: None,
+        mask_env: Vec::new(),
+    };
+    let settings: serde_json::Value =
+        serde_json::from_str(&wsl.settings(&boundary).expect("settings")).expect("json");
+    let deny = &settings["filesystem"]["denyRead"];
+    assert_eq!(deny[0], "/Users");
+    assert_eq!(deny[1], "/Volumes");
+    let allow: Vec<&str> = settings["filesystem"]["allowRead"]
+        .as_array()
+        .expect("list")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert!(allow.contains(&"/Users/u/.local/share/claude/versions"));
+    assert!(!allow.iter().any(|path| path.is_empty() || *path == "none"));
+}
+
+// Invariant: a Mac matches Seatbelt rules against real paths, so a folder given
+// through a symlink (`/tmp`) reaches the settings as its target. A change that
+// breaks it: passing the path through, which leaves the write rule matching
+// nothing and every write in the worktree refused.
+#[test]
+#[cfg(target_os = "macos")]
+fn a_mac_resolves_a_symlinked_folder_before_it_writes_the_rule() {
+    let directory = tempfile::tempdir_in("/tmp").expect("temp dir");
+    let wsl = mac(directory.path().join("settings"));
+    let boundary = Boundary {
+        write: vec![directory.path().to_path_buf()],
+        ..Boundary::default()
+    };
+    let text = wsl.settings(&boundary).expect("settings");
+    assert!(text.contains("/private/tmp/"), "{text}");
+    assert!(!text.contains("\"/tmp/"), "{text}");
+}
+
+// Invariant: the discovery of a Mac names the tools folder it found, so the
+// agent role can read the installed program and nothing else under the home.
+#[test]
+fn a_mac_keeps_the_tool_folders_the_discovery_named() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let wsl = mac(directory.path().to_path_buf());
+    assert_eq!(wsl.tool_roots(), ["/Users/u/.local/share/claude/versions"]);
+    assert_eq!(wsl.host(), Host::Macos);
+}

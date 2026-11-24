@@ -51,8 +51,8 @@ pub struct BuildConfig {
 /// needs; Windows ignores it.
 ///
 /// # Errors
-/// Returns an error if the machine is not ready, is neither of those (macOS is
-/// not validated), or any row of the probe failed.
+/// Returns an error if the machine is not ready, is none of those (a Mac runs
+/// the boundary directly), or any row of the probe failed.
 pub fn sandbox_boundary(
     distro: &str,
     folder: &std::path::Path,

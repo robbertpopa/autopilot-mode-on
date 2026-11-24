@@ -448,7 +448,7 @@ impl App {
                     if ui
                         .add_enabled(!busy, theme::primary("Build"))
                         .on_hover_text(
-                            "The agent works in a copy of the project, the checks run after every turn, and a reviewer reads the change. Real Claude builds only inside the Linux sandbox.",
+                            "The agent works in a copy of the project, the checks run after every turn, and a reviewer reads the change. Real Claude builds only inside the sandbox.",
                         )
                         .clicked()
                     {

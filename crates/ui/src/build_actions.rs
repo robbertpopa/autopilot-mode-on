@@ -153,9 +153,14 @@ fn claude_build_agent(
         ));
     }
     let boundary = probe_sandbox(options).map_err(|error| {
+        let (place, setup) = if cfg!(target_os = "macos") {
+            ("macOS", "tools/macos/setup.sh")
+        } else {
+            ("Linux", "tools/wsl")
+        };
         format!(
-            "The Linux sandbox is not ready, so Build stays off: {error}. Set it up with \
-             tools/wsl (docs/spikes/S6-containment.md)."
+            "The {place} sandbox is not ready, so Build stays off: {error}. Set it up with \
+             {setup} (docs/spikes/S6-containment.md)."
         )
     })?;
     let sandbox = Sandbox {
