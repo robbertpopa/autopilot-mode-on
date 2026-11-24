@@ -27,4 +27,8 @@ The Linux x64 2.1.330 CLI help was checked in a network-isolated container. It l
 
 ## Result
 
+**Headless trial on 2026-11-24 (Claude Code 2.1.330, claude.ai subscription login, about $0.22):** `claude -p` created a private artifact of the Design type and returned its URL, so the login is eligible. Uploading the canvas files was refused with an approval that print mode cannot answer, so the artifact stayed empty. Revision of the same URL and reading comments were not tried.
+
+**Next trial:** run `claude -p` with `--permission-prompt-tool` pointing at a tool of ours that allows only uploads from the ticket's `designs/<ticket>/` folder and denies everything else, then check the canvas has content, a revision keeps the URL, and the owner approval stays in the inbox. One Design page per project, holding every ticket's mockups, is the goal; it stays an explicit per-project opt-in because the content is uploaded to Anthropic. Ask before the trial: it sends a synthetic design off this machine.
+
 The local HTML mockup remains the first M6 path. The remote candidate requires an eligible claude.ai login and explicit project opt-in. S4 is open until the subscription headless trial verifies publication, revision and audience.

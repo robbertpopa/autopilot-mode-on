@@ -11,6 +11,14 @@ Reviewed 2026-11-20. The research notes below are dated references. Provider beh
 
 **Next session starts here.** Work in `D:\autopilot-mode-on`. M0 and the [S5 synthetic process checks](spikes/S5-windows-process-control.md) passed. The [fixture-backed M1 CLI](milestones/M1-agent-step.md#fixture-verification) runs and replays a ticket and saves streamed activity before exit. The offline S1 preflight is ready. The [S2 loopback probe](spikes/S2-plan-limits.md#loopback-probe) recorded 429 and 529 retries, recovery and terminal errors. Live subscription-limit detection is pending. Capture the versioned S1 provider contract once the dedicated workspace and budget are confirmed. The [S3 source review](spikes/S3-read-gru.md#result) and [M4 local worktree operations](milestones/M4-worktrees-pr.md#part-1-git-crate-can-start-after-m0) are verified. The [S7 graph comparison](spikes/S7-graph-widget.md#result) selected a fixed egui canvas. The [S8 documentation and logged-out preflight](spikes/S8-codex-auth.md#result) are recorded. Live auth switching, event capture and the unattended-use decision still gate M8. The [S9 review corpus](spikes/S9-review-quality.md#local-corpus-preparation) is ready for the later model and cost measurements.
 
+**Open follow-ups from the parallel-ticket run (2026-11-24).**
+
+- Design upload: run S4 again with `claude -p --permission-prompt-tool` so the inbox answers the upload approval for `designs/<ticket>/` only; then check revision of the same URL and comment reading. Goal: one Claude Design page per project with every ticket's mockups, as an explicit per-project opt-in.
+- Reuse more of Claude Code through its own options (permission prompt tool, the Agent SDK) before writing more host-side handling.
+- UI: elapsed time counts from the wrong start; "Opened the mockups" and "Design ready" banners leak across tickets; the Inbox detail pane is clipped; Plan review rows overflow instead of wrapping; a new ticket briefly shows under "no project"; the orchestrator spinner shows three times; "Reading your request..." shows on the New ticket page.
+- Cost and reliability: Plan on Opus is the largest cost; one Plan ended with `error_max_turns` ($1.32, no result); the release build has no console, which hid usage errors.
+- Process: a clean test start needs the native folder picker; `UI-REDESIGN.md` and `WORK-PACKAGES.md` are not updated.
+
 The standalone repository holds the current implementation and milestone status. Record spike results and tick milestone items after running their exit checks.
 
 | Item | File | State |

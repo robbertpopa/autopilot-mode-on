@@ -27,7 +27,7 @@ pub(crate) fn blurb(step: Step) -> (&'static str, &'static str) {
         ),
         Step::Design => (
             "only for UI changes",
-            "Makes the design in Claude Design and waits for your approval. Feedback goes back to the same canvas.",
+            "Draws the design as HTML mockups and waits for your approval. Feedback goes back to the same mockups.",
         ),
         Step::Plan => ("always runs", "Criteria, each with how it is checked."),
         Step::BuildCheck => (
@@ -183,7 +183,7 @@ impl App {
             });
             ui.label(RichText::new(text).size(13.0).color(theme::TEXT_MUTED()));
             if step == Step::Design {
-                ui.add_enabled(false, egui::Label::new("Claude Design"))
+                ui.add_enabled(false, egui::Label::new("Mockups as local HTML"))
                     .on_disabled_hover_text(
                         "The Design step is not built yet (it waits for S4), so its settings do nothing today",
                     );
