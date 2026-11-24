@@ -13,7 +13,10 @@ if [ ! -x ~/node/bin/node ]; then
 fi
 export PATH="$HOME/node/bin:$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
 npm config set prefix ~/.npm-global
-npm install -g @anthropic-ai/sandbox-runtime @anthropic-ai/claude-code
+# The srt version is the one the escape probe was validated with
+# (VALIDATED_SRT in crates/process/src/wsl.rs); a different one is refused.
+# Claude Code is not part of the boundary: its version is recorded, not enforced.
+npm install -g @anthropic-ai/sandbox-runtime@0.0.83 @anthropic-ai/claude-code
 # The toolchain the check runner uses. The version follows rust-toolchain.toml.
 if [ ! -x ~/.cargo/bin/rustup ]; then
   curl -fsSL https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init -o /tmp/rustup-init

@@ -4,7 +4,7 @@ use super::{NPM_REGISTRY, PROVIDER, REGISTRY, ROWS, Role, boundary, judge, probe
 use crate::wsl::{Host, Wsl, parse_discovery};
 
 fn wsl() -> Wsl {
-    let text = "home=/home/u\npath=/usr/bin\nsrt=/home/u/node/bin/srt\nseccomp=/home/u/v/seccomp\nhook=/home/u/.autopilot/bin/autopilot-hook\n";
+    let text = "home=/home/u\npath=/usr/bin\nsrt=/home/u/node/bin/srt\nseccomp=/home/u/v/seccomp\nhook=/home/u/.autopilot/bin/autopilot-hook\nsrt_version=0.0.83\n";
     parse_discovery(
         text,
         Host::Wsl,
