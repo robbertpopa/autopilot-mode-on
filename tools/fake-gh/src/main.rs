@@ -4,7 +4,15 @@
 //!
 //! State shape: `issues` (by number), `heads` (branch to commit), `prs`, `runs`
 //! (check runs by commit), `create` (`"ok"`, `"fail"`, or `"fail_after"`, which
-//! makes the pull request and then exits non-zero), and `calls`.
+//! makes the pull request and then exits non-zero), `logs` (job log text by job
+//! id), and `calls`.
+//!
+//! A pull request may also carry the fields real `gh` reports: `state` (default
+//! `OPEN`), `mergeable` (`MERGEABLE`, `CONFLICTING` or `UNKNOWN`),
+//! `reviewDecision`, and `threads`, each `{isResolved, comments: [{author,
+//! authorAssociation, body}]}`. Check runs are passed through as written, so a
+//! run may hold `output.text` as its log tail. Another person pushing to the
+//! branch is a change to `heads` in the state file; `pr view` reads it live.
 
 use std::{
     env, fs,
@@ -28,6 +36,92 @@ fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
     args.windows(2)
         .find(|pair| pair[0] == name)
         .map(|pair| pair[1].as_str())
+}
+
+/// Looks a pull request up by number or by branch name, like `gh pr view` does.
+fn pr_by_selector(state: &Value, selector: &str) -> Result<Option<Value>, &'static str> {
+    let prs = state["prs"].as_array().ok_or("prs")?;
+    Ok(prs
+        .iter()
+        .find(|pr| pr["number"] == selector.parse::<u64>().unwrap_or(0) || pr["branch"] == selector)
+        .cloned())
+}
+
+/// The review threads the way the GraphQL API nests them.
+fn thread_nodes(pr: &Value) -> Vec<Value> {
+    let mut nodes = Vec::new();
+    for thread in pr["threads"].as_array().into_iter().flatten() {
+        let mut comments = Vec::new();
+        for c in thread["comments"].as_array().into_iter().flatten() {
+            comments.push(json!({"author": {"login": c["author"]},
+                                 "authorAssociation": c["authorAssociation"],
+                                 "body": c["body"]}));
+        }
+        nodes.push(json!({"isResolved": thread["isResolved"],
+                          "comments": {"nodes": comments}}));
+    }
+    nodes
+}
+
+fn pr_view(state: &Value, pr: &Value) -> Value {
+    let branch = pr["branch"].as_str().unwrap_or_default();
+    // Read live: someone else pushing moves the branch without touching the record.
+    let head = state["heads"].get(branch).unwrap_or(&pr["headRefOid"]);
+    json!({
+        "number": pr["number"], "url": pr["url"], "headRefOid": head,
+        "isDraft": pr["isDraft"], "body": pr["body"],
+        "headRefName": pr["branch"], "baseRefName": pr["base"],
+        "state": pr.get("state").unwrap_or(&json!("OPEN")),
+        "mergeable": pr.get("mergeable").unwrap_or(&json!("MERGEABLE")),
+        "reviewDecision": pr.get("reviewDecision").unwrap_or(&json!("")),
+    })
+}
+
+type Fail = Box<dyn std::error::Error>;
+
+fn pr_view_command(state: &Value, args: &[String], out: &mut impl Write) -> Result<ExitCode, Fail> {
+    let Some(pr) = pr_by_selector(state, args.get(2).ok_or("pull request")?)? else {
+        eprintln!("no pull request found");
+        return Ok(ExitCode::from(1));
+    };
+    let view = pr_view(state, &pr);
+    let shown = match flag(args, "--json") {
+        Some(fields) => fields
+            .split(',')
+            .map(|field| (field.to_owned(), view[field].clone()))
+            .collect(),
+        None => view,
+    };
+    writeln!(out, "{shown}")?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn graphql_command(state: &Value, args: &[String], out: &mut impl Write) -> Result<ExitCode, Fail> {
+    let number = args
+        .iter()
+        .find_map(|arg| arg.strip_prefix("number="))
+        .ok_or("number=")?;
+    let pr = pr_by_selector(state, number)?.ok_or("no such pull request")?;
+    let nodes = thread_nodes(&pr);
+    writeln!(
+        out,
+        "{}",
+        json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": nodes}}}}})
+    )?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn log_command(state: &Value, route: &str, out: &mut impl Write) -> Result<ExitCode, Fail> {
+    let id = route
+        .strip_suffix("/logs")
+        .and_then(|r| r.rsplit('/').next())
+        .ok_or("logs route")?;
+    let Some(text) = state["logs"].get(id).and_then(Value::as_str) else {
+        eprintln!("no log for job {id}");
+        return Ok(ExitCode::from(1));
+    };
+    write!(out, "{text}")?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
@@ -104,6 +198,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                     ExitCode::SUCCESS
                 }
             }
+        }
+        (Some("pr"), Some("view")) => pr_view_command(&state, &args, &mut out)?,
+        (Some("api"), Some("graphql")) => graphql_command(&state, &args, &mut out)?,
+        (Some("api"), Some(route)) if route.ends_with("/logs") => {
+            log_command(&state, route, &mut out)?
         }
         (Some("api"), Some(route)) => {
             let sha = route
