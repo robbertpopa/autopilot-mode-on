@@ -2269,4 +2269,74 @@ effort = \"high\"
         assert!(nav.max.x <= 226.5, "the sidebar grew to {}", nav.max.x);
         assert_eq!(nav.max.x, page.min.x, "a gap between the panels");
     }
+
+    // Invariant: the ticket page shows each step's plan as a checklist that
+    // follows the log: the step that is next shows its items unticked before it
+    // starts, the running one marks where it is, a finished one shows what it
+    // did, a stopped one shows where and why. A page that listed only step names
+    // left the owner unable to tell what a step would do or where it stopped.
+    #[test]
+    fn the_ticket_page_shows_each_steps_plan_before_during_and_after() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        backend::mark_welcomed(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        demo::seed_build_states(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let cases: [(&str, &[&str]); 5] = [
+            // Next step, not started: its items are listed.
+            (
+                "demo-approved",
+                &[
+                    "Plan",
+                    "Build turn",
+                    "Checks, cheapest first",
+                    "Review of the change",
+                ],
+            ),
+            // Running: where it is, and what ran.
+            (
+                "demo-timezone",
+                &[
+                    "Round 1: build turn",
+                    "Round 1: tests",
+                    "Next: the following check or turn",
+                    "in progress",
+                ],
+            ),
+            // Finished: what it did, in the step's own page.
+            ("demo-passed", &["Round 1: build turn", "Round 1: tests"]),
+            // Stopped for the owner.
+            (
+                "demo-stopped",
+                &["Round 1: review", "Next: the following check or turn"],
+            ),
+            // Failed: where and why.
+            (
+                "demo-csrf",
+                &[
+                    "Read your request and attachments",
+                    "stopped: the agent stopped after 20 turns",
+                ],
+            ),
+        ];
+        for (name, wanted) in cases {
+            app.open(&autopilot_core::TicketId::from(name));
+            if name == "demo-passed" {
+                app.screen = Screen::Step(Step::BuildCheck);
+            }
+            let page = page_text(&mut app, &context, 1280.0).replace('\n', " ");
+            for text in wanted {
+                assert!(page.contains(text), "{name} lacks {text:?}: {page}");
+            }
+        }
+    }
 }
