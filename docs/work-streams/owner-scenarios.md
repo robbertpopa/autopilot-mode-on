@@ -36,6 +36,8 @@ Tick a scenario with the date and commit once it passed. Never tick one from a t
 
 ## Scenario C: archive, delete, restore, stop, resume
 
+**Built (macOS, not yet run by hand):** archive, restore and delete are events on the ticket (`Archived`, `Restored`, `Deleted`), kept in the log; from the ticket page More menu and the sidebar right-click menu; archived tickets are listed apart under the sidebar's Archived row; Delete asks first and refuses on a running ticket (stop it first). **Not built:** delete does not remove the worktree or the branch (the `git` crate has no remove call; request to stream 1), and "Resume" runs the step that stopped again with the work before it kept; it does not pick up the provider's session. Steps 5 and 7 are therefore only partly covered.
+
 - [ ] **C. Pass date and commit:** _not run_
 
 1. **Archive from the ticket page.** Open a ticket, choose Archive. *Expect:* the ticket leaves the active list and sidebar, shows in Archived, and nothing running is lost.

@@ -380,6 +380,14 @@ impl App {
             return;
         };
         self.run_header(ui, &view);
+        if view.archived {
+            ui.horizontal(|ui| {
+                ui.label(theme::muted("Archived: hidden from the lists."));
+                if ui.button("Restore").clicked() {
+                    self.act(Action::Restore(view.id.clone()));
+                }
+            });
+        }
         ui.horizontal(|ui| {
             let project = crate::nav::project_name(&view);
             theme::pill(

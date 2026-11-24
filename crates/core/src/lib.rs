@@ -899,6 +899,13 @@ pub enum Event {
     },
     Paused,
     Resumed,
+    /// The owner put the ticket away. It is hidden from the lists but its
+    /// history stays, and [`Event::Restored`] brings it back.
+    Archived,
+    Restored,
+    /// The owner deleted the ticket after a confirmation. The history stays,
+    /// so nothing is lost by mistake; the ticket is no longer listed anywhere.
+    Deleted,
     Interrupted {
         reason: String,
     },
