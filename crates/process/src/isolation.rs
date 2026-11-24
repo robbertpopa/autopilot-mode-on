@@ -159,23 +159,76 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
 /// Returns an error naming each row that did not behave as expected, or the
 /// setup step that failed. The boundary is then unusable.
 pub fn validate(wsl: Wsl, work: &Path) -> io::Result<Validated> {
-    let wsl = Arc::new(wsl);
-    let scene = Scene::build(work)?;
-    let listener = Listener::start(&wsl, &scene)?;
-    let mut failures = Vec::new();
-    for role in scene.roles() {
-        failures.extend(probe(&wsl, &scene, &role, &listener)?);
-    }
-    drop(listener);
-    if failures.is_empty() {
-        Ok(Validated { wsl })
+    let report = check(&wsl, work)?;
+    if report.failures.is_empty() {
+        Ok(Validated { wsl: Arc::new(wsl) })
     } else {
         Err(io::Error::other(format!(
             "the WSL boundary failed {} check(s) with {}: {}",
-            failures.len(),
-            wsl.tool_versions(),
-            failures.join("; ")
+            report.failures.len(),
+            report.versions,
+            report.failures.join("; ")
         )))
+    }
+}
+
+/// One probe row for one role and whether it held.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RowResult {
+    pub role: &'static str,
+    pub row: &'static str,
+    pub ok: bool,
+}
+
+/// Everything the probe saw, for a person to read.
+#[derive(Clone, Debug)]
+pub struct Report {
+    /// The tool versions it ran with.
+    pub versions: String,
+    pub rows: Vec<RowResult>,
+    /// Every failure, including those the host saw (a changed file) and a
+    /// probe that did not run, which have no row of their own.
+    pub failures: Vec<String>,
+}
+
+/// Run the same probe as [`validate`] and keep every row, passed or not.
+///
+/// # Errors
+/// Returns an error if the probe could not be set up.
+pub fn check(wsl: &Wsl, work: &Path) -> io::Result<Report> {
+    let wsl = Arc::new(wsl.clone());
+    let scene = Scene::build(work)?;
+    let listener = Listener::start(&wsl, &scene)?;
+    let mut results = Vec::new();
+    let mut failures = Vec::new();
+    for role in scene.roles() {
+        let found = probe(&wsl, &scene, &role, &listener)?;
+        let name = role_name(&role);
+        let agent = matches!(role, Role::Agent { .. });
+        for row in rows(wsl.host(), agent) {
+            let prefix = format!("{name}: {row} ");
+            results.push(RowResult {
+                role: name,
+                row,
+                ok: !found.iter().any(|failure| failure.starts_with(&prefix)),
+            });
+        }
+        failures.extend(found);
+    }
+    drop(listener);
+    Ok(Report {
+        versions: wsl.tool_versions(),
+        rows: results,
+        failures,
+    })
+}
+
+fn role_name(role: &Role) -> &'static str {
+    match role {
+        Role::Agent { .. } => "agent",
+        Role::Check { .. } => "check",
+        Role::Fetch { .. } => "fetch",
+        Role::FetchNode { .. } => "fetch-node",
     }
 }
 
@@ -440,12 +493,7 @@ fn probe_script(host: Host, agent: bool) -> String {
 }
 
 fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Result<Vec<String>> {
-    let name = match role {
-        Role::Agent { .. } => "agent",
-        Role::Check { .. } => "check",
-        Role::Fetch { .. } => "fetch",
-        Role::FetchNode { .. } => "fetch-node",
-    };
+    let name = role_name(role);
     let agent = matches!(role, Role::Agent { .. });
     let scratch = match role {
         Role::Agent { config, .. } => config.join("tmp"),
