@@ -952,7 +952,15 @@ impl App {
 /// The colours of a ticket's chip.
 #[must_use]
 pub fn badge_colors(badge: Badge, view: &TicketView) -> (String, Color32, Color32) {
-    let minutes = view.last_ms.saturating_sub(view.started_ms) / 60_000;
+    // From the running step's own latest start: a ticket that was started
+    // hours ago and is running again reads as minutes, not as hours.
+    let since = view
+        .steps
+        .iter()
+        .find(|card| card.state.is_active())
+        .and_then(|card| card.started_ms)
+        .unwrap_or(view.started_ms);
+    let minutes = view.last_ms.saturating_sub(since) / 60_000;
     match badge {
         Badge::NeedsYou => ("Needs you".into(), theme::AMBER_FILL(), theme::AMBER()),
         // The step reads as running, but the owner approved and nothing is
