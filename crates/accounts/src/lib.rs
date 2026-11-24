@@ -51,6 +51,8 @@ const ENV_ALLOWED: &[&str] = &[
     "TEMP",
     "TMP",
     "TMPDIR",
+    // The macOS keychain lookup behind `claude auth status` needs it.
+    "USER",
     "USERNAME",
     "USERPROFILE",
     "WINDIR",
@@ -188,11 +190,8 @@ struct Launch {
     extra_env: Vec<(OsString, OsString)>,
 }
 
-fn lookup(runner: &Runner, parent: &[(OsString, OsString)], launch: Option<Launch>) -> Lookup {
-    let Some(launch) = launch else {
-        return Lookup::Missing;
-    };
-    let env = parent
+fn allowed_env(parent: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
+    parent
         .iter()
         .filter(|(name, _)| {
             ENV_ALLOWED.iter().any(|allowed| {
@@ -201,6 +200,15 @@ fn lookup(runner: &Runner, parent: &[(OsString, OsString)], launch: Option<Launc
             })
         })
         .cloned()
+        .collect()
+}
+
+fn lookup(runner: &Runner, parent: &[(OsString, OsString)], launch: Option<Launch>) -> Lookup {
+    let Some(launch) = launch else {
+        return Lookup::Missing;
+    };
+    let env = allowed_env(parent)
+        .into_iter()
         .chain(launch.extra_env)
         .collect();
     let spec = CommandSpec {
@@ -545,6 +553,25 @@ mod tests {
     const CLAUDE: &str = r#"{"loggedIn":true,"authMethod":"claude.ai","email":"a@example.test","orgName":"Org","subscriptionType":"pro","loginExpiresAt":"x"}"#;
     const GITHUB: &str = r#"{"hosts":{"github.com":[{"state":"success","active":true,"host":"github.com","login":"one","tokenSource":"keyring","scopes":"repo"},{"state":"error","active":false,"host":"github.com","login":"two","tokenSource":"keyring"}]}}"#;
     const AZURE: &str = r#"{"environmentName":"AzureCloud","id":"sub-id","name":"dev-subscription","tenantId":"t","user":{"name":"me@example.test","type":"user"}}"#;
+
+    // Invariant: the child of a status lookup gets USER (the macOS keychain
+    // lookup reports "not signed in" without it) and still no token. A change
+    // that drops USER, or widens the list to every variable, fails here.
+    #[test]
+    fn a_lookup_keeps_user_and_leaves_secrets_behind() {
+        let parent = [
+            ("USER", "me"),
+            ("HOME", "/h"),
+            ("GITHUB_TOKEN", "t"),
+            ("ANTHROPIC_API_KEY", "k"),
+        ]
+        .map(|(name, value)| (OsString::from(name), OsString::from(value)));
+        let names: Vec<String> = allowed_env(&parent)
+            .iter()
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["USER", "HOME"]);
+    }
 
     #[test]
     fn a_saved_variable_is_found_only_when_it_has_a_value() {

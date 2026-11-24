@@ -36,6 +36,8 @@ const ALLOWED: &[&str] = &[
     "TEMP",
     "TMP",
     "TMPDIR",
+    // The macOS keychain lookup behind a subscription sign-in needs it.
+    "USER",
     "USERNAME",
     "USERPROFILE",
     "WINDIR",
@@ -210,6 +212,16 @@ mod tests {
             env.iter()
                 .all(|(_, value)| !value.to_string_lossy().contains("key"))
         );
+    }
+
+    // Invariant: a subscription step on a Mac gets USER, or Claude Code cannot
+    // read its keychain sign-in. A change that drops it fails here.
+    #[test]
+    fn a_subscription_step_keeps_user() {
+        let mut vars = parent();
+        vars.push(("USER".into(), "me".into()));
+        let env = child_env(Auth::Subscription, vars).unwrap();
+        assert!(names(&env).contains(&"user".to_string()));
     }
 
     #[test]
