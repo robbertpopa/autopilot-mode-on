@@ -202,6 +202,7 @@ impl App {
                 }
                 let paused = view.badge == Badge::Paused;
                 if (view.badge == Badge::Running || paused)
+                    && !pull_request_approved(view)
                     && ui
                         .button(if paused { "Resume" } else { "Pause" })
                         .on_hover_text("Takes effect between turns")

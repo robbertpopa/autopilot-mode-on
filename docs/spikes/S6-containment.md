@@ -129,5 +129,34 @@ Limits of this evidence:
 - **Refused on purpose:**
   - *Subscription mode.* Its sign-in would have to be readable inside the sandbox, and a token the agent can read can be sent to the provider host under an attacker's own key and read back from their console. `srt` can mask a credential file as it masks the key, but without a request filter that does not close the path, so it is not shipped.
   - *Git inside the sandbox.* A linked worktree's `.git` names a Windows path. Making the repository behind it readable exposes `.git/config` (a remote URL can hold a token), and making any of it writable lets the agent plant `core.fsmonitor` or a hook that the host's own `git` runs. The turn is told git is off; the host records the work.
-  - *macOS hosts.* Seatbelt has no network namespace and treats loopback and Unix sockets differently, so its probe rows have not been written and there is no Mac to run them on.
+  - *macOS hosts.* Still refused, now with a Mac to test on. The product runs on macOS (build, tests and the window pass, see the macOS section at the end), but no Seatbelt boundary has been validated, so `Wsl::discover_local` returns `Unsupported` there and a real Build does not start. Reasons from the experiment below: the per-domain rule the agent needs cannot be written in Seatbelt, and a profile that allows by default leaks through system services.
 - The direct MXC run above stays preliminary evidence for one Windows CLI version and profile.
+
+## macOS experiment, 2026-11-24
+
+On the same Mac, with Rust 1.100.0: `cargo fmt --all --check`, `cargo xtask layers` and `cargo nextest run --workspace` (430 tests) pass; `cargo test --workspace` is not the supported runner and some window tests are flaky under it when they share one process. The CLI ran the fixture ticket, the window started on demo data, and the release build produced a disk image whose app starts and verifies its signature. The window was not looked at on screen. Clippy 1.100 reports two `map_unwrap_or` findings in `crates/rules` that the pinned 1.99.1 does not.
+
+The experiment: an Apple silicon Mac (macOS 27.0.1) with the built-in `sandbox-exec`, a hand-written profile (`(allow default)`, `(deny network*)`, writes denied outside one worktree, `.git` inside it denied) and plain `sh`, `nc` and `curl`. `srt` is not installed here and was not installed. No API spend. Only the rows below were run; this is evidence for keeping macOS refused, not a validated boundary.
+
+| Row | Result |
+|---|---|
+| Write inside the worktree through `/tmp/...` | **Denied.** `/tmp` is a symlink to `/private/tmp` and Seatbelt matches the real path, so every path in a profile must be resolved first. The Linux rows pass paths as given. |
+| Write inside the worktree through `/private/tmp/...` | Allowed. |
+| Write into `.git` inside the worktree | Denied. |
+| Write to a sibling folder | Denied. |
+| Write to `/dev/null` under "deny every write outside the worktree" | **Denied.** The profile must allow the device files and the temp folder by name. |
+| Read a sibling file's marker | Readable. A default-allow profile hides nothing; `read` would need the same allow-list work as `write`. |
+| TCP to a listener on `127.0.0.1` | Denied by `(deny network*)`; reachable without the profile. |
+| Connect to a Unix socket in a sibling folder | Denied by `(deny network*)`. |
+| `curl https://example.com` | Failed (no DNS, no route). |
+| Environment variable set outside | Visible inside. Masking is the launcher's job, as on Linux. |
+| `defaults write` of a preference file under `~/Library/Preferences` | **Escaped.** The file was created although the profile denies writes there: the write is done by the `cfprefsd` system service over a Mach port, which `(allow default)` permits. The probe file was deleted afterwards. |
+
+What this means for a macOS boundary:
+
+- The agent needs `api.anthropic.com` and nothing else. Seatbelt filters by address and port, not by name, so a per-domain rule needs a local proxy that the profile forces traffic through (what `srt` does on macOS). That proxy and its TLS handling were not tested.
+- A default-allow profile is not a boundary: system services act for the sandboxed process and write outside it. A default-deny profile for Node, `claude` and the build tools is a long allow-list that has to be found by trial and kept in step with each macOS release.
+- Loopback and Unix sockets are one rule (`network*`) rather than the separate rows the Linux probe has, so the rows need rewriting, not reuse. Mach lookups, `open`, `osascript` and the pasteboard are new escape routes with no Linux counterpart; the probe needs a row for each that the profile claims to block.
+- There is no child subreaper and no network namespace on macOS. `crates/process/src/macos.rs` kills the process group, and a descendant that calls `setsid` survives.
+
+Next step if the owner wants macOS: install the pinned `srt`, run its macOS mode against this table's rows plus mach and `open` rows, and only then write `discover_local` for it. The probe code in `crates/process/src/isolation.rs` stays the gate.

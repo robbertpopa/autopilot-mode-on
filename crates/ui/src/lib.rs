@@ -1872,4 +1872,122 @@ effort = \"high\"
         assert_eq!(app.update_offered(), Some("9.9.9"));
         assert!(!app.update_installing());
     }
+
+    fn texts(output: &egui::FullOutput) -> String {
+        let mut found = String::new();
+        for clipped in &output.shapes {
+            if let egui::epaint::Shape::Text(text) = &clipped.shape {
+                found.push_str(text.galley.text());
+                found.push('\n');
+            }
+        }
+        found
+    }
+
+    fn page_text(app: &mut App, context: &egui::Context, width: f32) -> String {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(width, 920.0),
+            )),
+            ..Default::default()
+        };
+        let mut all = String::new();
+        for _ in 0..2 {
+            all = texts(&context.run(input.clone(), |context| app.ui(context)));
+        }
+        all
+    }
+
+    // Invariant: each state of Build and the pull request draws a ticket page
+    // that says what is true for it and offers only the action that fits, at a
+    // wide and a narrow window, in light and dark. A card that offered "Open the
+    // pull request" before the owner approved would push what nobody agreed to.
+    #[test]
+    fn each_build_state_says_what_is_true_and_offers_the_fitting_action() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed_build_states(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let cases: [(&str, &[&str], &[&str]); 6] = [
+            (
+                "demo-approved",
+                &["The plan is approved. Ready to build.", "Build"],
+                &["Open the pull request", "Ask to open a pull request"],
+            ),
+            (
+                "demo-stopped",
+                &["Build"],
+                &["Open the pull request", "Ask to open a pull request"],
+            ),
+            (
+                "demo-passed",
+                &[
+                    "The build passed. Ready to ask about a pull request.",
+                    "Ask to open a pull request",
+                ],
+                &["Open the pull request"],
+            ),
+            (
+                "demo-asked",
+                &["Pull request"],
+                &["Open the pull request", "Ask to open a pull request"],
+            ),
+            (
+                "demo-approved-pr",
+                &[
+                    "The pull request is approved. Ready to push the commit and open it as a draft.",
+                    "Open the pull request",
+                ],
+                &[
+                    "Ask to open a pull request",
+                    "Running",
+                    "running",
+                    "Pause",
+                    "since start",
+                ],
+            ),
+            (
+                "demo-opened",
+                &["All steps are done."],
+                &["Open the pull request", "Ask to open a pull request"],
+            ),
+        ];
+        for dark in [false, true] {
+            context.set_visuals(if dark {
+                egui::Visuals::dark()
+            } else {
+                egui::Visuals::light()
+            });
+            for width in [1500.0_f32, 520.0] {
+                for (name, present, absent) in cases {
+                    app.open(&autopilot_core::TicketId::from(name));
+                    let page = page_text(&mut app, &context, width).replace('\n', " ");
+                    if std::env::var_os("SHOW_PAGES").is_some() && !dark {
+                        eprintln!("=== {name}\n{page}");
+                    }
+                    for want in present {
+                        assert!(
+                            page.contains(want),
+                            "{name} at {width}: missing {want:?} in {page}"
+                        );
+                    }
+                    for refuse in absent {
+                        assert!(
+                            !page.contains(refuse),
+                            "{name} at {width}: shows {refuse:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
