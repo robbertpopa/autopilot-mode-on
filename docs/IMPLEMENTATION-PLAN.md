@@ -11,7 +11,7 @@ Reviewed 2026-11-20. The research notes below are dated references. Provider beh
 
 **What exists** (verified against the code and `git log` on `develop`, 2026-11-24): the whole ticket flow from the command line and the window (Understand, Clarify, Design, Plan, approval, Build, checks, review, pull request approval, push, draft pull request); a real agent that builds only inside a validated sandbox (WSL2 on Windows, directly on Linux, `srt` and Seatbelt on an Apple silicon Mac, API-key mode); `autopilot isolation check`, `autopilot pr watch`, the agent conformance suite, the pure pull request rules, the sandbox settings page and pinned tool versions. `ci.yml` runs on Windows, Linux and macOS.
 
-**Not proven yet.** No real pull request has been opened on GitHub. The Design upload to claude.ai (S4), subscription plan-limit detection (S2), Codex (S8) and the review-quality measurements (S9) wait for live evidence. The window's newest screens have not been looked at on a real screen by their authors.
+**Not proven yet.** No real pull request has been opened on GitHub. The Design upload to claude.ai (S4, upload refused in the first trial), subscription plan-limit detection (S2), Codex (S8) and the review-quality measurements (S9) wait for live evidence. The window's newest screens have not been looked at on a real screen by their authors.
 
 **Open owner items** (details and the decision list: [overview](work-streams/00-overview.md#decisions-only-the-owner-can-make-they-block-work-ask-once-do-not-guess)):
 
@@ -36,7 +36,7 @@ Record spike results and tick milestone items after running their exit checks. L
 | S1 headless contract | `docs/spikes/S1-headless-contract.md` | [x] |
 | S2 plan-limit detection | `docs/spikes/S2-plan-limits.md` | [~] loopback evidence only; no real subscription limit seen |
 | S3 read Gru | `docs/spikes/S3-read-gru.md` | [x] |
-| S4 Claude Design headless | `docs/spikes/S4-claude-design-headless.md` | [ ] live trial pending |
+| S4 Claude Design headless | `docs/spikes/S4-claude-design-headless.md` | [~] first headless trial (2026-11-24): the artifact was created, the upload was refused in print mode; revision and comments untried |
 | S5 synthetic process control | `docs/spikes/S5-windows-process-control.md` | [x] |
 | S6 containment | `docs/spikes/S6-containment.md` | [x] WSL2, Linux and macOS (`srt`), API-key mode; subscription mode and native Windows refused |
 | S7 graph widget | `docs/spikes/S7-graph-widget.md` | [x] |
