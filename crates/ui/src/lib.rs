@@ -2051,7 +2051,8 @@ effort = \"high\"
         let context = egui::Context::default();
         let mut app = App::new(&context, options.clone(), false);
         app.set_snapshot(read(&options));
-        let cases: [(Vec<(&str, bool, bool)>, &[&str], &[&str]); 4] = [
+        type Case<'a> = (Vec<(&'a str, bool, bool)>, &'a [&'a str], &'a [&'a str]);
+        let cases: [Case; 4] = [
             (
                 vec![("robbertpopa", true, true)],
                 &["robbertpopa on github.com (active)", "Connected"],
