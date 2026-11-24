@@ -853,7 +853,11 @@ impl App {
                 }
             });
         }
-        self.busy_inline(ui);
+        // A ticket page and the inbox show the same line beside the button that
+        // started the work; a second one up here would say it twice.
+        if !matches!(self.mode, Mode::Watch | Mode::Today) {
+            self.busy_inline(ui);
+        }
     }
 
     /// A spinner and what is happening, while an action runs. Drawn at the top
@@ -1123,5 +1127,60 @@ impl App {
             backend::check_for_update(ctx.clone(), self.sender.clone());
         }
         ctx.request_repaint_after(UPDATE_EVERY);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{demo, now_ms};
+
+    // Invariant: while an action runs, its words appear once on the ticket
+    // page, beside the work, not again in the page header. A header line plus
+    // a card line said "Making the plan..." twice.
+    #[test]
+    fn the_busy_line_shows_once_on_a_ticket_page() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = crate::backend::Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        crate::backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        demo::seed_build_states(&options.data_dir, now_ms()).unwrap();
+        crate::backend::mark_welcomed(&options.data_dir);
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(crate::backend::read(&options));
+        let id = TicketId::from("demo-approved");
+        app.open(&id);
+        app.running.push(Running {
+            id: 1,
+            ticket: Some(id),
+            what: "Making the plan",
+            starts_ticket: false,
+        });
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1280.0, 4000.0),
+            )),
+            ..Default::default()
+        };
+        let mut output = None;
+        for _ in 0..2 {
+            output = Some(context.run(input.clone(), |context| app.ui(context)));
+        }
+        let mut count = 0;
+        for clipped in output.unwrap().shapes {
+            if let egui::Shape::Text(text) = clipped.shape
+                && text.galley.text() == "Making the plan..."
+            {
+                count += 1;
+            }
+        }
+        assert_eq!(count, 1);
     }
 }
