@@ -1,6 +1,6 @@
 # Rules for agents and people working in this repository
 
-Read this file, then `docs/IMPLEMENTATION-PLAN.md`, then the milestone or spike file you are working on. Replies and commit text are in English.
+Read this file, then `docs/IMPLEMENTATION-PLAN.md`, then the milestone, spike or work-stream file you are working on (`docs/work-streams/`). Replies and commit text are in English.
 
 ## Working method
 
@@ -21,7 +21,7 @@ Read this file, then `docs/IMPLEMENTATION-PLAN.md`, then the milestone or spike 
 
 ## Code
 
-- Rust stable, edition 2024, toolchain pinned in `rust-toolchain.toml`. Windows is the primary platform; Linux must pass too.
+- Rust stable, edition 2024, toolchain pinned in `rust-toolchain.toml`. Windows is the primary platform; Linux and macOS must pass too (CI runs all three).
 - Before each commit: `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings`, `cargo nextest run`, `cargo xtask layers`.
 - Lints: clippy pedantic; `unwrap`, `expect`, `println!`, `dbg!` and `todo!` are denied outside tests. `unsafe` is denied except in the process module that needs Windows APIs, with a `// SAFETY:` comment.
 - Follow the production layers in `docs/IMPLEMENTATION-PLAN.md`. Direct OS subprocess calls belong to `process`. Git, tracker, checks and agent adapters use it through their own launch paths. Only `ui` uses egui. The CLI owns terminal output.

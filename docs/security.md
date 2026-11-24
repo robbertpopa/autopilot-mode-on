@@ -28,7 +28,7 @@
 9. **Inbox files** (requests and answers) live in an owner-only folder and are validated like any input.
 10. **Spike budget** for live tests: $1 in total, dedicated key with a Console spend limit.
 
-## Containment levels (S6 decides what is real on Windows)
+## Containment levels and what is real per platform
 
 | Level | What it is | Status |
 |---|---|---|
@@ -49,6 +49,13 @@
 Set up a distro with `tools/wsl/setup-root.sh`, `setup-user.sh` and `install-hook.sh`. Details, settings and limits: [S6 Linux sandbox in WSL2](spikes/S6-containment.md#linux-sandbox-in-wsl2-srt). The launcher must scrub the environment itself: `srt` passes it through.
 
 The [S6 Windows preflight](spikes/S6-containment.md#windows-mxc-preflight) exercised one MXC profile against synthetic files, a local TCP listener and a child process.
+
+## Open items for the owner
+
+- **Subscription mode inside the sandbox stays refused** (decision 4 in the [overview](work-streams/00-overview.md)). A sign-in the agent can read can be sent to the provider host under someone else's key; `srt` cannot filter that from its JSON config. Real Build and Check use an API key.
+- **Spending cap per call.** An API-mode step whose profile sets no `budget_microusd` runs with a $0.05 `--max-budget-usd` default (`crates/ui/src/backend.rs`). That is too small for Design and Plan on a real repository: both stopped with `error_max_budget_usd` and no result on the first macOS run. Set a higher, deliberate budget per step in the profile; lowering the cost of Plan is task A13 in [stream 2](work-streams/02-agents-and-adapters.md).
+- **Key hygiene.** Use a dedicated key with a Console workspace spend limit and nothing else on it. Rotate it if it ever appears in a log, screenshot, transcript or shell history, and when the spike budget is spent. The app reads it only from `AUTOPILOT_ANTHROPIC_API_KEY` and never stores it.
+- **Subscription sign-in on macOS.** The sign-in check can fail on a Mac because `USER` is missing from the environment allowlist in `crates/accounts`; a fix is in progress in another session and not part of these documents.
 
 ## Reporting
 
