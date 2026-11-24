@@ -27,7 +27,7 @@ pub(crate) fn blurb(step: Step) -> (&'static str, &'static str) {
         ),
         Step::Design => (
             "only for UI changes",
-            "Draws the design as HTML mockups and waits for your approval. Feedback goes back to the same mockups.",
+            "Draws the screens the ticket changes as HTML mockups in your application's own look, then waits for your approval. Feedback goes back to the same mockups.",
         ),
         Step::Plan => ("always runs", "Criteria, each with how it is checked."),
         Step::BuildCheck => (

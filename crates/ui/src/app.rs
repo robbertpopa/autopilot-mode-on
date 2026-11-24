@@ -98,6 +98,10 @@ pub struct App {
     pub(crate) search_selected: usize,
     pub(crate) pipeline_selected: Option<String>,
     pub(crate) pipeline_notice: Option<(bool, String)>,
+    /// A pipeline being made, renamed or deleted on the Pipelines page.
+    pub(crate) pipeline_edit: crate::pipelines::PipelineEdit,
+    /// AI help in progress on the Pipelines and Projects pages.
+    pub(crate) ai: crate::ai_edit::AiState,
     pub(crate) draft_text: String,
     /// The question typed for the advisor on the open ticket.
     pub(crate) advise_text: String,
@@ -236,6 +240,8 @@ impl App {
             search_selected: 0,
             pipeline_selected: None,
             pipeline_notice: None,
+            pipeline_edit: crate::pipelines::PipelineEdit::None,
+            ai: crate::ai_edit::AiState::default(),
             draft_text: String::new(),
             advise_text: String::new(),
             chat_text: String::new(),
@@ -723,6 +729,7 @@ impl App {
         self.auto_orchestrate();
         self.auto_advance();
         self.follow_system_theme(ctx);
+        Self::title_area(ctx);
         if self.is_first_run() {
             self.welcome(ctx);
             return;
