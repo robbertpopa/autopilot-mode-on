@@ -964,7 +964,11 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                     Err("that is a question: answer it instead of approving".to_owned())
                 }
             })?;
-            Ok(if *approve { "Approved" } else { "Rejected" }.to_owned())
+            continue_build(
+                options,
+                ticket,
+                if *approve { "Approved" } else { "Rejected" },
+            )
         }
         Action::SendBack { ticket, note } => {
             answer(directory, ticket, |body| match body {
@@ -976,7 +980,7 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                     Err("that is a question: answer it instead".to_owned())
                 }
             })?;
-            Ok("Sent back with your note".to_owned())
+            continue_build(options, ticket, "Sent back with your note")
         }
         Action::ApproveCorrected {
             ticket,
@@ -991,7 +995,7 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
                     Err("that is a question: answer it instead".to_owned())
                 }
             })?;
-            Ok("Approved with your corrections".to_owned())
+            continue_build(options, ticket, "Approved with your corrections")
         }
         Action::AcceptDefaults { ticket } => {
             answer(directory, ticket, |body| match body {
@@ -1278,6 +1282,18 @@ fn pipeline_for(profile: &autopilot_profile::Profile, workspace: Option<&Path>) 
         .project(&folder.to_string_lossy())
         .and_then(|project| project.default_pipeline.clone())
         .unwrap_or_else(|| autopilot_profile::DEFAULT_PIPELINE.to_owned())
+}
+
+/// An answer to a stuck build only records the decision. The build goes on when
+/// it runs again, which the command line does by being run again; the window
+/// has to start that run itself, or the ticket reads "running" with no worker.
+fn continue_build(options: &Options, ticket: &TicketId, said: &str) -> Result<String, String> {
+    let waiting = autopilot_engine::build_awaits_run(&options.data_dir, ticket)
+        .map_err(|error| error.to_string())?;
+    if !waiting {
+        return Ok(said.to_owned());
+    }
+    crate::build_actions::make_build(options, ticket).map(|outcome| format!("{said}. {outcome}"))
 }
 
 fn answer(

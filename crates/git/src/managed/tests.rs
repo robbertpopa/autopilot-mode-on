@@ -1,8 +1,10 @@
 use std::fs;
 
+use std::time::Duration;
+
 use super::{
-    Error, Ownership, TicketId, read_ownership, registered_checkout, ticket_worktree,
-    write_ownership,
+    Error, Ownership, TicketId, read_ownership, registered_checkout, root_lock_within,
+    ticket_worktree, write_ownership,
 };
 
 #[test]
@@ -53,4 +55,28 @@ fn a_second_reservation_cannot_replace_the_first() {
     assert!(write_ownership(&marker, &first).is_err());
     let stored = read_ownership(&marker).unwrap().unwrap();
     assert_eq!(stored.base, "1111111111111111111111111111111111111111");
+}
+
+#[test]
+fn a_ticket_waits_for_another_tickets_short_operation_on_the_project() {
+    let folder = tempfile::tempdir().unwrap();
+    let held = root_lock_within(folder.path(), Duration::ZERO).unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        drop(held);
+    });
+    // Three tickets of one project start side by side: the one that arrives
+    // while another holds the lock must get its turn, not be interrupted.
+    root_lock_within(folder.path(), Duration::from_secs(10)).unwrap();
+    release.join().unwrap();
+}
+
+#[test]
+fn a_lock_that_is_never_released_still_ends_in_busy() {
+    let folder = tempfile::tempdir().unwrap();
+    let _held = root_lock_within(folder.path(), Duration::ZERO).unwrap();
+    assert!(matches!(
+        root_lock_within(folder.path(), Duration::from_millis(100)),
+        Err(Error::Busy)
+    ));
 }

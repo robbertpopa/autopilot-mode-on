@@ -3,7 +3,7 @@ use std::{
     fs::{File, OpenOptions, TryLockError},
     io::{self, Read},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use autopilot_core::TicketId;
@@ -420,17 +420,32 @@ fn verify_root(repository: &Repository, root: &Path, common: &Path) -> Result<()
     Ok(())
 }
 
+/// How long a ticket waits for another ticket's short operation on the same
+/// project. Tickets of one project run side by side, so a held lock is the
+/// normal case and not a conflict.
+const LOCK_WAIT: Duration = Duration::from_secs(60);
+
 fn root_lock(root: &Path) -> Result<File, Error> {
+    root_lock_within(root, LOCK_WAIT)
+}
+
+fn root_lock_within(root: &Path, wait: Duration) -> Result<File, Error> {
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(root.join(".autopilot-worktrees.lock"))?;
-    match lock.try_lock() {
-        Ok(()) => Ok(lock),
-        Err(TryLockError::WouldBlock) => Err(Error::Busy),
-        Err(TryLockError::Error(error)) => Err(error.into()),
+    let start = Instant::now();
+    loop {
+        match lock.try_lock() {
+            Ok(()) => return Ok(lock),
+            Err(TryLockError::WouldBlock) if start.elapsed() < wait => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(TryLockError::WouldBlock) => return Err(Error::Busy),
+            Err(TryLockError::Error(error)) => return Err(error.into()),
+        }
     }
 }
 

@@ -63,7 +63,7 @@ pub use attachments::{
 };
 pub use autopilot_checks::resolve_executable;
 pub use autopilot_tracker::Repo;
-pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
+pub use build::{BuildOutcome, BuildSetup, Isolation, build_awaits_run, run_build};
 pub use catalog::{ToolSuggestion, allowed_tools, set_tool_allowed, suggest_tools};
 pub use change::{Proposal, Reading, apply_to_project, apply_to_ticket, propose};
 pub use control::{request_pause, request_resume, request_stop};
@@ -729,6 +729,24 @@ pub fn recover(directory: &Path, ticket: &TicketId) -> Result<Vec<Step>, Error> 
         )?;
         last = committed.last().map_or(last, |record| record.seq);
         recovered.push(step);
+    }
+    Ok(recovered)
+}
+
+/// Run [`recover`] for every ticket, as the window does when it opens: nothing
+/// it started in an earlier run can still be working. A ticket another process
+/// is working on is skipped, so a second window never interrupts the first.
+///
+/// # Errors
+/// Returns an error if the ticket list cannot be read.
+pub fn recover_all(directory: &Path) -> Result<Vec<(TicketId, Vec<Step>)>, Error> {
+    let mut recovered = Vec::new();
+    for ticket in view::tickets(directory)? {
+        match recover(directory, &ticket) {
+            Ok(steps) if !steps.is_empty() => recovered.push((ticket, steps)),
+            Ok(_) | Err(Error::Busy) => {}
+            Err(error) => return Err(error),
+        }
     }
     Ok(recovered)
 }

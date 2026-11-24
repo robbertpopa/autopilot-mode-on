@@ -17,9 +17,10 @@ use autopilot_core::{
     Ambiguity, Clarity, Event, Money, OpenQuestion, Ticket, TicketId, Understanding,
 };
 use autopilot_engine::{
-    ClarifyStart, Error, answer_clarify, approved_plan, effective_overrides, effective_when_unsure,
-    override_settings, recover, rerun_understand, reset_step, run_plan, run_understand,
-    run_understand_with, set_when_unsure, start_clarify, sync_inbox, watch,
+    ClarifyStart, Error, answer_clarify, approved_plan, build_awaits_run, effective_overrides,
+    effective_when_unsure, override_settings, recover, recover_all, rerun_understand, reset_step,
+    run_plan, run_understand, run_understand_with, set_when_unsure, start_clarify, sync_inbox,
+    watch,
 };
 use autopilot_pipeline::{
     clarify::Choice,
@@ -469,6 +470,103 @@ fn recover_interrupts_only_attempts_that_were_cut_off() {
 
     let (data, ticket) = understood_and_asking("plain");
     assert_eq!(recover(data.path(), &ticket).unwrap(), vec![]);
+}
+
+fn cut_off_ticket(data: &std::path::Path, id: &str, extra: &[Event]) -> TicketId {
+    use autopilot_core::{AttemptId, NewEvent, Step};
+    use autopilot_store::{SqliteStore, Store};
+    let ticket = TicketId::from(id);
+    let at = |step, kind| NewEvent {
+        at_ms: 1,
+        step,
+        kind,
+    };
+    let mut events = vec![
+        at(None, Event::TicketCreated { title: "t".into() }),
+        at(
+            Some(Step::BuildCheck),
+            Event::StepStarted {
+                attempt: AttemptId::from("build-1"),
+                session: None,
+            },
+        ),
+    ];
+    events.extend(
+        extra
+            .iter()
+            .cloned()
+            .map(|kind| at(Some(Step::BuildCheck), kind)),
+    );
+    SqliteStore::open(data.join("events.sqlite3"))
+        .unwrap()
+        .append(&ticket, 0, &events)
+        .unwrap();
+    ticket
+}
+
+// Invariant: a window that opens after the app was closed mid-build shows no
+// ticket as running: every cut-off step becomes interrupted, and a step that
+// waits for the owner stays waiting. Opening the window without this leaves
+// "Running Build Check" on screen for ever, with nothing behind it.
+#[test]
+fn opening_the_window_interrupts_every_cut_off_ticket_and_keeps_the_waiting_ones() {
+    let data = tempfile::tempdir().unwrap();
+    let cut = cut_off_ticket(data.path(), "cut-1", &[]);
+    let request = autopilot_core::RequestId::from("build_check-stuck-cut-2");
+    let waiting = cut_off_ticket(
+        data.path(),
+        "cut-2",
+        &[Event::Asked {
+            request: request.clone(),
+        }],
+    );
+    let recovered = recover_all(data.path()).unwrap();
+    assert_eq!(
+        recovered,
+        vec![(cut, vec![autopilot_core::Step::BuildCheck])]
+    );
+    assert_eq!(recover_all(data.path()).unwrap(), vec![]);
+    assert!(!matches!(
+        last_kind(data.path(), &waiting),
+        Event::Interrupted { .. }
+    ));
+}
+
+// Invariant: an answer to a stuck build is a pending run, not a finished one.
+// The window starts the run when this says so; a window that never asks leaves
+// the ticket on "Running" with no worker, as the owner saw.
+#[test]
+fn an_answered_stuck_build_awaits_its_run_until_it_is_taken() {
+    let data = tempfile::tempdir().unwrap();
+    let request = autopilot_core::RequestId::from("build_check-stuck-ans-1");
+    let ticket = cut_off_ticket(
+        data.path(),
+        "ans-1",
+        &[Event::Asked {
+            request: request.clone(),
+        }],
+    );
+    assert!(!build_awaits_run(data.path(), &ticket).unwrap());
+    {
+        use autopilot_store::{SqliteStore, Store};
+        let mut store = SqliteStore::open(data.path().join("events.sqlite3")).unwrap();
+        let last = store.events(&ticket, 0).unwrap().last().unwrap().seq;
+        store
+            .append(
+                &ticket,
+                last,
+                &[autopilot_core::NewEvent {
+                    at_ms: 2,
+                    step: Some(autopilot_core::Step::BuildCheck),
+                    kind: Event::Answered {
+                        request,
+                        answer: "\"approve\"".into(),
+                    },
+                }],
+            )
+            .unwrap();
+    }
+    assert!(build_awaits_run(data.path(), &ticket).unwrap());
 }
 
 fn ask_after_change(value: bool) -> Vec<autopilot_core::StepChange> {
