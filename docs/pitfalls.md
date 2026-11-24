@@ -34,6 +34,14 @@ Add an entry whenever something cost time. One line each: the trap, then what to
 - Git can delete the worktree registration after a failed file deletion. Record the removal and move a verified clean checkout aside before dropping its registration. [Git worktree removal](https://github.com/git/git/blob/v2.50.0/builtin/worktree.c#L1293-L1308)
 - Use native backslash paths for external tools; avoid `.cmd` shims without PATHEXT handling.
 
+## Sandbox on a Mac and across platforms
+- Seatbelt matches real paths: `/tmp` is `/private/tmp`, so resolve every path in a profile first. A data folder under `/tmp` is readable by design and the probe fails it on purpose.
+- A default-allow Seatbelt profile is not a boundary: system services such as `cfprefsd` write outside it for the sandboxed process. Use `srt` with its proxy and the 21-row probe instead of a hand-written profile.
+- A relative `--data-dir` (the default `.autopilot`) is refused by the sandbox ("a sandbox path must be absolute"). Pass an absolute folder to `autopilot isolation check`.
+- An API key read from a file with Windows line endings made every request fail until it was trimmed. Trim keys at the one place they are read.
+- A GUI app opened from Finder does not see shell variables such as `AUTOPILOT_ANTHROPIC_API_KEY`; start it from a shell where the variable is exported.
+- `srt` passes the whole environment through, so the launcher scrubs it. Pin the `srt` version and refuse an unvalidated one.
+
 ## Loops and cost
 - A failed build is a normal result, not an error: cap loops on the result's `ok` flag, not on exceptions. (craft-anything)
 - Give a quiet agent an explicit idle deadline and turn it into "Needs you". Gru's five-minute per-read deadline can fire before its 15-minute inactivity check. [S3 findings](spikes/S3-read-gru.md#result)

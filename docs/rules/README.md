@@ -9,7 +9,7 @@ Each rule is a table row: `id | rule | source | check | default severity`.
 - **check**: `lint` (compiler or clippy), `script` (grep, ast-grep, xtask-style script), `tool` (cargo-deny, cargo-machete, a secrets scanner, cargo-mutants), `agent` (needs judgment; the finding must carry evidence).
 - **severity**: `critical`, `high`, `medium`, `low`, `nit`. A project may change it with a reason.
 - Ids are stable: `RC` rust-core, `ST` structure, `CM` comments and docs, `TS` tests, `SE` security, `CS` change shape. Never reuse an id.
-- M9 converts these tables to `rules/*.toml` mechanically; until then the tables are the source of truth.
+- The `rules` crate reads these tables directly, so they stay the one source of truth; there is no `rules/*.toml` copy.
 
 ## What gets in: "only the best advice"
 A rule is included only if it passes all of these:

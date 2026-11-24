@@ -20,6 +20,17 @@ git -C $sample apply --unidiff-zero $patch
 if ($LASTEXITCODE) { throw 'Could not apply the seed' }
 ~~~
 
+The same steps in bash or zsh on Linux and macOS (needs `jq`):
+
+~~~bash
+root=$(git rev-parse --show-toplevel)
+base=$(jq -r .base "$root/fixtures/review/s9/manifest.json")
+sample=$(mktemp -d "${TMPDIR:-/tmp}/autopilot-s9-XXXXXX")
+git -C "$root" worktree add --detach "$sample" "$base"
+git -C "$sample" apply --check --unidiff-zero "$root/fixtures/review/s9/seed.patch"
+git -C "$sample" apply --unidiff-zero "$root/fixtures/review/s9/seed.patch"
+~~~
+
 Use only the paths under `sources` as model input. Their line counts and SHA-256 digests describe the seeded files after CRLF-to-LF normalization. Keep this directory, the seed patch, the manifest and the base checkout out of the reviewer's and verifier's view. Any verification test results should cite behavior in the seeded copy.
 
 ## Score a run
