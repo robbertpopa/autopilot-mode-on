@@ -57,3 +57,10 @@ The ticket flow, from the command line and from the window: **Understand, Clarif
 ## Merge order
 
 Streams 1 and 2 first touch different crates and can merge in any order. Stream 3 starts with a document and a probe row, which is safe at any time. Stream 4 reads data that streams 1 and 2 produce: build its screens against the types that already exist, and add the new ones when those merge. Rebase often; the last stream to merge resolves conflicts.
+
+## Process notes (owner)
+
+- A clean test start needs the native folder picker (`rfd`, Windows and macOS), so a fresh run cannot be scripted past choosing a project folder. Until a path can be given another way (a W-task if the owner wants it), test starts use a project that already exists in the profile.
+- `docs/UI-REDESIGN.md` and `docs/WORK-PACKAGES.md` are local-only files and are out of date. Do not commit them; the owner updates them or retires them.
+- Seven stray worktrees from earlier parallel runs can be removed: `autopilot-wt-b1`, `autopilot-wt-b2`, `autopilot-wt-rel`, `autopilot-wt-l`, `autopilot-wt-c`, `autopilot-wt-real`, `autopilot-wt-par`. Note only: the owner deletes them (`git worktree list`, then `git worktree remove`).
+- The scenarios the owner asked for are in [owner-scenarios.md](owner-scenarios.md); stream 4 task W17 owns them.
