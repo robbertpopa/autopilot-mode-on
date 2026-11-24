@@ -344,6 +344,8 @@ impl App {
         self.story(ui, &view);
         ui.add_space(6.0);
         self.build_panel(ui, &view);
+        // The pull request feedback card (stream 1) is drawn here, below the
+        // checks it follows from.
         self.files_panel(ui, &view);
     }
 

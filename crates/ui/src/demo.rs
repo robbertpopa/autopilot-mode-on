@@ -326,10 +326,12 @@ fn build_stopped(store: &mut SqliteStore, directory: &Path, at: u64) -> io::Resu
     run.start(Step::BuildCheck, 1000)?;
     run.put(build, Event::RoundStarted { round: 1 }, 100)?;
     run.check("build, fmt, clippy", true, "", 4 * MINUTE)?;
-    let note = "tests: midnight failed";
-    run.check("tests", false, note, 20_000)?;
+    run.check("tests", true, "", 20_000)?;
+    run.cost(Step::BuildCheck, 30_000, false)?;
+    let note = "2 finding(s) at 80% or above from 4 reviewers:\nrecordings.rs:41 [bug, 92%] a recording that starts at midnight is filed under the previous day\nrecordings.rs:77 [tests, 84%] no test covers a change of timezone";
+    run.check("review", false, note, 5_000)?;
     run.cost(Step::BuildCheck, 240_000, true)?;
-    let action = "the build needs you. Last failure: tests: midnight failed. Approve (or edit to add a note) to give it more rounds, or reject to stop";
+    let action = "the build needs you. Last failure: review: 2 finding(s) at 80% or above from 4 reviewers:. Approve (or edit to add a note) to give it more rounds, or reject to stop";
     ask(&mut run, directory, Step::BuildCheck, "demo-stuck", action).map(|_| ())
 }
 

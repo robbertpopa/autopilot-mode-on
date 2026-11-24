@@ -1899,7 +1899,7 @@ effort = \"high\"
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::pos2(0.0, 0.0),
-                egui::vec2(width, 920.0),
+                egui::vec2(width, 4000.0),
             )),
             ..Default::default()
         };
@@ -1936,7 +1936,13 @@ effort = \"high\"
             ),
             (
                 "demo-stopped",
-                &["Build"],
+                &[
+                    "Build",
+                    "Round 1",
+                    "recordings.rs:41 [bug, 92%] a recording that starts at midnight",
+                    "recordings.rs:77 [tests, 84%]",
+                    "$0.03",
+                ],
                 &["Open the pull request", "Ask to open a pull request"],
             ),
             (
