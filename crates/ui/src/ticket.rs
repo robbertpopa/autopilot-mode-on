@@ -83,15 +83,24 @@ fn ago(ms: u64) -> String {
 
 /// The sub-steps of a step, ticked as they happen. They stay after it ends.
 pub(crate) fn sub_step_list(ui: &mut egui::Ui, view: &TicketView, step: Step) {
+    use autopilot_engine::SubState;
     for item in autopilot_engine::sub_steps(view, step) {
-        let (mark, color) = match (item.done, item.ok) {
-            (true, true) => ("✔", theme::GREEN()),
-            (true, false) => ("×", theme::RED()),
-            (false, _) => ("○", theme::TEXT_MUTED()),
+        let (mark, color, note) = match &item.state {
+            SubState::Done => ("✔", theme::GREEN(), None),
+            SubState::Active => ("▶", theme::BLUE_TEXT(), Some("in progress".to_owned())),
+            SubState::Pending => ("○", theme::TEXT_MUTED(), None),
+            SubState::Failed => ("×", theme::RED(), None),
+            SubState::Stopped(reason) => ("■", theme::RED(), Some(format!("stopped: {reason}"))),
+            SubState::Skipped(reason) => {
+                ("–", theme::TEXT_MUTED(), Some(format!("skipped: {reason}")))
+            }
         };
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(mark).color(color));
             ui.label(theme::muted(item.text));
+            if let Some(note) = note {
+                ui.label(RichText::new(note).color(color));
+            }
         });
     }
 }
@@ -455,7 +464,11 @@ impl App {
     fn story(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         let mut open = None;
         for card in &view.steps {
-            if matches!(card.state, StepState::Idle) {
+            // A step that has not started is listed only when it is next, with
+            // its plan, so the owner sees what it will do before it does it.
+            if matches!(card.state, StepState::Idle)
+                && current_step(view).is_none_or(|next| next.step != card.step)
+            {
                 continue;
             }
             // Build shows its rounds in the build panel below.
@@ -486,12 +499,25 @@ impl App {
                             && crate::run::pull_request_approved(view);
                         ui.label(theme::muted(if approved {
                             "approved, not opened yet".to_owned()
+                        } else if matches!(card.state, StepState::Idle) {
+                            "waiting".to_owned()
                         } else {
                             state_text(&card.state)
                         }));
                     });
                     if let Some(short) = &card.in_short {
                         ui.label(short);
+                    }
+                    // The step's plan, ticked from the log; open for the step
+                    // that is on now, closed for the rest.
+                    if !skipped {
+                        egui::CollapsingHeader::new(theme::muted("Plan"))
+                            .id_salt((view.id.as_str(), card.step.as_str(), "plan"))
+                            .default_open(
+                                card.state.is_active()
+                                    || current_step(view).is_some_and(|now| now.step == card.step),
+                            )
+                            .show(ui, |ui| sub_step_list(ui, view, card.step));
                     }
                 });
             let rect = shown.response.rect;

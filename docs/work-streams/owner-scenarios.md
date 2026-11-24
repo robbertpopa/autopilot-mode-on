@@ -24,6 +24,8 @@ Tick a scenario with the date and commit once it passed. Never tick one from a t
 
 ## Scenario B: a detailed plan on every step
 
+**Built (macOS, not yet run by hand):** every step has a fixed ordered plan (`engine::live::sub_steps`), ticked only from recorded events (`TicketView.facts`), shown as a collapsible Plan under each step on the ticket page (open for the step that is on and the one that is next), in the step's own page, and under the live status line. Item states: pending, in progress, done, failed, stopped here (with the reason), skipped (with the reason). Elapsed time counts from the step's latest start. **Not built:** step 4 (an agent adding or dropping items): plans are fixed per step kind, the Build list grows by round and check as they report.
+
 - [ ] **B. Pass date and commit:** _not run_
 
 1. **Start a ticket.** Start a ticket in a project with the default pipeline. *Expect:* before any step runs, each step already shows its planned checklist (what it will do, in order), not just a name.
