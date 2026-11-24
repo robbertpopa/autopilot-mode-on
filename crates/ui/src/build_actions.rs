@@ -116,6 +116,18 @@ fn practice_agent(guardian: PathBuf, hook: BuildConfig) -> Result<ClaudeAgent, S
         .with_build(hook))
 }
 
+/// Discover the Linux side and run the escape probe, the same way for Build and
+/// for the Sandbox page. The probe takes about five seconds, so callers run it
+/// off the window's thread. The error is the raw reason, row by row.
+pub(crate) fn probe_sandbox(
+    options: &Options,
+) -> Result<autopilot_agent_claude::Validated, String> {
+    let distro = std::env::var("AUTOPILOT_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_owned());
+    let folder = options.data_dir.join("sandbox");
+    autopilot_agent_claude::sandbox_boundary(&distro, &folder, &guardian())
+        .map_err(|error| error.to_string())
+}
+
 /// The real agent, inside the Linux boundary. Every way this can be refused has
 /// its own sentence, because the owner reads it where they pressed the button.
 fn claude_build_agent(
@@ -140,17 +152,12 @@ fn claude_build_agent(
             autopilot_agent_claude::API_KEY_SOURCE
         ));
     }
-    let distro = std::env::var("AUTOPILOT_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_owned());
-    let folder = options.data_dir.join("sandbox");
-    // This runs a probe of about five seconds. It is on the action's thread, so
-    // the window stays responsive, and a failure says which rows failed.
-    let boundary =
-        autopilot_agent_claude::sandbox_boundary(&distro, &folder, &guardian).map_err(|error| {
-            format!(
-                "The Linux sandbox is not ready, so Build stays off: {error}. Set it up with \
-                 tools/wsl (docs/spikes/S6-containment.md)."
-            )
-        })?;
+    let boundary = probe_sandbox(options).map_err(|error| {
+        format!(
+            "The Linux sandbox is not ready, so Build stays off: {error}. Set it up with \
+             tools/wsl (docs/spikes/S6-containment.md)."
+        )
+    })?;
     let sandbox = Sandbox {
         boundary: boundary.clone(),
         config_root: options.data_dir.join("claude-config"),

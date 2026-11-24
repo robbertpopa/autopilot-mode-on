@@ -34,6 +34,7 @@ pub enum Mode {
     Watch,
     Cost,
     Accounts,
+    Sandbox,
 }
 
 /// Which tickets the window drives by itself, and what it already started.
@@ -166,6 +167,7 @@ pub struct App {
     watching: bool,
     next_update_check: Option<std::time::Instant>,
     pub(crate) accounts: Option<autopilot_accounts::Accounts>,
+    pub(crate) sandbox: crate::sandbox::Probe,
     /// The API key is saved in the user environment (maybe after this start).
     pub(crate) key_saved: bool,
     /// Who Git signs commits as, read from the global Git settings.
@@ -278,6 +280,7 @@ impl App {
             watching: watch,
             next_update_check: None,
             accounts: None,
+            sandbox: crate::sandbox::Probe::Unknown,
             key_saved: false,
             git_identity: None,
             git_edit: None,
@@ -457,6 +460,7 @@ impl App {
             ("design", _) => self.mode = Mode::Design,
             ("checks", _) => self.mode = Mode::Checks,
             ("look", _) => self.mode = Mode::Look,
+            ("sandbox", _) => self.mode = Mode::Sandbox,
             ("board", _) => self.mode = Mode::Board,
             ("projects", _) => self.mode = Mode::Projects,
             ("pipelines", _) => self.mode = Mode::Pipelines,
@@ -667,6 +671,12 @@ impl App {
                     ));
                 }
                 Message::Accounts(accounts) => self.accounts = Some(*accounts),
+                Message::Sandbox(outcome) => {
+                    self.sandbox = match outcome {
+                        Ok(()) => crate::sandbox::Probe::Ready,
+                        Err(refusal) => crate::sandbox::Probe::Refused(refusal),
+                    };
+                }
                 Message::KeySaved(saved) => self.key_saved = saved,
                 Message::GitIdentity(identity) => self.git_identity = Some(identity),
                 Message::Update(Ok(found)) => self.update = found,
@@ -788,6 +798,7 @@ impl App {
                                     Mode::Watch => self.watch_screen(ui),
                                     Mode::Cost => self.cost_screen(ui),
                                     Mode::Accounts => self.accounts_screen(ui),
+                                    Mode::Sandbox => self.sandbox_screen(ui),
                                 }
                             });
                         });
@@ -914,6 +925,7 @@ impl App {
                 (Mode::Review, "Pipeline review"),
                 (Mode::Checks, "Checks"),
                 (Mode::Accounts, "Accounts"),
+                (Mode::Sandbox, "Sandbox"),
                 (Mode::Look, "Look"),
             ],
         );
