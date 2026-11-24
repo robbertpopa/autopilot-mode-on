@@ -31,7 +31,7 @@ Two further ideas, from the open-source Craft Agents app (take the ideas, not th
 
 ## The rest of the sandbox (independent of computer use; do in any order)
 
-- [ ] **S-a. A CI job for the Linux-host probe.** GitHub's Ubuntu runner can install `bubblewrap socat ripgrep python3` and Node, install `srt`, and run the ignored Linux-host probe test. Today CI never runs a real probe. *Exit:* a green job in `.github/workflows`, or a written reason it cannot work (user namespaces on the runner).
+- [x] **S-a. A CI job for the Linux-host probe.** GitHub's Ubuntu runner can install `bubblewrap socat ripgrep python3` and Node, install `srt`, and run the ignored Linux-host probe test. Today CI never runs a real probe. *Exit:* a green job in `.github/workflows`, or a written reason it cannot work (user namespaces on the runner).
 - [ ] **S-b. A `doctor` command.** `autopilot isolation check` runs discovery and the probe and prints each row, so the window and a person can see why Build is refused without starting a ticket. (The window part is stream 4; ask there.)
 - [ ] **S-c. Pin the tools.** `tools/wsl/setup-user.sh` installs `srt` and Claude Code unpinned. Record the versions the probe was validated with in the probe output, refuse a version that has not been validated, and write the update procedure (re-run the probe, then bump the validated list).
 - [ ] **S-d. macOS.** Needs a Mac. Seatbelt has no network namespace and treats loopback and Unix sockets differently, so the probe rows must be rewritten for it, not reused. Until then it stays refused with its reason.
