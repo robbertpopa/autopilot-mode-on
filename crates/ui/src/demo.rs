@@ -224,6 +224,181 @@ fn failed(store: &mut SqliteStore, at: u64) -> io::Result<()> {
     run.put(Some(Step::Understand), Event::Failed { reason }, 45_000)
 }
 
+/// A ticket whose plan is approved: the history every build state starts from.
+fn approved<'a>(
+    store: &'a mut SqliteStore,
+    id: &str,
+    title: &str,
+    at: u64,
+) -> io::Result<(Writer<'a>, Option<Step>)> {
+    let mut run = Writer {
+        store,
+        ticket: TicketId::from(id),
+        last: 0,
+        at,
+    };
+    run.put(
+        None,
+        Event::TicketCreated {
+            title: title.into(),
+        },
+        0,
+    )?;
+    run.start(Step::Understand, 1000)?;
+    // Each ticket predicts its own file, so the samples do not warn about one
+    // another: a warning here would look like a fault in the page.
+    let file = format!("{id}.rs");
+    let result = understanding(
+        "Show recording times in the organiser's timezone",
+        &[file.as_str()],
+    );
+    run.put(
+        Some(Step::Understand),
+        Event::UnderstandResult { result },
+        20_000,
+    )?;
+    run.finish(Step::Understand, 100)?;
+    for (step, reason) in [
+        (Step::Clarify, "no open questions"),
+        (Step::Design, "no UI change"),
+    ] {
+        let reason = reason.into();
+        run.put(Some(step), Event::StepSkipped { reason }, 500)?;
+    }
+    run.start(Step::Plan, 500)?;
+    run.put(
+        Some(Step::Plan),
+        Event::PlanResult { plan: plan() },
+        200_000,
+    )?;
+    let sha256 = "demo".into();
+    run.put(Some(Step::Plan), Event::PlanApproved { sha256 }, 30_000)?;
+    run.finish(Step::Plan, 100)?;
+    Ok((run, Some(Step::BuildCheck)))
+}
+
+fn ask(
+    run: &mut Writer<'_>,
+    directory: &Path,
+    step: Step,
+    name: &str,
+    action: &str,
+) -> io::Result<RequestId> {
+    let request = RequestId::from(name);
+    let asked = Event::Asked {
+        request: request.clone(),
+    };
+    run.put(Some(step), asked, 100)?;
+    Inbox::in_data_dir(directory)
+        .write_request(&Request {
+            id: request.clone(),
+            ticket: run.ticket.clone(),
+            body: RequestBody::Approval {
+                action: action.into(),
+                forced: true,
+            },
+        })
+        .map_err(failure)?;
+    Ok(request)
+}
+
+fn passed_build(run: &mut Writer<'_>) -> io::Result<()> {
+    run.start(Step::BuildCheck, 1000)?;
+    run.put(
+        Some(Step::BuildCheck),
+        Event::RoundStarted { round: 1 },
+        100,
+    )?;
+    run.check("build, fmt, clippy", true, "", 4 * MINUTE)?;
+    run.check("tests", true, "", 20_000)?;
+    run.cost(Step::BuildCheck, 180_000, true)?;
+    run.finish(Step::BuildCheck, 100)
+}
+
+/// Plan approved, Build not started.
+fn plan_approved(store: &mut SqliteStore, at: u64) -> io::Result<()> {
+    approved(store, "demo-approved", "Plan approved", at).map(|_| ())
+}
+
+/// Build ran out of rounds and asks the owner.
+fn build_stopped(store: &mut SqliteStore, directory: &Path, at: u64) -> io::Result<()> {
+    let (mut run, build) = approved(store, "demo-stopped", "Build stopped", at)?;
+    run.start(Step::BuildCheck, 1000)?;
+    run.put(build, Event::RoundStarted { round: 1 }, 100)?;
+    run.check("build, fmt, clippy", true, "", 4 * MINUTE)?;
+    run.check("tests", true, "", 20_000)?;
+    run.cost(Step::BuildCheck, 30_000, false)?;
+    let note = "2 finding(s) at 80% or above from 4 reviewers:\nrecordings.rs:41 [bug, 92%] a recording that starts at midnight is filed under the previous day\nrecordings.rs:77 [tests, 84%] no test covers a change of timezone";
+    run.check("review", false, note, 5_000)?;
+    run.cost(Step::BuildCheck, 240_000, true)?;
+    let action = "the build needs you. Last failure: review: 2 finding(s) at 80% or above from 4 reviewers:. Approve (or edit to add a note) to give it more rounds, or reject to stop";
+    ask(&mut run, directory, Step::BuildCheck, "demo-stuck", action).map(|_| ())
+}
+
+/// Build passed, nothing asked about a pull request yet.
+fn build_passed(store: &mut SqliteStore, at: u64) -> io::Result<()> {
+    let (mut run, _) = approved(store, "demo-passed", "Build passed", at)?;
+    passed_build(&mut run)
+}
+
+const PUBLISH: &str =
+    "publish a draft pull request: push ticket/demo at 1a2b3c4d to example/demo, base main";
+
+/// The owner is asked to approve one commit.
+fn pull_request_asked(store: &mut SqliteStore, directory: &Path, at: u64) -> io::Result<()> {
+    let (mut run, _) = approved(store, "demo-asked", "Pull request asked", at)?;
+    passed_build(&mut run)?;
+    run.start(Step::PullRequest, 500)?;
+    ask(
+        &mut run,
+        directory,
+        Step::PullRequest,
+        "demo-publish",
+        PUBLISH,
+    )
+    .map(|_| ())
+}
+
+/// The owner approved; the push has not happened.
+fn approved_not_opened(store: &mut SqliteStore, directory: &Path, at: u64) -> io::Result<()> {
+    let (mut run, _) = approved(store, "demo-approved-pr", "Approved, not opened", at)?;
+    passed_build(&mut run)?;
+    run.start(Step::PullRequest, 500)?;
+    let request = ask(
+        &mut run,
+        directory,
+        Step::PullRequest,
+        "demo-publish-2",
+        PUBLISH,
+    )?;
+    let answer = "approve".into();
+    run.put(
+        Some(Step::PullRequest),
+        Event::Answered { request, answer },
+        5_000,
+    )
+}
+
+/// The draft pull request exists.
+fn opened(store: &mut SqliteStore, directory: &Path, at: u64) -> io::Result<()> {
+    let (mut run, _) = approved(store, "demo-opened", "Pull request opened", at)?;
+    passed_build(&mut run)?;
+    run.start(Step::PullRequest, 500)?;
+    let request = ask(
+        &mut run,
+        directory,
+        Step::PullRequest,
+        "demo-publish-3",
+        PUBLISH,
+    )?;
+    let answer = "approve".into();
+    let pull = Some(Step::PullRequest);
+    run.put(pull, Event::Answered { request, answer }, 5_000)?;
+    let summary = "Draft pull request #12: https://github.com/example/demo/pull/12".into();
+    run.put(pull, Event::AgentActivity { summary }, 3_000)?;
+    run.finish(Step::PullRequest, 100)
+}
+
 /// A file that marks a data folder as holding sample tickets.
 pub const MARKER: &str = "sample-data.txt";
 
@@ -248,6 +423,29 @@ pub fn seed(directory: &Path, now_ms: u64) -> io::Result<()> {
     building(&mut store, ago(17))?;
     waiting(&mut store, directory, ago(25))?;
     failed(&mut store, ago(90))
+}
+
+/// Add one sample ticket for each state of Build and the pull request: plan
+/// approved, build stopped for the owner, build passed, pull request asked,
+/// approved but not opened, and opened. A data folder that already has them is
+/// left alone.
+///
+/// # Errors
+/// Returns an error if the data directory cannot be written.
+pub fn seed_build_states(directory: &Path, now_ms: u64) -> io::Result<()> {
+    std::fs::create_dir_all(directory)?;
+    let mut store = SqliteStore::open(directory.join("events.sqlite3")).map_err(failure)?;
+    let known = store.tickets().map_err(failure)?;
+    if known.contains(&TicketId::from("demo-approved")) {
+        return Ok(());
+    }
+    let ago = |minutes: u64| now_ms.saturating_sub(minutes * MINUTE);
+    plan_approved(&mut store, ago(40))?;
+    build_stopped(&mut store, directory, ago(55))?;
+    build_passed(&mut store, ago(65))?;
+    pull_request_asked(&mut store, directory, ago(75))?;
+    approved_not_opened(&mut store, directory, ago(85))?;
+    opened(&mut store, directory, ago(120))
 }
 
 #[cfg(test)]
@@ -275,5 +473,22 @@ mod tests {
         let build = load_ticket(directory.path(), &TicketId::from("demo-timezone")).unwrap();
         assert_eq!(build.rounds.len(), 2);
         assert!(build.rounds[0].failure().is_some());
+    }
+
+    // Invariant: each added ticket reads as the state its name says, so a card
+    // drawn for it is not describing some other state.
+    #[test]
+    fn the_build_states_fold_into_the_states_they_are_named_for() {
+        let directory = tempfile::tempdir().unwrap();
+        seed_build_states(directory.path(), 10_000_000_000).unwrap();
+        seed_build_states(directory.path(), 10_000_000_000).unwrap();
+        assert_eq!(tickets(directory.path()).unwrap().len(), 6);
+        let view = |name: &str| load_ticket(directory.path(), &TicketId::from(name)).unwrap();
+        assert_eq!(view("demo-stopped").badge, Badge::NeedsYou);
+        assert_eq!(view("demo-asked").badge, Badge::NeedsYou);
+        assert_eq!(view("demo-opened").badge, Badge::Done);
+        assert!(view("demo-approved-pr").asking.is_none());
+        assert!(view("demo-passed").asking.is_none());
+        assert_eq!(view("demo-approved").badge, Badge::Idle);
     }
 }

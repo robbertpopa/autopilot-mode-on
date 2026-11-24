@@ -125,6 +125,11 @@ enum Command {
         #[arg(long)]
         gh_path: Option<PathBuf>,
     },
+    /// Look at a published pull request.
+    Pr {
+        #[command(subcommand)]
+        action: PrAction,
+    },
     /// Read a project folder into its card (top-level files only, nothing is
     /// run) and show the card and what changed since the last scan.
     Know {
@@ -143,6 +148,11 @@ enum Command {
     Inbox {
         #[command(subcommand)]
         action: InboxAction,
+    },
+    /// Check the Linux sandbox a real agent runs in.
+    Isolation {
+        #[command(subcommand)]
+        action: IsolationAction,
     },
     /// Mark an attempt left running by a dead process as interrupted.
     Recover { ticket: String },
@@ -196,6 +206,29 @@ enum Command {
         #[arg(long)]
         follow: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum PrAction {
+    /// One pass: read the pull request and name the next action. Changes nothing.
+    Watch {
+        ticket: String,
+        /// The project's Git repository.
+        #[arg(long)]
+        repo: PathBuf,
+        /// The GitHub repository, as owner/name.
+        #[arg(long)]
+        github: String,
+        /// Absolute path to gh. Defaults to a PATH search.
+        #[arg(long)]
+        gh_path: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum IsolationAction {
+    /// Run the escape probe and print every row. Exits with an error if any row fails.
+    Check,
 }
 
 #[derive(Subcommand)]
@@ -391,6 +424,19 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             serde_json::to_writer(&mut out, &result)?;
             writeln!(out)?;
         }
+        Command::Pr {
+            action:
+                PrAction::Watch {
+                    ticket,
+                    repo,
+                    github,
+                    gh_path,
+                },
+        } => {
+            let result = pr_watch_command(&cli.data_dir, &ticket, &repo, &github, gh_path)?;
+            serde_json::to_writer(&mut out, &result)?;
+            writeln!(out)?;
+        }
         Command::Know { workspace } => {
             let path = workspace.to_string_lossy().into_owned();
             let (_, info) = autopilot_engine::get_to_know(&cli.data_dir, &path)?;
@@ -426,6 +472,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             run_override(&mut out, &cli.data_dir, &ticket, scope, step, change)?;
         }
         Command::Inbox { action } => run_inbox(&mut out, &cli.data_dir, action)?,
+        Command::Isolation {
+            action: IsolationAction::Check,
+        } => run_isolation(&mut out, &cli.data_dir)?,
         Command::Status { ticket, json } => {
             let events = autopilot_engine::watch(&cli.data_dir, &TicketId::from(ticket), 0)?;
             let state = fold(&events)?;
@@ -586,6 +635,46 @@ fn ci_command(
             }
         },
     )
+}
+
+fn pr_watch_command(
+    data_dir: &Path,
+    ticket: &str,
+    repo_path: &Path,
+    github: &str,
+    gh_path: Option<PathBuf>,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let repo = autopilot_tracker::Repo::parse(github)?;
+    let exe = env::current_exe()?;
+    let guardian = exe.with_file_name(format!(
+        "autopilot-process-guardian{}",
+        env::consts::EXE_SUFFIX
+    ));
+    let program = match gh_path {
+        Some(path) => path,
+        None => {
+            autopilot_engine::resolve_executable("gh", &env::var_os("PATH").unwrap_or_default())
+                .ok_or("gh was not found on PATH; pass --gh-path")?
+        }
+    };
+    let gh = autopilot_tracker::Gh::new(program, guardian.clone(), repo, env::vars_os())?;
+    let watch = autopilot_engine::watch_pull_request(
+        data_dir,
+        &TicketId::from(ticket),
+        repo_path,
+        &guardian,
+        &gh,
+    )?;
+    let action = watch.action.map(|action| match action {
+        autopilot_engine::PrAction::ResolveConflicts => "resolve_conflicts",
+        autopilot_engine::PrAction::FixReviewFeedback => "fix_review_feedback",
+        autopilot_engine::PrAction::FixFailingChecks => "fix_failing_checks",
+        autopilot_engine::PrAction::Unsynced => "unsynced",
+    });
+    Ok(serde_json::json!({
+        "pull_request": watch.number, "url": watch.url,
+        "action": action, "trusted_comments": watch.feedback
+    }))
 }
 
 struct PublishRequest<'a> {
@@ -779,6 +868,38 @@ fn wsl_boundary(data_dir: &Path, guardian: &Path) -> Result<Validated, Box<dyn E
     };
     autopilot_agent_claude::sandbox_boundary(&distro, &folder, guardian)
         .map_err(|error| refused(&error))
+}
+
+fn run_isolation(out: &mut impl Write, data_dir: &Path) -> Result<(), Box<dyn Error>> {
+    let exe = env::current_exe()?;
+    let guardian = exe.with_file_name(format!(
+        "autopilot-process-guardian{}",
+        env::consts::EXE_SUFFIX
+    ));
+    let distro = env::var("AUTOPILOT_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_owned());
+    let report =
+        autopilot_agent_claude::sandbox_report(&distro, &data_dir.join("sandbox"), &guardian)?;
+    write_isolation_report(out, &report)?;
+    if report.failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("the sandbox failed {} check(s)", report.failures.len()).into())
+    }
+}
+
+fn write_isolation_report(
+    out: &mut impl Write,
+    report: &autopilot_agent_claude::SandboxReport,
+) -> io::Result<()> {
+    writeln!(out, "tools: {}", report.versions)?;
+    for row in &report.rows {
+        let verdict = if row.ok { "ok  " } else { "FAIL" };
+        writeln!(out, "{verdict} {} {}", row.role, row.row)?;
+    }
+    for failure in &report.failures {
+        writeln!(out, "failure: {failure}")?;
+    }
+    Ok(())
 }
 
 fn claude_agent(exe: &Path, config: ClaudeConfig) -> Result<ClaudeAgent, Box<dyn Error>> {
@@ -1038,4 +1159,39 @@ fn read_ticket(path: &Path) -> Result<Ticket, Box<dyn Error>> {
         return Err("ticket file exceeds 1 MiB".into());
     }
     Ok(serde_json::from_slice(&input)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use autopilot_agent_claude::{SandboxReport, SandboxRow};
+
+    use super::write_isolation_report;
+
+    // Invariant: a failing row is printed as FAIL next to the tool versions, so
+    // a person can see which row refuses Build. A change that breaks it:
+    // printing only the failure strings, which carry no passing rows. No other
+    // test reads this output.
+    #[test]
+    fn the_report_names_the_failing_row_and_the_tool_versions() {
+        let row = |row, ok| SandboxRow {
+            role: "agent",
+            row,
+            ok,
+        };
+        let report = SandboxReport {
+            versions: "srt 0.0.83, bubblewrap 0.9.0, claude unknown".to_owned(),
+            rows: vec![row("write-sibling", true), row("loopback", false)],
+            failures: vec!["agent: loopback was allowed".to_owned()],
+        };
+        let mut out = Vec::new();
+        write_isolation_report(&mut out, &report).expect("writes");
+        let text = String::from_utf8(out).expect("utf8");
+        assert!(text.contains("tools: srt 0.0.83"), "{text}");
+        assert!(text.contains("ok   agent write-sibling"), "{text}");
+        assert!(text.contains("FAIL agent loopback"), "{text}");
+        assert!(
+            text.contains("failure: agent: loopback was allowed"),
+            "{text}"
+        );
+    }
 }

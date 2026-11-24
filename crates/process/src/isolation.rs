@@ -24,8 +24,15 @@ use crate::{
     wsl::{Boundary, CARGO_CREDENTIALS, Host, NODE_ROOTS, RUST_ROOTS, Wsl},
 };
 
+/// The variable that carries the dedicated key into an agent's environment.
+pub const API_KEY: &str = "ANTHROPIC_API_KEY";
+
 /// The one host an agent may reach.
 pub const PROVIDER: &str = "api.anthropic.com";
+
+/// Where the installed deny hook lives, under the home folder
+/// (`tools/wsl/install-hook.sh`).
+const HOOK_ROOT: &str = ".autopilot/bin";
 
 /// What a sandboxed command is for. Each role opens a different set of folders.
 #[derive(Clone, Debug)]
@@ -38,11 +45,18 @@ pub enum Role {
     /// crate registry hosts and writes only the registry cache; it runs no
     /// project code.
     Fetch { worktree: PathBuf, tmp: PathBuf },
+    /// `npm ci --ignore-scripts` before the checks. It reaches the npm registry
+    /// and writes the npm cache and the project's `node_modules`. Install
+    /// scripts are off, so no package's own code runs here.
+    FetchNode { worktree: PathBuf, tmp: PathBuf },
 }
 
 /// Where `cargo fetch` may go. The agent controls the project's Cargo files, so
 /// the list is fixed here, not read from them.
 pub const REGISTRY: &[&str] = &["index.crates.io", "static.crates.io", "crates.io"];
+
+/// The npm registry, fixed here for the same reason.
+pub const NPM_REGISTRY: &[&str] = &["registry.npmjs.org"];
 
 /// A boundary that passed the probe on this machine. It cannot be built any
 /// other way.
@@ -85,19 +99,34 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
     match role {
         Role::Agent { worktree, config } => Boundary {
             write: vec![worktree.clone(), config.clone()],
-            read: NODE_ROOTS.iter().map(|root| wsl.under_home(root)).collect(),
+            // The hook's folder is readable and, being outside every writable
+            // root, not writable: an agent runs the hook but cannot replace it.
+            read: NODE_ROOTS
+                .iter()
+                .chain(&[HOOK_ROOT])
+                .map(|root| wsl.under_home(root))
+                .collect(),
             protect: vec![worktree.join(".git")],
             hide: Vec::new(),
             domains: vec![PROVIDER.to_owned()],
             tmp: Some(config.join("tmp")),
+            // The dedicated key is the one secret the agent is given. It sees a
+            // placeholder; only the proxy holds the real value, and only sends
+            // it to the provider.
+            mask_env: vec![API_KEY.to_owned()],
         },
         Role::Check { worktree, tmp } => Boundary {
             write: vec![worktree.clone()],
-            read: RUST_ROOTS.iter().map(|root| wsl.under_home(root)).collect(),
+            read: RUST_ROOTS
+                .iter()
+                .chain(NODE_ROOTS)
+                .map(|root| wsl.under_home(root))
+                .collect(),
             protect: vec![worktree.join(".git")],
             hide: vec![wsl.under_home(CARGO_CREDENTIALS)],
             domains: Vec::new(),
             tmp: Some(tmp.clone()),
+            mask_env: Vec::new(),
         },
         Role::Fetch { worktree, tmp } => Boundary {
             write: vec![
@@ -110,6 +139,16 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
             hide: vec![wsl.under_home(CARGO_CREDENTIALS)],
             domains: REGISTRY.iter().map(|host| (*host).to_owned()).collect(),
             tmp: Some(tmp.clone()),
+            mask_env: Vec::new(),
+        },
+        Role::FetchNode { worktree, tmp } => Boundary {
+            write: vec![worktree.clone(), wsl.under_home(".npm")],
+            read: NODE_ROOTS.iter().map(|root| wsl.under_home(root)).collect(),
+            protect: vec![worktree.join(".git")],
+            hide: Vec::new(),
+            domains: NPM_REGISTRY.iter().map(|host| (*host).to_owned()).collect(),
+            tmp: Some(tmp.clone()),
+            mask_env: Vec::new(),
         },
     }
 }
@@ -120,22 +159,76 @@ pub(crate) fn boundary(wsl: &Wsl, role: &Role) -> Boundary {
 /// Returns an error naming each row that did not behave as expected, or the
 /// setup step that failed. The boundary is then unusable.
 pub fn validate(wsl: Wsl, work: &Path) -> io::Result<Validated> {
-    let wsl = Arc::new(wsl);
-    let scene = Scene::build(work)?;
-    let listener = Listener::start(&wsl, &scene)?;
-    let mut failures = Vec::new();
-    for role in scene.roles() {
-        failures.extend(probe(&wsl, &scene, &role, &listener)?);
-    }
-    drop(listener);
-    if failures.is_empty() {
-        Ok(Validated { wsl })
+    let report = check(&wsl, work)?;
+    if report.failures.is_empty() {
+        Ok(Validated { wsl: Arc::new(wsl) })
     } else {
         Err(io::Error::other(format!(
-            "the WSL boundary failed {} check(s): {}",
-            failures.len(),
-            failures.join("; ")
+            "the WSL boundary failed {} check(s) with {}: {}",
+            report.failures.len(),
+            report.versions,
+            report.failures.join("; ")
         )))
+    }
+}
+
+/// One probe row for one role and whether it held.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RowResult {
+    pub role: &'static str,
+    pub row: &'static str,
+    pub ok: bool,
+}
+
+/// Everything the probe saw, for a person to read.
+#[derive(Clone, Debug)]
+pub struct Report {
+    /// The tool versions it ran with.
+    pub versions: String,
+    pub rows: Vec<RowResult>,
+    /// Every failure, including those the host saw (a changed file) and a
+    /// probe that did not run, which have no row of their own.
+    pub failures: Vec<String>,
+}
+
+/// Run the same probe as [`validate`] and keep every row, passed or not.
+///
+/// # Errors
+/// Returns an error if the probe could not be set up.
+pub fn check(wsl: &Wsl, work: &Path) -> io::Result<Report> {
+    let wsl = Arc::new(wsl.clone());
+    let scene = Scene::build(work)?;
+    let listener = Listener::start(&wsl, &scene)?;
+    let mut results = Vec::new();
+    let mut failures = Vec::new();
+    for role in scene.roles() {
+        let found = probe(&wsl, &scene, &role, &listener)?;
+        let name = role_name(&role);
+        let agent = matches!(role, Role::Agent { .. });
+        for row in rows(wsl.host(), agent) {
+            let prefix = format!("{name}: {row} ");
+            results.push(RowResult {
+                role: name,
+                row,
+                ok: !found.iter().any(|failure| failure.starts_with(&prefix)),
+            });
+        }
+        failures.extend(found);
+    }
+    drop(listener);
+    Ok(Report {
+        versions: wsl.tool_versions(),
+        rows: results,
+        failures,
+    })
+}
+
+fn role_name(role: &Role) -> &'static str {
+    match role {
+        Role::Agent { .. } => "agent",
+        Role::Check { .. } => "check",
+        Role::Fetch { .. } => "fetch",
+        Role::FetchNode { .. } => "fetch-node",
     }
 }
 
@@ -149,6 +242,10 @@ struct Scene {
     tmp: PathBuf,
     hit: PathBuf,
 }
+
+/// Stands in for the dedicated key in the agent probe. The row `key-is-masked`
+/// passes only if the command inside sees something else.
+const PROBE_SECRET: &str = "probe-secret-not-a-real-key";
 
 const MARKER: &str = "SYNTHETIC-MARKER\n";
 const GIT_CONFIG: &str = "[core]\n\tbare = false\n";
@@ -181,7 +278,7 @@ impl Scene {
         Ok(scene)
     }
 
-    fn roles(&self) -> [Role; 3] {
+    fn roles(&self) -> [Role; 4] {
         [
             Role::Agent {
                 worktree: self.worktree.clone(),
@@ -192,6 +289,10 @@ impl Scene {
                 tmp: self.tmp.clone(),
             },
             Role::Fetch {
+                worktree: self.worktree.clone(),
+                tmp: self.tmp.clone(),
+            },
+            Role::FetchNode {
                 worktree: self.worktree.clone(),
                 tmp: self.tmp.clone(),
             },
@@ -303,7 +404,9 @@ fn run(wsl: &Wsl, spec: &CommandSpec, timeout: Duration) -> io::Result<Finished>
 
 /// Each line is `ALLOWED label` or `DENIED label`. Positional parameters:
 /// worktree, sibling, port, scratch folder, the sibling as a Windows path.
-const PROBE: &str = r#"w=$1; s=$2; port=$3; tmp=$4; win=$5
+const PROBE: &str = r#"w=$1; s=$2; port=$3; tmp=$4; win=$5; hook=$6; secret=$7
+push='{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}'
+status='{"tool_name":"Bash","tool_input":{"command":"git status"}}'
 r() { if timeout 20 "$@" </dev/null >/dev/null 2>&1; then echo "ALLOWED $LABEL"; else echo "DENIED $LABEL"; fi; }
 LABEL=write-worktree r bash -c 'echo x > "$0/out.txt"' "$w"
 LABEL=write-scratch r bash -c 'echo x > "$0/out.txt"' "$tmp"
@@ -317,9 +420,19 @@ LABEL=connect-loopback r bash -c 'exec 3<>/dev/tcp/127.0.0.1/$0' "$port"
 LABEL=run-windows-program r "$w/cmd.exe" /c "echo x > $win\\pwned.txt"
 LABEL=run-init r /init
 LABEL=unix-socket r python3 -c 'import socket; socket.socket(socket.AF_UNIX)'
+LABEL=hook-denies-push r bash -c 'printf %s "$1" | "$0" | grep -q "permissionDecision.:.deny"' "$hook" "$push"
+LABEL=hook-allows-status r bash -c '[ "$(printf %s "$1" | "$0")" = "{}" ]' "$hook" "$status"
+LABEL=write-hook r bash -c 'echo x >> "$0"' "$hook"
+LABEL=key-is-masked r bash -c '[ -n "$ANTHROPIC_API_KEY" ] && [ "$ANTHROPIC_API_KEY" != "$0" ]' "$secret"
 "#;
 
-const EXPECTED_ALLOWED: &[&str] = &["write-worktree", "write-scratch"];
+const EXPECTED_ALLOWED: &[&str] = &[
+    "write-worktree",
+    "write-scratch",
+    "hook-denies-push",
+    "hook-allows-status",
+    "key-is-masked",
+];
 const ROWS: &[&str] = &[
     "write-worktree",
     "write-scratch",
@@ -333,6 +446,10 @@ const ROWS: &[&str] = &[
     "run-windows-program",
     "run-init",
     "unix-socket",
+    "hook-denies-push",
+    "hook-allows-status",
+    "write-hook",
+    "key-is-masked",
 ];
 
 /// Rows that only exist where Windows is reachable: its drives under `/mnt/c`,
@@ -340,35 +457,49 @@ const ROWS: &[&str] = &[
 /// has none of them, so it is neither judged on them nor asked.
 const WSL_ONLY: &[&str] = &["read-windows-drive", "run-windows-program", "run-init"];
 
-fn rows(host: Host) -> Vec<&'static str> {
+/// Rows about the deny hook, which only the agent role runs: it must deny a
+/// `git push`, let `git status` through, and not be overwritable.
+const AGENT_ONLY: &[&str] = &[
+    "hook-denies-push",
+    "hook-allows-status",
+    "write-hook",
+    "key-is-masked",
+];
+
+fn skipped(row: &str, host: Host, agent: bool) -> bool {
+    (host == Host::Linux && WSL_ONLY.contains(&row)) || (!agent && AGENT_ONLY.contains(&row))
+}
+
+fn rows(host: Host, agent: bool) -> Vec<&'static str> {
     ROWS.iter()
         .copied()
-        .filter(|row| host == Host::Wsl || !WSL_ONLY.contains(row))
+        .filter(|row| !skipped(row, host, agent))
         .collect()
 }
 
-fn probe_script(host: Host) -> String {
+fn probe_script(host: Host, agent: bool) -> String {
     PROBE
         .lines()
         .filter(|line| {
-            host == Host::Wsl
-                || !WSL_ONLY
-                    .iter()
-                    .any(|row| line.starts_with(&format!("LABEL={row} ")))
+            !ROWS
+                .iter()
+                .any(|row| skipped(row, host, agent) && line.starts_with(&format!("LABEL={row} ")))
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join(
+            "
+",
+        )
 }
 
 fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Result<Vec<String>> {
-    let name = match role {
-        Role::Agent { .. } => "agent",
-        Role::Check { .. } => "check",
-        Role::Fetch { .. } => "fetch",
-    };
+    let name = role_name(role);
+    let agent = matches!(role, Role::Agent { .. });
     let scratch = match role {
         Role::Agent { config, .. } => config.join("tmp"),
-        Role::Check { tmp, .. } | Role::Fetch { tmp, .. } => tmp.clone(),
+        Role::Check { tmp, .. } | Role::Fetch { tmp, .. } | Role::FetchNode { tmp, .. } => {
+            tmp.clone()
+        }
     };
     let sibling_windows = scene
         .sibling
@@ -379,21 +510,28 @@ fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Resu
         program: PathBuf::from("/usr/bin/bash"),
         args: vec![
             OsString::from("-c"),
-            OsString::from(probe_script(wsl.host())),
+            OsString::from(probe_script(wsl.host(), agent)),
             OsString::from("probe"),
             crate::wsl::linux_path(&scene.worktree)?.into(),
             crate::wsl::linux_path(&scene.sibling)?.into(),
             listener.port.to_string().into(),
             crate::wsl::linux_path(&scratch)?.into(),
             sibling_windows.into(),
+            wsl.hook().into(),
+            PROBE_SECRET.into(),
         ],
-        env: Vec::new(),
+        env: if agent {
+            vec![(OsString::from(API_KEY), OsString::from(PROBE_SECRET))]
+        } else {
+            Vec::new()
+        },
         cwd: Some(scene.worktree.clone()),
     };
     let validated = Validated {
         wsl: Arc::new(wsl.clone()),
     };
-    let wrapped = validated.wrap(role, &spec, &[])?;
+    let secrets: &[&str] = if agent { &[API_KEY] } else { &[] };
+    let wrapped = validated.wrap(role, &spec, secrets)?;
     let finished = run(wsl, &wrapped, Duration::from_secs(180))?;
     let mut failures = Vec::new();
     if !finished.success {
@@ -403,16 +541,16 @@ fn probe(wsl: &Wsl, scene: &Scene, role: &Role, listener: &Listener) -> io::Resu
         ));
         return Ok(failures);
     }
-    failures.extend(judge(&finished.stdout, name, wsl.host()));
+    failures.extend(judge(&finished.stdout, name, wsl.host(), agent));
     failures.extend(host_findings(scene, name));
     Ok(failures)
 }
 
 /// Compare the probe's answers with what each row must be. A row with no
 /// answer fails: a probe that died half way must not count as a pass.
-fn judge(stdout: &str, name: &str, host: Host) -> Vec<String> {
+fn judge(stdout: &str, name: &str, host: Host, agent: bool) -> Vec<String> {
     let mut failures = Vec::new();
-    for row in rows(host) {
+    for row in rows(host, agent) {
         let must_work = EXPECTED_ALLOWED.contains(&row);
         let answer = stdout.lines().find_map(|line| {
             let (verdict, label) = line.split_once(' ')?;

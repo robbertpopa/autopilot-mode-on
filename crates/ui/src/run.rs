@@ -37,6 +37,21 @@ pub(crate) fn waits_for_build(view: &TicketView) -> bool {
         && !view.steps.iter().any(|card| card.state.is_active())
 }
 
+/// The build passed and nothing has been asked about a pull request yet.
+pub(crate) fn ready_for_pull_request(view: &TicketView) -> bool {
+    let state = |step| view.step(step).map(|card| &card.state);
+    state(Step::BuildCheck) == Some(&StepState::Passed)
+        && state(Step::PullRequest) == Some(&StepState::Idle)
+        && !view.steps.iter().any(|card| card.state.is_active())
+}
+
+/// The owner approved the pull request and it has not been opened yet. The
+/// step reads as running, but nothing is: the push is the next thing to do.
+pub(crate) fn pull_request_approved(view: &TicketView) -> bool {
+    view.asking.is_none()
+        && view.step(Step::PullRequest).map(|card| &card.state) == Some(&StepState::Running)
+}
+
 /// Understand and Clarify are settled and Plan has not started.
 pub(crate) fn ready_to_plan(view: &TicketView) -> bool {
     let state = |step| {
@@ -162,20 +177,19 @@ impl App {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.menu_button("More", |ui| {
-                    for (text, why) in [
-                        (
-                            "Open the worktree",
-                            "coming soon: no run has made a worktree yet (needs S6)",
-                        ),
-                        (
-                            "Open in a terminal",
-                            "coming soon: it needs the real agent session (S6)",
-                        ),
-                    ] {
-                        ui.add_enabled(false, egui::Button::new(text))
-                            .on_disabled_hover_text(why);
-                        ui.label(theme::muted(why));
+                    let worktree = autopilot_engine::worktree_of(&self.options.data_dir, &view.id);
+                    if ui
+                        .add_enabled(worktree.is_some(), egui::Button::new("Open the worktree"))
+                        .on_disabled_hover_text(
+                            "There is no copy of the project for this ticket yet: it is made when Build starts.",
+                        )
+                        .clicked()
+                    {
+                        self.act(Action::OpenWorktree(view.id.clone()));
+                        ui.close();
                     }
+                    ui.add_enabled(false, egui::Button::new("Open in a terminal"))
+                        .on_disabled_hover_text("Not built: starting a terminal in the worktree.");
                 });
                 let live = matches!(view.badge, Badge::Running | Badge::NeedsYou | Badge::Paused);
                 if live
@@ -188,6 +202,7 @@ impl App {
                 }
                 let paused = view.badge == Badge::Paused;
                 if (view.badge == Badge::Running || paused)
+                    && !pull_request_approved(view)
                     && ui
                         .button(if paused { "Resume" } else { "Pause" })
                         .on_hover_text("Takes effect between turns")
@@ -339,6 +354,13 @@ impl App {
                 theme::GREY_TEXT(),
                 "Paused. Press Resume to carry on.".to_owned(),
             )
+        } else if pull_request_approved(view) && !self.busy() {
+            (
+                theme::BLUE_FILL(),
+                theme::BLUE_TEXT(),
+                "The pull request is approved. Ready to push the commit and open it as a draft."
+                    .to_owned(),
+            )
         } else if let Some(card) = view.steps.iter().find(|card| card.state.is_active()) {
             (
                 theme::BLUE_FILL(),
@@ -365,9 +387,15 @@ impl App {
             )
         } else if waits_for_build(view) {
             (
-                theme::GREY_FILL(),
-                theme::GREY_TEXT(),
-                "The plan is approved. Build is next, and it cannot run yet: changing code safely needs containment (S6), which is not built. Nothing is wrong; the ticket waits here.".to_owned(),
+                theme::BLUE_FILL(),
+                theme::BLUE_TEXT(),
+                "The plan is approved. Ready to build.".to_owned(),
+            )
+        } else if ready_for_pull_request(view) {
+            (
+                theme::BLUE_FILL(),
+                theme::BLUE_TEXT(),
+                "The build passed. Ready to ask about a pull request.".to_owned(),
             )
         } else {
             return;
@@ -415,6 +443,40 @@ impl App {
                         self.act(Action::MakePlan(view.id.clone()));
                     }
                 }
+                if problem.is_none() && waits_for_build(view) {
+                    let busy = self.busy();
+                    if ui
+                        .add_enabled(!busy, theme::primary("Build"))
+                        .on_hover_text(
+                            "The agent works in a copy of the project, the checks run after every turn, and a reviewer reads the change. Real Claude builds only inside the Linux sandbox.",
+                        )
+                        .clicked()
+                    {
+                        self.act(Action::MakeBuild(view.id.clone()));
+                    }
+                }
+                if problem.is_none() && ready_for_pull_request(view) {
+                    let busy = self.busy();
+                    if ui
+                        .add_enabled(!busy, theme::primary("Ask to open a pull request"))
+                        .on_hover_text(
+                            "Shows you the exact commit and where it would go. Nothing is pushed until you approve.",
+                        )
+                        .clicked()
+                    {
+                        self.act(Action::PreparePullRequest(view.id.clone()));
+                    }
+                }
+                if problem.is_none()
+                    && pull_request_approved(view)
+                    && !self.busy()
+                    && ui
+                        .add(theme::primary("Open the pull request"))
+                        .on_hover_text("Pushes the approved commit and opens a draft pull request.")
+                        .clicked()
+                {
+                    self.act(Action::OpenPullRequest(view.id.clone()));
+                }
                 self.busy_inline(ui);
                 if let Some(card) = problem {
                     if matches!(card.step, Step::Understand | Step::Design | Step::Plan) {
@@ -425,12 +487,25 @@ impl App {
                                 _ => Action::RerunPlan(view.id.clone()),
                             });
                         }
+                    } else if card.step == Step::BuildCheck {
+                        if ui
+                            .add_enabled(!self.busy(), theme::primary("Build again"))
+                            .on_hover_text("Continues the build: the agent starts from what is already in its copy of the project.")
+                            .clicked()
+                        {
+                            self.act(Action::MakeBuild(view.id.clone()));
+                        }
+                    } else if card.step == Step::PullRequest {
+                        if ui
+                            .add_enabled(!self.busy(), theme::primary("Try again"))
+                            .on_hover_text("Asks for approval again. A pull request that was already opened is found, not duplicated.")
+                            .clicked()
+                        {
+                            self.act(Action::PreparePullRequest(view.id.clone()));
+                        }
                     } else {
                         ui.add_enabled(false, egui::Button::new("Try again"))
-                            .on_disabled_hover_text(
-                                "coming soon: this step cannot run until code can be written safely (S6)",
-                            );
-                        ui.label(theme::muted("Try again is coming soon for this step."));
+                            .on_disabled_hover_text("This step cannot be run again from here.");
                     }
                 }
             });
@@ -548,31 +623,30 @@ impl App {
             ui.label(theme::muted(
                 "Checks, cheapest first. The run stops at the first failure.",
             ));
-            if let Some(round) = latest {
-                for check in &round.checks {
-                    let (mark, color) = if check.passed {
-                        ("✔", theme::GREEN())
-                    } else {
-                        ("×", theme::RED())
-                    };
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(mark).color(color));
-                        ui.label(&check.name);
+            for round in view.rounds.iter().rev() {
+                let is_latest = latest.is_some_and(|last| last.round == round.round);
+                egui::CollapsingHeader::new(format!("Round {}", round.round))
+                    .id_salt((view.id.as_str(), round.round))
+                    .default_open(is_latest)
+                    .show(ui, |ui| {
+                        for check in &round.checks {
+                            check_lines(ui, check);
+                        }
+                        if is_latest && running {
+                            for name in self
+                                .profile
+                                .as_ref()
+                                .map(|profile| profile.checks.keys().collect::<Vec<_>>())
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter(|name| {
+                                    !round.checks.iter().any(|check| &&check.name == name)
+                                })
+                            {
+                                ui.label(theme::muted(format!("○ {name}   waiting")));
+                            }
+                        }
                     });
-                }
-                let waiting: Vec<&String> = self
-                    .profile
-                    .as_ref()
-                    .map(|profile| profile.checks.keys().collect())
-                    .unwrap_or_default();
-                if running {
-                    for name in waiting
-                        .into_iter()
-                        .filter(|name| !round.checks.iter().any(|check| &&check.name == name))
-                    {
-                        ui.label(theme::muted(format!("○ {name}   waiting")));
-                    }
-                }
             }
             if let Some(failed) = view
                 .rounds
@@ -729,5 +803,43 @@ impl App {
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.stepper_panel(ui, &view));
             });
+    }
+}
+
+/// One check of a round: its verdict, its note, the review's findings as
+/// `path:line [kind, confidence%] issue`, and what the check cost.
+fn check_lines(ui: &mut egui::Ui, check: &autopilot_engine::CheckRow) {
+    let (mark, color) = if check.passed {
+        ("✔", theme::GREEN())
+    } else {
+        ("×", theme::RED())
+    };
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(mark).color(color));
+        ui.label(&check.name);
+        if check.cost != autopilot_core::Money::default() {
+            ui.label(theme::muted(dollars(check.cost)));
+        }
+    });
+    if check.findings.is_empty() {
+        if let Some(first) = check.note.lines().next().filter(|line| !line.is_empty()) {
+            ui.label(theme::muted(format!("      {first}")));
+        }
+        return;
+    }
+    if let Some(header) = check.note.lines().next() {
+        ui.label(theme::muted(format!("      {header}")));
+    }
+    for finding in &check.findings {
+        ui.label(format!(
+            "      {}:{} [{}, {}%] {}",
+            finding.path, finding.line, finding.kind, finding.confidence, finding.issue
+        ));
+    }
+    if check.more_findings > 0 {
+        ui.label(theme::muted(format!(
+            "      and {} more",
+            check.more_findings
+        )));
     }
 }

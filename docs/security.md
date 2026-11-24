@@ -40,10 +40,13 @@
 |---|---|---|---|
 | Windows native | none (Claude's sandbox is unavailable) | subscription or API | Level 0. Real Build refused. |
 | Windows native | Codex MXC `workspace-only` | none (network off) | Probe only; the provider is unreachable, so it cannot host Claude. |
-| Windows host, WSL2 Ubuntu 24.04 | `srt` 0.0.83 (bubblewrap, seccomp, domain proxy) | API key | Supported for Build and Check after the escape probe passes on this machine. Two live tickets built green. Subscription mode refused. |
-| Linux or macOS host | `srt` | any | Not wired; real Build refused. |
+| Windows host, WSL2 Ubuntu 24.04 | `srt` 0.0.83 (bubblewrap, seccomp, domain proxy, TLS termination) | API key | Supported for Build, Check, review and the pull request step after the escape probe passes on this machine. The key is masked inside. Subscription mode refused. |
+| Linux host | `srt`, run directly | API key | Supported on the same terms; the probe drops the Windows-only rows. Probed inside the distro as a Linux machine. |
+| macOS host | none | any | Refused: Seatbelt behaves differently and its probe has not been written. |
 
-Details, settings and limits: [S6 Linux sandbox in WSL2](spikes/S6-containment.md#linux-sandbox-in-wsl2-srt). The launcher must scrub the environment itself: `srt` passes it through.
+`srt` is pinned: discovery refuses a version that is not in `VALIDATED_SRT` (`crates/process/src/wsl.rs`), and the probe's output and failure message carry the versions of `srt`, bubblewrap and Claude Code it ran with. **To update `srt`:** install the new version on a test machine, run the real probe (`cargo test -p autopilot-process -- --ignored the_real_boundary_passes_the_probe` on the WSL host, `..._on_a_linux_host` on Linux; CI runs the second in `sandbox-probe.yml`), and only if every row passes add the version to `VALIDATED_SRT`, change the pin in `tools/wsl/setup-user.sh` and `.github/workflows/sandbox-probe.yml`, and update the table above.
+
+Set up a distro with `tools/wsl/setup-root.sh`, `setup-user.sh` and `install-hook.sh`. Details, settings and limits: [S6 Linux sandbox in WSL2](spikes/S6-containment.md#linux-sandbox-in-wsl2-srt). The launcher must scrub the environment itself: `srt` passes it through.
 
 The [S6 Windows preflight](spikes/S6-containment.md#windows-mxc-preflight) exercised one MXC profile against synthetic files, a local TCP listener and a child process.
 

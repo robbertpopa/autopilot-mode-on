@@ -115,7 +115,17 @@ impl Decoder {
                         .get("name")
                         .and_then(Value::as_str)
                         .unwrap_or("unknown");
-                    report(format!("tool requested: {}", bounded(name)));
+                    // Claude Code's Bash tool says why it runs a command. The
+                    // text is the model's own, so it is bounded like any other.
+                    let why = (name == "Bash")
+                        .then(|| item.pointer("/input/description").and_then(Value::as_str))
+                        .flatten()
+                        .map(bounded)
+                        .filter(|why| !why.is_empty());
+                    report(match why {
+                        Some(why) => format!("tool requested: {}: {why}", bounded(name)),
+                        None => format!("tool requested: {}", bounded(name)),
+                    });
                 }
                 _ => {}
             }
@@ -395,6 +405,54 @@ mod tests {
         let shown = bounded(&hostile);
         assert!(!shown.contains('\u{1b}') && !shown.contains('\n'));
         assert_eq!(shown.chars().count(), SUMMARY_CHARS);
+    }
+
+    // Invariant: the history says why a Bash command ran, taken from the
+    // recorded stream of a real run. A change that drops the description goes
+    // back to naming only the tool, which the other tests do not notice.
+    #[test]
+    fn a_recorded_bash_call_carries_its_description() {
+        const RECORDED: &[u8] =
+            include_bytes!("../../../fixtures/claude/live-2.1.330-hook-denied.jsonl");
+        let (activity, _) = decode(RECORDED, true);
+        assert!(
+            activity
+                .iter()
+                .any(|a| a == "tool requested: Bash: Push local main branch to origin"),
+            "{activity:?}"
+        );
+    }
+
+    // Invariant: the description is model text, so a hostile one is flattened
+    // and cut like other agent text, and a missing or odd one adds nothing.
+    #[test]
+    fn a_hostile_bash_description_is_flattened_and_bounded() {
+        let call = |input: serde_json::Value| {
+            let frame = serde_json::json!({"type":"assistant","message":{"content":[
+                {"type":"tool_use","name":"Bash","input":input}]}});
+            decode(format!("{frame}\n").as_bytes(), true).0
+        };
+        let long = format!("a\u{1b}[2Jb\n\0{}", "x".repeat(5_000));
+        let shown = call(serde_json::json!({"command":"ls","description":long}));
+        let line = shown[0].strip_prefix("tool requested: Bash: ").unwrap();
+        assert!(line.chars().all(|c| !c.is_control()));
+        assert_eq!(line.chars().count(), SUMMARY_CHARS);
+        for odd in [
+            serde_json::json!({"command":"ls"}),
+            serde_json::json!({"description":7}),
+            serde_json::json!({"description":null}),
+            serde_json::json!({"description":"  \n "}),
+            serde_json::json!("not an object"),
+        ] {
+            assert_eq!(call(odd), ["tool requested: Bash"]);
+        }
+    }
+
+    #[test]
+    fn only_the_bash_tool_carries_a_description() {
+        let frame = br#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"description":"secret plan"}}]}}"#;
+        let (activity, _) = decode(&[frame.as_slice(), b"\n"].concat(), true);
+        assert_eq!(activity, ["tool requested: Read"]);
     }
 
     #[test]

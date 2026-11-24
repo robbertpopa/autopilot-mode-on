@@ -5,7 +5,8 @@ use crate::CommandSpec;
 
 fn wsl(settings_dir: PathBuf) -> Wsl {
     let text = "home=/home/u\npath=/home/u/node/bin:/usr/bin\nsrt=/home/u/node/bin/srt\n\
-                seccomp=/home/u/lib/vendor/seccomp\n";
+                seccomp=/home/u/lib/vendor/seccomp\nhook=/home/u/.autopilot/bin/autopilot-hook\n\
+                srt_version=0.0.83\n";
     parse_discovery(
         text,
         Host::Wsl,
@@ -65,11 +66,40 @@ fn the_settings_open_only_what_the_boundary_names() {
         hide: vec![PathBuf::from("/home/u/.cargo/credentials.toml")],
         domains: vec!["api.anthropic.com".into()],
         tmp: Some(PathBuf::from(r"D:\work\tmp")),
+        mask_env: vec!["ANTHROPIC_API_KEY".into()],
     };
     let value: serde_json::Value =
         serde_json::from_str(&wsl.settings(&boundary).expect("settings")).expect("json");
     assert_eq!(value["network"]["allowedDomains"][0], "api.anthropic.com");
     assert_eq!(value["network"]["deniedDomains"], serde_json::json!([]));
+    // A masked variable turns TLS termination on, and the real value is put
+    // back only on requests to the hosts the boundary reaches.
+    assert_eq!(
+        value["network"]["tlsTerminate"],
+        serde_json::json!({"excludeDomains": []})
+    );
+    assert_eq!(
+        value["credentials"]["envVars"],
+        serde_json::json!([{
+            "name": "ANTHROPIC_API_KEY",
+            "mode": "mask",
+            "injectHosts": ["api.anthropic.com"]
+        }])
+    );
+    // A masked variable turns TLS termination on, and the real value is put
+    // back only on requests to the hosts the boundary reaches.
+    assert_eq!(
+        value["network"]["tlsTerminate"],
+        serde_json::json!({"excludeDomains": []})
+    );
+    assert_eq!(
+        value["credentials"]["envVars"],
+        serde_json::json!([{
+            "name": "ANTHROPIC_API_KEY",
+            "mode": "mask",
+            "injectHosts": ["api.anthropic.com"]
+        }])
+    );
     let fs = &value["filesystem"];
     assert_eq!(
         fs["denyRead"],
@@ -105,6 +135,10 @@ fn the_settings_open_only_what_the_boundary_names() {
         "no domains means no network"
     );
     assert_eq!(value["filesystem"]["allowWrite"], serde_json::json!([]));
+    assert!(
+        value.get("credentials").is_none() && value["network"].get("tlsTerminate").is_none(),
+        "no masked variable, no interception"
+    );
 }
 
 // Invariant: a secret reaches the distro by `WSLENV` and never by a command
@@ -218,7 +252,8 @@ fn a_command_that_cannot_be_passed_safely_is_refused() {
 
 #[test]
 fn a_distro_missing_a_tool_is_refused_by_name() {
-    let text = "home=/h\npath=/usr/bin\nsrt=/x/srt\nseccomp=/x\nmissing:bwrap\nmissing:rg\n";
+    let text =
+        "home=/h\npath=/usr/bin\nsrt=/x/srt\nseccomp=/x\nhook=/h/hook\nmissing:bwrap\nmissing:rg\n";
     let error = parse_discovery(
         text,
         Host::Wsl,
@@ -360,4 +395,42 @@ fn wsl_passes_awkward_arguments_through_unchanged() {
         .split_terminator('\0')
         .collect();
     assert_eq!(got, awkward);
+}
+
+fn discovery_with(extra: &str) -> std::io::Result<Wsl> {
+    let text = format!("home=/h\npath=/usr/bin\nsrt=/x/srt\nseccomp=/x\nhook=/h/hook\n{extra}");
+    parse_discovery(
+        &text,
+        Host::Wsl,
+        "Ubuntu",
+        PathBuf::from("wsl.exe"),
+        PathBuf::new(),
+        PathBuf::new(),
+    )
+}
+
+// Invariant: an `srt` version the probe was never run with is refused, and so
+// is a machine that does not report one. A change that breaks it: dropping the
+// list check, so a newer `srt` with different settings semantics is trusted.
+// The probe itself cannot catch it: it only runs after discovery succeeds.
+#[test]
+fn an_srt_version_that_was_not_validated_is_refused() {
+    let error = discovery_with("srt_version=9.9.9\n").expect_err("unlisted");
+    assert!(error.to_string().contains("9.9.9"), "{error}");
+    assert!(discovery_with("").is_err());
+    assert!(discovery_with("srt_version=\n").is_err());
+}
+
+// Invariant: the versions that go into the probe's output are the ones the
+// tools reported, with the leading program name cut off.
+#[test]
+fn the_reported_tool_versions_are_kept_for_the_probe_output() {
+    let wsl = discovery_with(
+        "srt_version=0.0.83\nbwrap_version=bubblewrap 0.9.0\nclaude_version=2.1.330 (Claude Code)\n",
+    )
+    .expect("validated version");
+    assert_eq!(
+        wsl.tool_versions(),
+        "srt 0.0.83, bubblewrap 0.9.0, claude 2.1.330"
+    );
 }

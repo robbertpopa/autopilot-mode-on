@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use super::{PROVIDER, REGISTRY, ROWS, Role, boundary, judge, probe_script, rows};
+use super::{NPM_REGISTRY, PROVIDER, REGISTRY, ROWS, Role, boundary, judge, probe_script, rows};
 use crate::wsl::{Host, Wsl, parse_discovery};
 
 fn wsl() -> Wsl {
-    let text = "home=/home/u\npath=/usr/bin\nsrt=/home/u/node/bin/srt\nseccomp=/home/u/v/seccomp\n";
+    let text = "home=/home/u\npath=/usr/bin\nsrt=/home/u/node/bin/srt\nseccomp=/home/u/v/seccomp\nhook=/home/u/.autopilot/bin/autopilot-hook\nsrt_version=0.0.83\n";
     parse_discovery(
         text,
         Host::Wsl,
@@ -19,7 +19,14 @@ fn wsl() -> Wsl {
 fn answers(flip: Option<&str>, drop: Option<&str>) -> String {
     let mut text = String::new();
     for row in ROWS.iter().filter(|row| Some(**row) != drop) {
-        let works = matches!(*row, "write-worktree" | "write-scratch");
+        let works = matches!(
+            *row,
+            "write-worktree"
+                | "write-scratch"
+                | "hook-denies-push"
+                | "hook-allows-status"
+                | "key-is-masked"
+        );
         let allowed = works != (Some(*row) == flip);
         text.push_str(if allowed { "ALLOWED " } else { "DENIED " });
         text.push_str(row);
@@ -36,20 +43,31 @@ fn answers(flip: Option<&str>, drop: Option<&str>) -> String {
 #[test]
 fn the_probe_passes_only_when_every_row_is_as_expected() {
     assert_eq!(
-        judge(&answers(None, None), "agent", Host::Wsl),
+        judge(&answers(None, None), "agent", Host::Wsl, true),
         Vec::<String>::new()
     );
-    let leaked = judge(&answers(Some("read-sibling"), None), "agent", Host::Wsl);
+    let leaked = judge(
+        &answers(Some("read-sibling"), None),
+        "agent",
+        Host::Wsl,
+        true,
+    );
     assert_eq!(leaked, ["agent: read-sibling was allowed"]);
-    let broken = judge(&answers(Some("write-worktree"), None), "check", Host::Wsl);
+    let broken = judge(
+        &answers(Some("write-worktree"), None),
+        "check",
+        Host::Wsl,
+        false,
+    );
     assert_eq!(broken, ["check: write-worktree was denied but must work"]);
     let silent = judge(
         &answers(None, Some("run-windows-program")),
         "agent",
         Host::Wsl,
+        true,
     );
     assert_eq!(silent, ["agent: run-windows-program gave no answer"]);
-    assert_eq!(judge("", "agent", Host::Wsl).len(), ROWS.len());
+    assert_eq!(judge("", "agent", Host::Wsl, true).len(), ROWS.len());
 }
 
 // Invariant: a Linux host is judged on exactly the rows that exist there, and
@@ -58,21 +76,31 @@ fn the_probe_passes_only_when_every_row_is_as_expected() {
 // a machine for lacking Windows. A change that breaks it: one shared row list.
 #[test]
 fn a_linux_host_drops_the_windows_rows_and_keeps_the_rest() {
-    let linux = rows(Host::Linux);
+    let linux = rows(Host::Linux, true);
     for gone in ["read-windows-drive", "run-windows-program", "run-init"] {
         assert!(!linux.contains(&gone), "{gone}");
-        assert!(!probe_script(Host::Linux).contains(&format!("LABEL={gone} ")));
-        assert!(probe_script(Host::Wsl).contains(&format!("LABEL={gone} ")));
+        assert!(!probe_script(Host::Linux, true).contains(&format!("LABEL={gone} ")));
+        assert!(probe_script(Host::Wsl, true).contains(&format!("LABEL={gone} ")));
     }
     assert_eq!(linux.len(), ROWS.len() - 3);
     // An answer set that only has the Linux rows passes on Linux and fails on WSL.
     let text: String = linux.iter().map(|row| answers_for(row)).collect();
-    assert_eq!(judge(&text, "agent", Host::Linux), Vec::<String>::new());
-    assert_eq!(judge(&text, "agent", Host::Wsl).len(), 3);
+    assert_eq!(
+        judge(&text, "agent", Host::Linux, true),
+        Vec::<String>::new()
+    );
+    assert_eq!(judge(&text, "agent", Host::Wsl, true).len(), 3);
 }
 
 fn answers_for(row: &str) -> String {
-    let works = matches!(row, "write-worktree" | "write-scratch");
+    let works = matches!(
+        row,
+        "write-worktree"
+            | "write-scratch"
+            | "hook-denies-push"
+            | "hook-allows-status"
+            | "key-is-masked"
+    );
     format!(
         "{} {row}
 ",
@@ -136,6 +164,40 @@ fn each_role_opens_only_what_it_is_for() {
         [r"D:\w\wt", "/home/u/.cargo/registry", "/home/u/.cargo/git"],
         "the cache, not the whole cargo home"
     );
+
+    let node = boundary(
+        &wsl,
+        &Role::FetchNode {
+            worktree: PathBuf::from(r"D:\w\wt"),
+            tmp: PathBuf::from(r"D:\w\tmp"),
+        },
+    );
+    assert_eq!(node.domains, NPM_REGISTRY, "only the npm registry");
+    let writes: Vec<String> = node
+        .write
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        writes,
+        [r"D:\w\wt", "/home/u/.npm"],
+        "the npm cache, not the home folder"
+    );
+    assert!(node.read.iter().all(|p| p.starts_with("/home/u/")));
+    assert!(
+        !node.write.iter().any(|p| p.starts_with("/home/u/.cargo")),
+        "an npm fetch cannot touch the cargo cache"
+    );
+    // The check role reaches both toolchains, so `cargo test` and `npm test`
+    // run, and still has no network.
+    let reads: Vec<String> = check
+        .read
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    assert!(reads.contains(&"/home/u/.cargo".to_owned()));
+    assert!(reads.contains(&"/home/u/node".to_owned()));
+    assert_eq!(check.domains, Vec::<String>::new());
 }
 
 // Needs the real distro; see `wsl_runs_a_wrapped_command_under_the_boundary`.

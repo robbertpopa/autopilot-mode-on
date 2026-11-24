@@ -11,9 +11,9 @@ use autopilot_ui::{Options, demo};
 const USAGE: &str = "usage: autopilot-ui [--data-dir <dir>] [--profile <file>] [--demo]\n\
   --data-dir  where tickets are kept (default: ./autopilot-data)\n\
   --profile   the project profile (default: ./profile.toml)\n\
-  --demo      add three sample tickets so every screen has content. Without --data-dir it
+  --demo      add sample tickets for every state so every screen has content. Without --data-dir it
               uses ./autopilot-demo-data, never the default folder\n\
-  --view      open on today, new, plan, board, projects, pipelines, health, review, settings, design, checks, look, cost, accounts, run or step (plan, run and step use --ticket, default the newest)";
+  --view      open on today, new, plan, board, projects, pipelines, health, review, settings, design, checks, look, sandbox, cost, accounts, run or step (plan, run and step use --ticket, default the newest)";
 
 fn main() -> ExitCode {
     let mut data_dir = PathBuf::from("autopilot-data");
@@ -44,6 +44,10 @@ fn main() -> ExitCode {
         data_dir = PathBuf::from("autopilot-demo-data");
     }
     if sample && let Err(error) = demo::seed(&data_dir, autopilot_ui::now_ms()) {
+        eprintln!("autopilot-ui: could not write the sample tickets: {error}");
+        return ExitCode::FAILURE;
+    }
+    if sample && let Err(error) = demo::seed_build_states(&data_dir, autopilot_ui::now_ms()) {
         eprintln!("autopilot-ui: could not write the sample tickets: {error}");
         return ExitCode::FAILURE;
     }

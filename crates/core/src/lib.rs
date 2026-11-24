@@ -111,6 +111,104 @@ impl CustomOutcome {
     }
 }
 
+/// What one focused reviewer looks for. Each reviewer is a separate fresh call
+/// with its own instruction, so one reviewer's blind spot is not another's.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingKind {
+    /// A defect in what the change does.
+    Bug,
+    /// A departure from the project's own written rules.
+    Rules,
+    /// Changed behaviour that no test would notice breaking.
+    Tests,
+    /// An error that is swallowed, hidden or turned into a default.
+    ErrorHandling,
+    /// Anything else the reviewer would stop a merge for.
+    Other,
+}
+
+/// One thing a reviewer found, pinned to a line of the change.
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct ReviewFinding {
+    /// The file, relative to the repository root, with `/` separators.
+    pub path: String,
+    /// The line in the new version of the file.
+    pub line: u32,
+    /// What is wrong and why, in plain words.
+    pub issue: String,
+    pub kind: FindingKind,
+    /// How sure the reviewer is that this is a real problem, 0 to 100.
+    pub confidence: u8,
+}
+
+/// What a reviewer reports: the findings and nothing else. An empty list is a
+/// clean review.
+#[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+pub struct ReviewReport {
+    pub findings: Vec<ReviewFinding>,
+}
+
+/// The most findings one reviewer may report. More than this is noise, and the
+/// report is kept and shown as plain text.
+pub const MAX_FINDINGS: usize = 20;
+const MAX_FINDING_PATH: usize = 260;
+const MAX_FINDING_ISSUE: usize = 1000;
+const MAX_FINDING_LINE: u32 = 10_000_000;
+
+impl ReviewFinding {
+    /// # Errors
+    /// Returns a description when the path is not a plain relative path, the
+    /// line is zero or absurd, the text is empty, too long or holds a control
+    /// character, or the confidence is over 100.
+    pub fn validate(&self) -> Result<(), String> {
+        let path = self.path.as_str();
+        let plain = !path.is_empty()
+            && path.len() <= MAX_FINDING_PATH
+            && !path.starts_with('/')
+            && !path.contains(['\\', ':'])
+            && !path.chars().any(char::is_control)
+            && path
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..");
+        if !plain {
+            return Err("a finding names a path that is not a plain relative path".into());
+        }
+        if self.line == 0 || self.line > MAX_FINDING_LINE {
+            return Err("a finding has a line number that cannot be right".into());
+        }
+        if self.issue.trim().is_empty() {
+            return Err("a finding says nothing".into());
+        }
+        if self.issue.chars().count() > MAX_FINDING_ISSUE {
+            return Err(format!("a finding is over {MAX_FINDING_ISSUE} characters"));
+        }
+        if self
+            .issue
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t')
+        {
+            return Err("a finding has a control character".into());
+        }
+        if self.confidence > 100 {
+            return Err("a finding's confidence is over 100".into());
+        }
+        Ok(())
+    }
+}
+
+impl ReviewReport {
+    /// # Errors
+    /// Returns a description when there are too many findings or any one of
+    /// them is not allowed.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.findings.len() > MAX_FINDINGS {
+            return Err(format!("more than {MAX_FINDINGS} findings"));
+        }
+        self.findings.iter().try_for_each(ReviewFinding::validate)
+    }
+}
+
 /// The longest mockup page kept.
 pub const MAX_MOCKUP_BYTES: usize = 200 * 1024;
 
@@ -1005,5 +1103,102 @@ mod custom_step_tests {
         assert_eq!(Step::custom(0), None);
         assert_eq!(Step::custom(9), None);
         assert_eq!(Step::custom(3), Some(Step::Custom(3)));
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+
+    fn finding(path: &str, line: u32, issue: &str, confidence: u8) -> ReviewFinding {
+        ReviewFinding {
+            path: path.into(),
+            line,
+            issue: issue.into(),
+            kind: FindingKind::Bug,
+            confidence,
+        }
+    }
+
+    // Invariant: a finding names a file inside the repository and a real line,
+    // and says something. The report is shown to the owner and fed back to the
+    // agent as a note, and the path is later joined to a folder, so a reviewer
+    // that was steered into `..\..\x`, an absolute path or an empty finding must
+    // be refused here. A change that breaks it: validating only the length.
+    #[test]
+    fn a_finding_must_name_a_plain_relative_path_a_real_line_and_a_reason() {
+        assert!(
+            finding("src/lib.rs", 12, "unwrap on user input", 90)
+                .validate()
+                .is_ok()
+        );
+        assert!(finding("a.txt", 1, "x", 0).validate().is_ok());
+        assert!(finding("src/lib.rs", 12, "x", 100).validate().is_ok());
+        for path in [
+            "",
+            "/etc/passwd",
+            "../outside.rs",
+            "src/../../x",
+            "src//x",
+            "./x",
+            r"src\lib.rs",
+            "C:/x",
+            "src/lib.rs\n",
+            "src/\u{0}x",
+        ] {
+            assert!(finding(path, 1, "x", 50).validate().is_err(), "{path:?}");
+        }
+        assert!(finding("a", 0, "x", 50).validate().is_err(), "line zero");
+        assert!(finding("a", 1, "  ", 50).validate().is_err(), "empty issue");
+        assert!(finding("a", 1, "x", 101).validate().is_err(), "confidence");
+        assert!(finding("a", 1, "bad\u{7}text", 50).validate().is_err());
+        assert!(finding("a", 1, &"x".repeat(1001), 50).validate().is_err());
+    }
+
+    // Invariant: a reviewer cannot flood the owner: the count is bounded.
+    #[test]
+    fn a_report_over_the_cap_is_refused() {
+        let ok = ReviewReport {
+            findings: (0..MAX_FINDINGS)
+                .map(|n| finding("a", u32::try_from(n).unwrap() + 1, "x", 50))
+                .collect(),
+        };
+        assert!(ok.validate().is_ok());
+        let mut over = ok.clone();
+        over.findings.push(finding("a", 99, "x", 50));
+        assert!(over.validate().is_err());
+        assert!(ReviewReport::default().validate().is_ok(), "clean is fine");
+    }
+
+    // Hostile-input sweep (AGENTS.md): whatever a reviewer sends, decoding and
+    // validating never panic. Each input here is a shape that could plausibly
+    // come out of a model: wrong types, huge numbers, nesting, nulls.
+    #[test]
+    fn hostile_reports_never_panic_the_decoder_or_the_validator() {
+        let inputs = [
+            "{}",
+            r#"{"findings":null}"#,
+            r#"{"findings":[null]}"#,
+            r#"{"findings":[{"path":1,"line":"x","issue":[],"kind":"bug","confidence":"high"}]}"#,
+            r#"{"findings":[{"path":"a","line":-1,"issue":"x","kind":"bug","confidence":50}]}"#,
+            r#"{"findings":[{"path":"a","line":99999999999999999999,"issue":"x","kind":"bug","confidence":50}]}"#,
+            r#"{"findings":[{"path":"a","line":1,"issue":"x","kind":"nonsense","confidence":50}]}"#,
+            r#"{"findings":[{"path":"a","line":1,"issue":"x","kind":"bug","confidence":300}]}"#,
+            r#"{"findings":[{"path":"a","line":1,"issue":"x","kind":"bug","confidence":50,"extra":{"a":[[[[]]]]}}]}"#,
+            "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[",
+            "\u{0}",
+            "",
+        ];
+        for input in inputs {
+            if let Ok(report) = serde_json::from_str::<ReviewReport>(input) {
+                let _ = report.validate();
+            }
+        }
+        // Unknown fields from a newer reviewer are kept and ignored, not an error.
+        let tolerant: ReviewReport = serde_json::from_str(
+            r#"{"findings":[{"path":"a","line":1,"issue":"x","kind":"bug","confidence":50,"extra":1}],"note":"y"}"#,
+        )
+        .unwrap();
+        assert_eq!(tolerant.findings.len(), 1);
     }
 }

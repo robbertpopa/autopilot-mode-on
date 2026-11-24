@@ -37,7 +37,10 @@ mod metrics;
 mod notes;
 mod overlap;
 mod pipelines;
+mod places;
 mod plan;
+mod pr_rules;
+mod pr_watch;
 mod profile_edit;
 mod proposals;
 mod publish;
@@ -59,6 +62,7 @@ pub use attachments::{
     stage,
 };
 pub use autopilot_checks::resolve_executable;
+pub use autopilot_tracker::Repo;
 pub use build::{BuildOutcome, BuildSetup, Isolation, run_build};
 pub use catalog::{ToolSuggestion, allowed_tools, set_tool_allowed, suggest_tools};
 pub use change::{Proposal, Reading, apply_to_project, apply_to_ticket, propose};
@@ -82,7 +86,12 @@ pub use overlap::{TicketOverlap, find_overlaps};
 pub use pipelines::{
     choose_pipeline, chosen as chosen_pipeline, chosen_custom as chosen_custom_steps,
 };
+pub use places::{Places, gh_for, places, worktree_of};
 pub use plan::{approved_plan, plan_ticket, run_plan};
+pub use pr_rules::{
+    ChecksState, MergeState, PrAction, PrState, PrSummary, ReviewDecision, next_action,
+};
+pub use pr_watch::{PrWatch, watch_pull_request};
 pub use profile_edit::{
     ProfileEditError, ProjectField, ReviewField, StepField, add_detected_check, add_pipeline,
     edit_project, edit_review, edit_step, free_custom_slot, load_profile, remove_custom_step,
@@ -107,9 +116,9 @@ pub use tuning::{
     undo_tuning,
 };
 pub use view::{
-    AttachmentView, Badge, CheckRow, CostLine, LogLine, RoundView, StepView, TicketView,
-    TimelineLine, dollars, load_ticket, name_custom_steps, spent_since, step_name, ticket_view,
-    tickets,
+    AttachmentView, Badge, CheckFinding, CheckRow, CostLine, LogLine, RoundView, StepView,
+    TicketView, TimelineLine, dollars, load_ticket, name_custom_steps, spent_since, step_name,
+    ticket_view, tickets,
 };
 pub use workspace::{
     canonical as canonical_folder, of as workspace_of, record as record_workspace,
@@ -384,6 +393,11 @@ fn pump(
             Some(AgentEvent::DraftResult(_)) => {
                 break Pumped::Failed(
                     io::Error::other("a step that expects a result got a pipeline draft").into(),
+                );
+            }
+            Some(AgentEvent::ReviewResult(_)) => {
+                break Pumped::Failed(
+                    io::Error::other("a step that expects a result got review findings").into(),
                 );
             }
             Some(AgentEvent::PlanResult(plan)) => break Pumped::Plan(plan),

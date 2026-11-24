@@ -99,6 +99,8 @@ struct BuildRound<'a, A: Agent> {
     base: String,
     toolbox: std::sync::Arc<Toolbox>,
     review: bool,
+    /// What the review's model calls cost this round, for the step's cap.
+    review_spent: Rc<std::cell::Cell<Money>>,
     checks: Vec<Box<dyn Check>>,
     kept: Kept,
     session: Option<SessionId>,
@@ -162,6 +164,10 @@ impl<A: Agent> Round for BuildRound<'_, A> {
         Ok(self.manager.fingerprint(&self.ticket.id)?.to_string())
     }
 
+    fn check_cost(&mut self) -> Money {
+        self.review_spent.take()
+    }
+
     fn build(&mut self, request: &BuildRequest) -> Result<BuildTurn, Error> {
         self.gate()?;
         let session = match (&request.session, &self.session) {
@@ -221,6 +227,7 @@ impl<A: Agent> Round for BuildRound<'_, A> {
                 | AgentEvent::PlanResult(_)
                 | AgentEvent::DraftResult(_)
                 | AgentEvent::DesignResult(_)
+                | AgentEvent::ReviewResult(_)
                 | AgentEvent::CustomResult(_) => {
                     return Err(Error::NotReady(
                         "the agent answered Build with a result".into(),
@@ -253,6 +260,11 @@ impl<A: Agent> Round for BuildRound<'_, A> {
         // fingerprint and the published commit all include it. A failed fetch
         // (a crate that does not exist, a version that does not resolve) is the
         // agent's to fix, so it is a failing check, not a fault of the machine.
+        // What an `npm ci` creates is never the agent's work, so it is kept out of
+        // the host's commits even when the project forgot to ignore it.
+        if self.worktree.join("package.json").is_file() {
+            self.manager.exclude(&self.ticket.id, "node_modules/")?;
+        }
         if let Err(note) = self.toolbox.prepare(&self.worktree, &self.cancel) {
             return Ok(vec![autopilot_checks::CheckRun {
                 id: "dependencies".to_owned(),
@@ -290,6 +302,8 @@ impl<A: Agent> Round for BuildRound<'_, A> {
                 ticket: self.ticket,
                 plan: self.plan,
                 patch: self.manager.committed_patch(&self.ticket.id)?,
+                rules: self.rules.as_ref().map(|(block, _)| block.as_str()),
+                spent: Rc::clone(&self.review_spent),
             };
             let reviewers: [Box<dyn Check + '_>; 1] = [Box::new(review)];
             runs.extend(run_all(&reviewers, &context, &key, &mut self.kept)?);
@@ -461,8 +475,6 @@ pub fn run_build(
         _ => limits,
     };
 
-    let (last, hint) = begin(&mut store, &ticket.id, &state, &history, last)?;
-
     // A bare name is looked up on PATH; the Git crate wants an absolute program.
     let git = autopilot_checks::resolve_executable(
         &setup.git.to_string_lossy(),
@@ -493,6 +505,10 @@ pub fn run_build(
     let policy = Policy::new(&scoped).map_err(|error| Error::NotReady(error.to_string()))?;
     let checks = standard_checks(&toolbox, std::sync::Arc::new(policy), None);
 
+    // Marking the step running comes after everything that can refuse to start, so a
+    // refusal leaves no attempt open for the next build to trip over.
+    let (last, hint) = begin(&mut store, &ticket.id, &state, &history, last)?;
+
     let journal = Rc::new(RefCell::new(Journal {
         store,
         ticket: ticket.id.clone(),
@@ -511,6 +527,7 @@ pub fn run_build(
         base: owned.base.as_str().to_owned(),
         toolbox,
         review: setup.review,
+        review_spent: Rc::default(),
         checks,
         kept: Kept::default(),
         session: latest_session(&history),

@@ -422,6 +422,49 @@ fn publish_refuses_an_unbuilt_ticket_and_a_bad_repository_name() {
     assert!(String::from_utf8_lossy(&bad.stderr).contains("not a usable name"));
 }
 
+// Invariant: `pr watch` reads only a ticket whose pull request was published,
+// refuses a repository name that is not plain owner/name, and never calls gh
+// before that.
+#[test]
+fn pr_watch_refuses_an_unpublished_ticket_and_a_bad_repository_name() {
+    let scratch = tempfile::tempdir().unwrap();
+    let data = scratch.path().join("data");
+    assert!(run_claude("plain", &data, scratch.path()).status.success());
+    let fake_gh = PathBuf::from(env!("CARGO_BIN_EXE_autopilot"))
+        .with_file_name(format!("autopilot-fake-gh{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        fake_gh.is_file(),
+        "build the workspace first: cargo build --workspace"
+    );
+    let state = scratch.path().join("gh.json");
+    std::fs::write(&state, r#"{"calls":[]}"#).unwrap();
+    let watch = |github: &str| {
+        let github = format!("--github={github}");
+        Command::new(env!("CARGO_BIN_EXE_autopilot"))
+            .args(["pr", "watch", "e2e-1", "--repo"])
+            .arg(scratch.path())
+            .arg(&github)
+            .arg("--gh-path")
+            .arg(&fake_gh)
+            .arg("--data-dir")
+            .arg(&data)
+            .env("FAKE_GH_STATE", &state)
+            .output()
+            .unwrap()
+    };
+    let unpublished = watch("owner/name");
+    assert!(!unpublished.status.success());
+    let message = String::from_utf8_lossy(&unpublished.stderr);
+    assert!(
+        message.contains("no pull request has been published"),
+        "{message}"
+    );
+    let bad = watch("-evil/name");
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("not a usable name"));
+    let calls = std::fs::read_to_string(&state).unwrap();
+    assert_eq!(calls, r#"{"calls":[]}"#, "gh was called");
+}
+
 // Invariant: stop, pause and resume leave and clear flags a running ticket
 // looks for between turns; they never touch the history themselves. A ticket
 // id that could name another path is refused.
@@ -439,4 +482,72 @@ fn stop_pause_and_resume_leave_and_clear_flags() {
     json_line(&autopilot(&["resume", "t-1"], &data));
     assert!(!data.join("control").join("t-1.pause").exists());
     assert!(!autopilot(&["stop", "../x"], &data).status.success());
+}
+
+// Invariant: a build that cannot start (here: the repository is not a Git
+// repository) leaves no attempt running, so a later build is not told the first
+// one is still going.
+#[test]
+fn a_build_that_cannot_start_does_not_leave_build_check_running() {
+    let scratch = tempfile::tempdir().unwrap();
+    let data = scratch.path().join("data");
+    assert!(run_claude("plain", &data, scratch.path()).status.success());
+    autopilot(&["clarify", "e2e-1"], &data);
+    let ticket = scratch.path().join("ticket.json");
+    let fake = fake_claude();
+    autopilot(
+        &[
+            "run-step",
+            "--step",
+            "plan",
+            "--agent",
+            "claude",
+            "--claude-path",
+            fake.to_str().unwrap(),
+            "--ticket",
+            ticket.to_str().unwrap(),
+        ],
+        &data,
+    );
+    let waiting = json_line(&autopilot(&["inbox", "list"], &data));
+    json_line(&autopilot(
+        &["inbox", "approve", waiting["id"].as_str().unwrap()],
+        &data,
+    ));
+    let profile = scratch.path().join("profile.toml");
+    std::fs::write(&profile, "[steps.build_check]\nauth = \"api\"\n").unwrap();
+    let build = || {
+        autopilot(
+            &[
+                "build",
+                "--agent",
+                "fake",
+                "--ticket",
+                ticket.to_str().unwrap(),
+                "--repo",
+                scratch.path().to_str().unwrap(),
+                "--base",
+                "main",
+                "--worktrees",
+                scratch.path().join("wt").to_str().unwrap(),
+                "--profile",
+                profile.to_str().unwrap(),
+            ],
+            &data,
+        )
+    };
+    for _ in 0..2 {
+        let output = build();
+        assert!(!output.status.success());
+        let message = String::from_utf8_lossy(&output.stderr);
+        assert!(!message.contains("already running"), "{message}");
+    }
+    let status = json_line(&autopilot(&["status", "e2e-1", "--json"], &data));
+    let build_check = status["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["step"] == "build_check")
+        .unwrap();
+    assert_eq!(build_check["state"], "idle", "{status}");
 }

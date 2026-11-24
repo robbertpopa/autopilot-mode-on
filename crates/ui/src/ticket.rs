@@ -8,10 +8,12 @@ use autopilot_pipeline::StepState;
 use eframe::egui::{self, Color32, Frame, Margin, RichText, Shape, Stroke};
 
 use crate::app::{App, Screen};
+use crate::backend::Action;
 use crate::run::state_text;
 use crate::theme;
 
-const CODE_WHY: &str = "coming soon: changing code needs real Build runs (S6)";
+const CODE_WHY: &str =
+    "code changes follow the approved plan: press Build on the ticket once the plan is approved";
 const ASK_WHY: &str = "coming soon: a side question to the agent is not built yet";
 const UNSURE_WHY: &str =
     "recorded per ticket, but no step reads it yet, so a switch here would change nothing";
@@ -72,6 +74,10 @@ pub(crate) fn live_status(ui: &mut egui::Ui, view: &TicketView) {
     };
     let name = step_name(card.step);
     let (text, color) = match &card.state {
+        StepState::Running if crate::run::pull_request_approved(view) => (
+            "Pull request approved: waiting for you to open it".to_owned(),
+            theme::BLUE_TEXT(),
+        ),
         StepState::Running => {
             // The ticket's own clock: per-step start times are not recorded.
             let since = crate::now_ms().saturating_sub(view.started_ms);
@@ -87,7 +93,8 @@ pub(crate) fn live_status(ui: &mut egui::Ui, view: &TicketView) {
         }
         _ => return,
     };
-    let running = matches!(card.state, StepState::Running);
+    let running =
+        matches!(card.state, StepState::Running) && !crate::run::pull_request_approved(view);
     ui.horizontal(|ui| {
         if running {
             ui.add(egui::Spinner::new().size(14.0).color(color));
@@ -202,6 +209,7 @@ fn stepper_row(
     tag: &str,
     current: bool,
     (first, last): (bool, bool),
+    approved: bool,
 ) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::click());
@@ -245,7 +253,9 @@ fn stepper_row(
         font,
         text_color,
     );
-    let right = if current && !matches!(card.state, StepState::Idle) {
+    let right = if approved && card.state == StepState::Running {
+        "approved"
+    } else if current && !matches!(card.state, StepState::Idle) {
         short_state(&card.state)
     } else {
         tag
@@ -334,6 +344,8 @@ impl App {
         self.story(ui, &view);
         ui.add_space(6.0);
         self.build_panel(ui, &view);
+        // The pull request feedback card (stream 1) is drawn here, below the
+        // checks it follows from.
         self.files_panel(ui, &view);
     }
 
@@ -404,7 +416,13 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(glyph).color(color));
                         ui.label(RichText::new(step_name(card.step)).strong());
-                        ui.label(theme::muted(state_text(&card.state)));
+                        let approved = card.step == Step::PullRequest
+                            && crate::run::pull_request_approved(view);
+                        ui.label(theme::muted(if approved {
+                            "approved, not opened yet".to_owned()
+                        } else {
+                            state_text(&card.state)
+                        }));
                     });
                     if let Some(short) = &card.in_short {
                         ui.label(short);
@@ -483,6 +501,23 @@ impl App {
         }
     }
 
+    /// The row that opens the ticket's copy of the project, once Build made it.
+    fn open_worktree_row(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+        let worktree = autopilot_engine::worktree_of(&self.options.data_dir, &view.id);
+        let row = egui::Button::new("Open the worktree")
+            .frame(false)
+            .min_size(egui::vec2(ui.available_width(), 28.0));
+        if ui
+            .add_enabled(worktree.is_some(), row)
+            .on_disabled_hover_text(
+                "There is no copy of the project for this ticket yet: it is made when Build starts.",
+            )
+            .clicked()
+        {
+            self.act(Action::OpenWorktree(view.id.clone()));
+        }
+    }
+
     /// The right panel without a drawer: pipeline, stepper, cost, actions.
     pub(crate) fn stepper_panel(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         let mut open = None;
@@ -529,6 +564,7 @@ impl App {
                     tag,
                     current == Some(card.step),
                     (index == 0, index == last),
+                    card.step == Step::PullRequest && crate::run::pull_request_approved(view),
                 );
                 if theme::named(row, step_name(card.step)).clicked() {
                     open = Some(card.step);
@@ -565,12 +601,11 @@ impl App {
             for (text, why) in [
                 (
                     "Re-run from here",
-                    "coming soon: only Understand can run again until real agents (S6)",
+                    "open the step and use Re-run this step: Understand, Design and Plan can run again; a finished build is not re-run",
                 ),
-                ("Open the worktree", "coming soon: no worktree yet (S6)"),
                 (
                     "Open in a terminal",
-                    "coming soon: needs a real session (S6)",
+                    "not built: starting a terminal in the worktree",
                 ),
                 (
                     "Explain in plain words",
@@ -585,6 +620,7 @@ impl App {
                 )
                 .on_disabled_hover_text(why);
             }
+            self.open_worktree_row(ui, view);
         });
     }
 }

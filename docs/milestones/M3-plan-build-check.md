@@ -31,3 +31,5 @@ A small real ticket on a sample repo reaches green checks, with at least one ref
 ## Exit evidence (2026-11-23)
 
 Two small tickets on a sample Rust crate went from an approved plan to green checks from the CLI with the real agent inside the WSL2 boundary (`docs/spikes/S6-containment.md#result`). Neither needed a refine round with the real model; refinement inside the sandbox is covered by `a_rust_build_is_checked_inside_the_sandbox_and_refined` (fake agent, real cargo, ignored, needs the distro). The agent review (check 5) ran on the second ticket.
+
+A refine round with the real model was exercised once, on a ticket with an engineered project rule (the `fmt` check also required a `CHANGELOG.md` entry the ticket never mentioned): round 1 failed with that text and the agent fixed it. See `docs/spikes/S6-containment.md#result`.

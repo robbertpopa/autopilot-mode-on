@@ -76,6 +76,14 @@ pub trait Round {
     /// # Errors
     /// Returns the reason the checks could not run at all.
     fn check(&mut self) -> Result<Vec<CheckRun>, Self::Error>;
+
+    /// What the checks that just ran cost, such as the model calls of a review.
+    /// It counts against the step's dollar cap like a build turn does: spending
+    /// that the loop never sees is spending the cap cannot stop. Checks that
+    /// only run commands cost nothing, which is the default.
+    fn check_cost(&mut self) -> Money {
+        Money::default()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -212,6 +220,7 @@ pub fn refine<R: Round>(
         }
 
         let runs = round.check()?;
+        spent = spent.checked_add(round.check_cost()).unwrap_or(spent);
         for run in &runs {
             emit(check_event(run));
         }

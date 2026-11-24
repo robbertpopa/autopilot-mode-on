@@ -47,8 +47,8 @@ pub struct PublishSetup<'a> {
 
 /// What the owner is asked to approve.
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
-struct Offer {
-    approval: Approval,
+pub(crate) struct Offer {
+    pub(crate) approval: Approval,
     /// Why this asks even with no checkbox: new dependencies, workflow files, and so on.
     reasons: Vec<String>,
 }
@@ -110,7 +110,7 @@ fn ready_to_publish(history: &[RecordedEvent]) -> Result<autopilot_pipeline::Tic
     Ok(state)
 }
 
-fn last_offer(history: &[RecordedEvent]) -> Option<Offer> {
+pub(crate) fn last_offer(history: &[RecordedEvent]) -> Option<Offer> {
     history
         .iter()
         .rev()

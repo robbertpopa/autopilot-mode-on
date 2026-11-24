@@ -80,7 +80,13 @@ pub struct Wsl {
     home: String,
     /// Where the seccomp helper lives. The command must be able to start it.
     seccomp: String,
+    /// The installed deny hook, a Linux program an agent runs before each shell
+    /// call. It sits in a folder the agent can read but not write.
+    hook: String,
     settings_dir: PathBuf,
+    srt_version: String,
+    bwrap_version: Option<String>,
+    claude_version: Option<String>,
 }
 
 /// What one command may touch. Paths are Windows paths (`D:\...`) or absolute
@@ -99,6 +105,11 @@ pub struct Boundary {
     pub domains: Vec<String>,
     /// Scratch folder, made writable and exported as `TMPDIR`.
     pub tmp: Option<PathBuf>,
+    /// Environment variables whose real value the command must never see. The
+    /// command gets a placeholder of the same shape, and the proxy puts the real
+    /// value back on requests to `domains`. This needs TLS termination, which
+    /// is switched on whenever a variable is listed.
+    pub mask_env: Vec<String>,
 }
 
 impl Wsl {
@@ -176,6 +187,24 @@ impl Wsl {
         self.host == Host::Linux || !folder.to_string_lossy().starts_with('/')
     }
 
+    /// The tool versions the probe ran with, for the probe's output and logs.
+    #[must_use]
+    pub fn tool_versions(&self) -> String {
+        let unknown = "unknown";
+        format!(
+            "srt {}, bubblewrap {}, claude {}",
+            self.srt_version,
+            self.bwrap_version.as_deref().unwrap_or(unknown),
+            self.claude_version.as_deref().unwrap_or(unknown)
+        )
+    }
+
+    /// The deny hook's path inside the boundary's machine.
+    #[must_use]
+    pub fn hook(&self) -> &str {
+        &self.hook
+    }
+
     #[must_use]
     pub fn home(&self) -> &str {
         &self.home
@@ -220,7 +249,7 @@ impl Wsl {
             deny_read.push(self.home.clone());
         }
         deny_read.extend(hide);
-        let value = serde_json::json!({
+        let mut value = serde_json::json!({
             "network": {
                 "allowedDomains": boundary.domains,
                 "deniedDomains": [],
@@ -232,6 +261,20 @@ impl Wsl {
                 "denyWrite": protect,
             },
         });
+        if !boundary.mask_env.is_empty() {
+            value["network"]["tlsTerminate"] = serde_json::json!({ "excludeDomains": [] });
+            value["credentials"] = serde_json::json!({
+                "envVars": boundary
+                    .mask_env
+                    .iter()
+                    .map(|name| serde_json::json!({
+                        "name": name,
+                        "mode": "mask",
+                        "injectHosts": boundary.domains,
+                    }))
+                    .collect::<Vec<_>>(),
+            });
+        }
         serde_json::to_string_pretty(&value).map_err(io::Error::other)
     }
 
@@ -341,9 +384,19 @@ if [ -n "$srt" ]; then
   echo "srt=$srt"
   echo "seccomp=${real%/dist/*}/vendor/seccomp"
 fi
+if [ -n "$srt" ]; then
+  echo "srt_version=$("$srt" --version 2>/dev/null | head -n 1)"
+fi
+echo "bwrap_version=$(bwrap --version 2>/dev/null | head -n 1)"
+echo "claude_version=$(claude --version 2>/dev/null | head -n 1)"
 for tool in srt bwrap socat rg python3 node; do
   command -v "$tool" >/dev/null || echo "missing:$tool"
 done
+if [ -x "$home/.autopilot/bin/autopilot-hook" ]; then
+  echo "hook=$home/.autopilot/bin/autopilot-hook"
+else
+  echo "missing:autopilot-hook (run tools/wsl/install-hook.sh)"
+fi
 "#;
 
 pub(crate) fn parse_discovery(
@@ -358,6 +411,10 @@ pub(crate) fn parse_discovery(
     let mut path = None;
     let mut srt = None;
     let mut seccomp = None;
+    let mut hook = None;
+    let mut srt_version = None;
+    let mut bwrap_version = None;
+    let mut claude_version = None;
     let mut missing = Vec::new();
     for line in text.lines() {
         if let Some(value) = line.strip_prefix("home=") {
@@ -368,6 +425,14 @@ pub(crate) fn parse_discovery(
             srt = Some(value.to_owned());
         } else if let Some(value) = line.strip_prefix("seccomp=") {
             seccomp = Some(value.to_owned());
+        } else if let Some(value) = line.strip_prefix("hook=") {
+            hook = Some(value.to_owned());
+        } else if let Some(value) = line.strip_prefix("srt_version=") {
+            srt_version = version_word(value);
+        } else if let Some(value) = line.strip_prefix("bwrap_version=") {
+            bwrap_version = version_word(value);
+        } else if let Some(value) = line.strip_prefix("claude_version=") {
+            claude_version = version_word(value);
         } else if let Some(tool) = line.strip_prefix("missing:") {
             missing.push(tool.to_owned());
         }
@@ -382,15 +447,31 @@ pub(crate) fn parse_discovery(
             missing.join(", ")
         )));
     }
-    let (Some(home), Some(path), Some(srt), Some(seccomp)) = (home, path, srt, seccomp) else {
+    let (Some(home), Some(path), Some(srt), Some(seccomp), Some(hook)) =
+        (home, path, srt, seccomp, hook)
+    else {
         return Err(io::Error::other(format!(
             "{place} gave an incomplete answer"
         )));
     };
-    for value in [&home, &path, &srt, &seccomp] {
+    for value in [&home, &path, &srt, &seccomp, &hook] {
         if value.is_empty() || value.contains(['\n', '\0']) {
             return Err(io::Error::other(format!("{place} gave an unusable answer")));
         }
+    }
+    // The probe's rows were checked against these versions only. A newer `srt`
+    // can change what a setting means, so an unlisted one is refused, not
+    // trusted.
+    let Some(srt_version) = srt_version else {
+        return Err(io::Error::other(format!(
+            "{place} did not report the version of srt"
+        )));
+    };
+    if !VALIDATED_SRT.contains(&srt_version.as_str()) {
+        return Err(io::Error::other(format!(
+            "srt {srt_version} on {place} has not been validated (validated: {}); see docs/security.md for how to validate a new version",
+            VALIDATED_SRT.join(", ")
+        )));
     }
     Ok(Wsl {
         host,
@@ -401,8 +482,32 @@ pub(crate) fn parse_discovery(
         path,
         home,
         seccomp,
+        hook,
         settings_dir,
+        srt_version,
+        bwrap_version,
+        claude_version,
     })
+}
+
+/// The `srt` versions the escape probe has passed with. Bump it only after
+/// re-running the probe on the new version (`docs/security.md`).
+pub const VALIDATED_SRT: &[&str] = &["0.0.83"];
+
+/// `bubblewrap 0.9.0`, `0.0.83` or `2.1.330 (Claude Code)` to the first word
+/// that starts with a digit; anything else is `None`.
+fn version_word(line: &str) -> Option<String> {
+    let word = line
+        .split_whitespace()
+        .find(|word| word.starts_with(|c: char| c.is_ascii_digit()))?;
+    if word.len() > 64
+        || !word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || ".-+_".contains(c))
+    {
+        return None;
+    }
+    Some(word.to_owned())
 }
 
 /// Run a discovery command and return what it printed.

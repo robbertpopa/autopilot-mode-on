@@ -1,4 +1,5 @@
 mod claude;
+mod conformance;
 
 use std::{
     io::{self, Write},
