@@ -7,41 +7,52 @@ Reviewed 2026-11-20. The research notes below are dated references. Provider beh
 
 ## 0. Status and next step
 
-**Next session starts here (Design upload trial).** Run the S4 trial in [the S4 note](spikes/S4-claude-design-headless.md): an interactive control, then a headless `claude -p` publish on a synthetic brief, a revision to the same URL, and a comment read, on an approved claude.ai login with no public link. Then do follow-up A14 in [stream 2](work-streams/02-agents-and-adapters.md): one page per project for every ticket's mockups. Spike budget and the owner in the session apply. 
+**Where the work is.** Work is split into four streams that own different crates; read [docs/work-streams/00-overview.md](work-streams/00-overview.md), then the stream file you were given, and do its first unchecked task. The orchestrator guide is [ORCHESTRATOR.md](work-streams/ORCHESTRATOR.md). Milestone and spike files hold the detail behind each row below.
 
-**Next session starts here.** Work in `D:\autopilot-mode-on`. M0 and the [S5 synthetic process checks](spikes/S5-windows-process-control.md) passed. The [fixture-backed M1 CLI](milestones/M1-agent-step.md#fixture-verification) runs and replays a ticket and saves streamed activity before exit. The offline S1 preflight is ready. The [S2 loopback probe](spikes/S2-plan-limits.md#loopback-probe) recorded 429 and 529 retries, recovery and terminal errors. Live subscription-limit detection is pending. Capture the versioned S1 provider contract once the dedicated workspace and budget are confirmed. The [S3 source review](spikes/S3-read-gru.md#result) and [M4 local worktree operations](milestones/M4-worktrees-pr.md#part-1-git-crate-can-start-after-m0) are verified. The [S7 graph comparison](spikes/S7-graph-widget.md#result) selected a fixed egui canvas. The [S8 documentation and logged-out preflight](spikes/S8-codex-auth.md#result) are recorded. Live auth switching, event capture and the unattended-use decision still gate M8. The [S9 review corpus](spikes/S9-review-quality.md#local-corpus-preparation) is ready for the later model and cost measurements.
+**What exists** (verified against the code and `git log` on `develop`, 2026-11-24): the whole ticket flow from the command line and the window (Understand, Clarify, Design, Plan, approval, Build, checks, review, pull request approval, push, draft pull request); a real agent that builds only inside a validated sandbox (WSL2 on Windows, directly on Linux, `srt` and Seatbelt on an Apple silicon Mac, API-key mode); `autopilot isolation check`, `autopilot pr watch`, the agent conformance suite, the pure pull request rules, the sandbox settings page and pinned tool versions. `ci.yml` runs on Windows, Linux and macOS.
+
+**Not proven yet.** No real pull request has been opened on GitHub. The Design upload to claude.ai (S4), subscription plan-limit detection (S2), Codex (S8) and the review-quality measurements (S9) wait for live evidence. The window's newest screens have not been looked at on a real screen by their authors.
+
+**Open owner items** (details and the decision list: [overview](work-streams/00-overview.md#decisions-only-the-owner-can-make-they-block-work-ask-once-do-not-guess)):
+
+- Decision 1: may the first real draft pull request be opened on the throwaway repository.
+- Decisions 2, 3 and 4: computer-use scope, which other agents to adopt, subscription mode inside the sandbox (stays refused).
+- The $0.05 per-call budget default is too small for Design and Plan on a real repository; Plan on Opus is also the largest cost (task A13).
+- On macOS the subscription sign-in check can fail because `USER` is missing from the environment allowlist in `crates/accounts`; a fix is in progress in another session.
+- Key hygiene: use a dedicated, spend-limited key and rotate it if it appears anywhere it should not ([security](security.md#open-items-for-the-owner)).
 
 **Open follow-ups from the parallel-ticket run (2026-11-24).**
 
-- Design upload: run S4 again with `claude -p --permission-prompt-tool` so the inbox answers the upload approval for `designs/<ticket>/` only; then check revision of the same URL and comment reading. Goal: one Claude Design page per project with every ticket's mockups, as an explicit per-project opt-in.
-- Reuse more of Claude Code through its own options (permission prompt tool, the Agent SDK) before writing more host-side handling.
-- UI: elapsed time counts from the wrong start; "Opened the mockups" and "Design ready" banners leak across tickets; the Inbox detail pane is clipped; Plan review rows overflow instead of wrapping; a new ticket briefly shows under "no project"; the orchestrator spinner shows three times; "Reading your request..." shows on the New ticket page.
-- Cost and reliability: Plan on Opus is the largest cost; one Plan ended with `error_max_turns` ($1.32, no result); the release build has no console, which hid usage errors.
-- Process: a clean test start needs the native folder picker; `UI-REDESIGN.md` and `WORK-PACKAGES.md` are not updated.
+- Design upload: run S4 again with `claude -p --permission-prompt-tool` so the inbox answers the upload approval for `designs/<ticket>/` only; then check revision of the same URL and comment reading. Goal: one Claude Design page per project with every ticket's mockups, as an explicit per-project opt-in (A14).
+- Reuse more of Claude Code through its own options (permission prompt tool, the Agent SDK) before writing more host-side handling (A11, A12).
+- UI bugs W11 to W16 in [stream 4](work-streams/04-window-and-orchestration.md): elapsed time, banners leaking across tickets, clipped Inbox pane, overflowing plan rows, a ticket briefly under "no project", the orchestrator spinner shown three times.
+- Cost and reliability: one Plan ended with `error_max_turns` ($1.32, no result); the release build on Windows has no console, which hid usage errors (W16).
+- Process: a clean test start needs the native folder picker.
 
-The standalone repository holds the current implementation and milestone status. Record spike results and tick milestone items after running their exit checks.
+Record spike results and tick milestone items after running their exit checks. Legend for the table: `[x]` done and its exit check run; `[~]` part done, the rest named in the file; `[ ]` not started or blocked.
 
 | Item | File | State |
 |---|---|---|
 | S1 headless contract | `docs/spikes/S1-headless-contract.md` | [x] |
-| S2 plan-limit detection | `docs/spikes/S2-plan-limits.md` | [ ] |
+| S2 plan-limit detection | `docs/spikes/S2-plan-limits.md` | [~] loopback evidence only; no real subscription limit seen |
 | S3 read Gru | `docs/spikes/S3-read-gru.md` | [x] |
-| S4 Claude Design headless | `docs/spikes/S4-claude-design-headless.md` | [ ] |
+| S4 Claude Design headless | `docs/spikes/S4-claude-design-headless.md` | [ ] live trial pending |
 | S5 synthetic process control | `docs/spikes/S5-windows-process-control.md` | [x] |
-| S6 containment | `docs/spikes/S6-containment.md` | [ ] |
+| S6 containment | `docs/spikes/S6-containment.md` | [x] WSL2, Linux and macOS (`srt`), API-key mode; subscription mode and native Windows refused |
 | S7 graph widget | `docs/spikes/S7-graph-widget.md` | [x] |
-| S8 Codex auth and terms | `docs/spikes/S8-codex-auth.md` | [ ] |
-| S9 review quality and cost | `docs/spikes/S9-review-quality.md` | [ ] |
+| S8 Codex auth and terms | `docs/spikes/S8-codex-auth.md` | [~] documents and logged-out preflight; live checks pending |
+| S9 review quality and cost | `docs/spikes/S9-review-quality.md` | [~] corpus ready; measurements pending |
+| S10 computer use | `docs/spikes/S10-computer-use.md` | [x] document only; waits for decision 2 |
 | M0 foundation | `docs/milestones/M0-foundation.md` | [x] |
 | M1 one agent step | `docs/milestones/M1-agent-step.md` | [x] |
-| M2 understand, ask, inbox | `docs/milestones/M2-understand-ask.md` | [ ] |
-| M3 plan, build, check | `docs/milestones/M3-plan-build-check.md` | [ ] |
-| M4 worktrees, parallel, PR | `docs/milestones/M4-worktrees-pr.md` | [ ] |
-| M5 window | `docs/milestones/M5-window.md` | [ ] |
-| M6 design step | `docs/milestones/M6-design-step.md` | [ ] |
-| M7 evaluation | `docs/milestones/M7-evaluation.md` | [ ] |
-| M8 Codex adapter, MCP, packaging | `docs/milestones/M8-codex-mcp-packaging.md` | [ ] |
-| M9 codebase review and fix | `docs/milestones/M9-codebase-review.md` | [ ] |
+| M2 understand, ask, inbox | `docs/milestones/M2-understand-ask.md` | [~] explicit resume of an interrupted attempt open |
+| M3 plan, build, check | `docs/milestones/M3-plan-build-check.md` | [x] exit evidence 2026-11-23 |
+| M4 worktrees, parallel, PR | `docs/milestones/M4-worktrees-pr.md` | [~] no real remote run; CI repair open |
+| M5 window | `docs/milestones/M5-window.md` | [~] terminal, later-step re-run, keyboard navigation open |
+| M6 design step | `docs/milestones/M6-design-step.md` | [~] local mockups done; claude.ai canvas waits for S4 |
+| M7 evaluation | `docs/milestones/M7-evaluation.md` | [~] runner loop and dollar cap only |
+| M8 Codex adapter, MCP, packaging | `docs/milestones/M8-codex-mcp-packaging.md` | [~] file-scoped MCP server and installers exist; no Codex adapter |
+| M9 codebase review and fix | `docs/milestones/M9-codebase-review.md` | [~] rule packs and inventory only |
 
 ## 0a. Implementation order and deliverables
 
@@ -49,7 +60,7 @@ The first demo takes a local ticket through Understand and an optional inbox que
 
 | Slice | Files and work | Acceptance |
 |---|---|---|
-| **M0.1 Workspace** | Create `Cargo.toml`, `rust-toolchain.toml`, `.cargo/config.toml`, `LICENSE`, `deny.toml`, `.github/workflows/ci.yml` and `tools/xtask/src/main.rs`. Verify the pinned compiler and compatible crate versions on both targets. Wire the CI checks from M0. | Workspace checks run on Windows and Linux. The layer check rejects a deliberately inverted dependency. |
+| **M0.1 Workspace** | Create `Cargo.toml`, `rust-toolchain.toml`, `.cargo/config.toml`, `LICENSE`, `deny.toml`, `.github/workflows/ci.yml` and `tools/xtask/src/main.rs`. Verify the pinned compiler and compatible crate versions on both targets. Wire the CI checks from M0. | Workspace checks run on Windows and Linux (macOS was added later). The layer check rejects a deliberately inverted dependency. |
 | **M0.2 Event state and profiles** | Define IDs, money, event envelopes and stored step outcomes in `crates/core/src/lib.rs`. Add SQLite migrations, sequence-checked append, replay and snapshots in `crates/store/src/`. Add TOML parsing, diagnostics and resolved settings in `crates/profile/src/`. | Reopen the store after an interrupted transaction. Replay from the beginning and from a snapshot plus its tail, and compare the state and sequence. An invalid profile reports its file, key and location. |
 | **S1, S2, S5. Agent contract** | Start S5 with `tools/fake-agent` and record process-tree behavior on both targets. For S1, capture and sanitize a minimal structured result, resume and failure transcript before adding optional flags. Use S2's local server to exercise retries and keep an explicit unknown-limit case. | Versioned sanitized fixtures and a written provider contract. Process cleanup evidence covers normal completion, cancel, timeout, and abrupt supervisor exit per target. A target without proven tree cleanup stays fixture-only for unattended execution. |
 | **M1. Fixture-backed CLI** | Put supervision in `crates/process/src/`, the provider-neutral `Agent` contract in `crates/agent/src/`, parsing and provider flags in `crates/agent-claude/src/`, and actions in `crates/engine/src/`. Add the CLI and a fixture runner in `crates/cli/src/` and `tools/fake-agent/src/`. | Build with `cargo build --locked -p autopilot-process -p autopilot-fake-agent -p autopilot-cli`. Run `cargo run -p autopilot-cli -- run-step --step understand --ticket fixtures/tickets/understand.json --agent fake`. It prints a ticket ID and structured result. In a second process, `autopilot watch <ticket-id>` replays the same run and resumes from its event sequence. One manual live smoke test uses a synthetic ticket and no repository tools. |
@@ -135,7 +146,7 @@ S1 and S5 gate M1's live execution. S2 gates automatic limit classification and 
 
 ## 4. Technology choices
 
-Rust stable, edition 2024, toolchain pinned in `rust-toolchain.toml` (same pin as the ck-* repos at the time). Windows is the primary platform, Linux second; CI runs both.
+Rust stable, edition 2024, toolchain pinned in `rust-toolchain.toml` (same pin as the ck-* repos at the time). Windows is the primary platform; Linux and macOS must pass too, and CI runs all three.
 
 | Need | Choice | Notes (crates.io, 2026-11-20) |
 |---|---|---|
@@ -162,24 +173,32 @@ crates/
   core        ids, ticket, step, event, money, errors                       (L0)
   store       Store trait + SQLite event log, snapshots, fold               (L1)
   profile     profile.toml schema, defaults, validation, AGENTS.md reader   (L1)
-  process     bounded subprocess lifecycle and platform supervision        (L1)
+  process     bounded subprocess lifecycle, platform supervision and the
+              sandbox boundary with its probe (WSL2, Linux, macOS)          (L1)
   git         worktrees, branches, diff, conflict prediction (git CLI)      (L2)
   tracker     GitHub issues and PRs through gh                              (L2)
   policy      sandbox and approval axes, risk tier, forced confirmations,
-              budgets, loop detector, protected paths                       (L2)
-  agent       Agent trait, normalised AgentEvent                            (L3)
+              budgets, loop detector, protected paths, the deny hook        (L2)
+  rules       review rule packs, overrides, code inventory                  (L2)
+  agent       Agent trait, normalised AgentEvent, conformance suite         (L3)
   checks      Check trait, ordered runner, kept results                     (L3)
+  accounts    which Claude, GitHub, Azure and Codex sign-ins exist          (L2)
+  notify      desktop notifications                                         (L2)
+  update      signed update check                                           (L2)
   agent-claude  Claude Code headless adapter, stream-json parser            (L4)
   agent-fixture  synthetic Understand adapter for the CLI demo             (L4)
-  agent-codex   Codex CLI adapter, JSONL parser (M8)                         (L4)
   pipeline    step machine, scheduler, inbox, ledger, summaries             (L4)
   engine      one definition per action -> CLI, MCP, UI                     (L5)
-  cli  mcp  ui                                                              (L6)
+  eval  cli  mcp  ui                                                        (L6)
+  agent-codex (planned, M8; not yet created)
 tools/
   fake-agent  test binary that replays recorded transcripts and simulates faults
+  fake-gh     a fake `gh` with a JSON world of pull requests and check runs
   xtask       layers, secrets, ci
+  wsl, macos  sandbox setup scripts; s6-probe: hand-run containment probes
 fixtures/     recorded stream-json transcripts, sample repos, profiles
-docs/         headless contract note, pitfalls (past mistakes)
+docs/         plan, design, milestones, spikes, work streams, rules, pitfalls
+packaging/    Windows installer, macOS disk image, release manifest
 ```
 Rules enforced by `xtask layers`: production dependencies point down. Direct OS subprocess calls live in `process`. Its production consumers are Git, tracker, checks and the concrete agent adapters. Each consumer owns its own executable, arguments and environment. Tooling such as `xtask` sits outside the product layers. Only `ui` uses egui. Library crates produce structured events and errors. The CLI owns terminal output.
 `AGENTS.md` (with `CLAUDE.md` containing `@AGENTS.md`) in the repo root holds the working rules, and a `.coderabbit.yaml` reviews PRs into `develop`.
@@ -246,7 +265,7 @@ Each milestone ends with a working vertical slice and its tests. The window come
 - First corpus: Contest Keeper PRs, about 20. Used to tune models, effort, round caps and the Understand prompt. Not in the CI gate (it costs money).
 
 ### M8: second adapter and integrations
-- Codex adapter on `codex exec --json`; MCP server over `engine`; GitHub App authentication option; release packaging (Windows installer, `cargo install`).
+- Codex adapter on `codex exec --json`; MCP server over `engine`; GitHub App authentication option; release packaging (Windows installer and macOS disk images exist; `cargo install` is not offered).
 
 ### M9. Codebase review and fix
 
@@ -261,7 +280,7 @@ Each milestone ends with a working vertical slice and its tests. The window come
 - **Hostile input** for every parser (stream-json, profile, inbox files, `structured_output`): truncation, bit flips, unknown types; never a panic.
 - **One integration binary per crate** (`tests/it/main.rs`); shared helpers in a `testkit` dev crate.
 - **Determinism:** event-fold and replay tests; the clock is injected.
-- **Windows is a first-class CI job**, because process control and paths are where the risk is.
+- **Windows is a first-class CI job**, next to Linux and macOS, because process control and paths are where the risk is.
 - **Contract test against Claude Code versions:** CI records `claude --version`; a nightly job (optional, costs nothing) runs fixture replay; a manual `live` run is repeated when Claude Code updates and the fixtures are re-recorded if the contract changed.
 
 ## 8. Risks and what we do about them
@@ -303,7 +322,7 @@ Requests to other tabs:
 ## 9. How we work on it
 
 - A new repo with its own `AGENTS.md`; branches from `develop`, squash PRs, titles `type: lowercase imperative`; one milestone per branch family; moves and behaviour changes in separate PRs.
-- The ck-* rules about asking the GitHub account apply to work under `D:\contest-keeper`; the new repo lives outside it (proposed `D:\autopilot-mode-on`), so its own `AGENTS.md` sets the account rule.
+- The ck-* rules about asking the GitHub account apply to work under `D:\contest-keeper`; the new repo lives outside it (the owner's checkout is on `D:` on Windows and under `~/projects` on a Mac), so its own `AGENTS.md` sets the account rule.
 - Each session starts by reading this plan and `DESIGN.md`, does the next unticked item, and ticks it. Spikes write their results to `docs/` so the answers outlive the session.
 - Definition of done for an item: code, tests that pass the keep rule, `cargo xtask ci` green on Windows and Linux, and the plan ticked.
 
@@ -314,4 +333,7 @@ Requests to other tabs:
 3. **Default auth: subscription**, for Claude Code and for Codex; API key per step as an option (see `docs/DESIGN.md`, section 7a).
 4. **Work method:** this plan is split into files so separate tabs can continue; see section 8a.
 
-Remote repository ownership and the S2 and S8 findings are still open.
+5. **Repository:** `robbertpopa/autopilot-mode-on` on GitHub; branches from `develop`, release from `master` through release-please.
+6. **Sandbox:** real Build and Check run only inside a validated `srt` boundary in API-key mode; see [decisions](decisions.md).
+
+The S2 and S8 findings and the owner decisions in the [work-streams overview](work-streams/00-overview.md) are still open.
