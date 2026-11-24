@@ -623,7 +623,7 @@ impl App {
                 .id_salt((view.id.as_str(), "build-plan"))
                 .default_open(build.state != StepState::Passed)
                 .show(ui, |ui| {
-                    crate::ticket::sub_step_list(ui, view, Step::BuildCheck)
+                    crate::ticket::sub_step_list(ui, view, Step::BuildCheck);
                 });
             ui.add_space(4.0);
             ui.label(theme::muted(
