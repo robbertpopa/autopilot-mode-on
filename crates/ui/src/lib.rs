@@ -2041,6 +2041,7 @@ effort = \"high\"
     // opens the pull request.
     #[test]
     fn every_account_view_names_the_github_account() {
+        type Case<'a> = (Vec<(&'a str, bool, bool)>, &'a [&'a str], &'a [&'a str]);
         let directory = tempfile::tempdir().unwrap();
         let options = Options {
             data_dir: directory.path().join("data"),
@@ -2051,7 +2052,6 @@ effort = \"high\"
         let context = egui::Context::default();
         let mut app = App::new(&context, options.clone(), false);
         app.set_snapshot(read(&options));
-        type Case<'a> = (Vec<(&'a str, bool, bool)>, &'a [&'a str], &'a [&'a str]);
         let cases: [Case; 4] = [
             (
                 vec![("robbertpopa", true, true)],
