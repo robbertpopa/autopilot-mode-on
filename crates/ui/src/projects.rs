@@ -543,7 +543,7 @@ impl App {
                 ui.label(theme::muted(format!("made by {}", proposal.cost_note)));
                 ui.horizontal(|ui| {
                     if ui.add(theme::primary("Apply to the editor")).clicked() {
-                        self.rules_text = proposal.text.clone();
+                        self.rules_text.clone_from(&proposal.text);
                         self.ai.rules = None;
                     }
                     if ui.button("Reject").clicked() {
