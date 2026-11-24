@@ -2,6 +2,8 @@
 
 # Orchestrator guide: running the four streams
 
+Resuming on a new machine? Start with [NEXT-STEPS.md](NEXT-STEPS.md), then [owner-prompts.md](owner-prompts.md).
+
 For the Claude Code session that starts and supervises the other Claude windows. You do not write product code. You start one worker per stream, keep them from colliding, watch their pull requests, merge what is green, answer or escalate their questions, and report to the owner. Read [AGENTS.md](../../AGENTS.md), [00-overview.md](00-overview.md) and the four stream files before you start anyone. Commands are given for PowerShell (Windows) and bash or zsh (Linux and macOS); use the one for your host.
 
 ## Your job, in one paragraph
