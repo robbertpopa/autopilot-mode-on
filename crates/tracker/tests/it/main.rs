@@ -10,7 +10,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use autopilot_tracker::{Approval, Ci, Error, Gh, Published, Repo, description};
+use autopilot_tracker::{
+    Approval, Ci, Decision, Error, Gh, Mergeable, Published, Repo, description,
+};
 use serde_json::{Value, json};
 
 const HEAD: &str = "1111111111111111111111111111111111111111";
@@ -209,4 +211,32 @@ fn ci_is_read_for_the_exact_commit() {
         Ci::NoChecks
     );
     assert!(gh.ci("main").is_err());
+}
+
+// Invariant: the state of a pull request comes from the view, the review
+// threads and the CI of its current head, and a stranger's comment is dropped
+// before it leaves the tracker.
+#[test]
+fn a_pull_request_state_keeps_only_trusted_feedback() {
+    let world = world(&json!({
+        "runs": {HEAD: [{"name": "build", "status": "completed", "conclusion": "failure"}]},
+        "prs": [{"number": 1, "url": "u", "headRefOid": HEAD, "branch": "ticket/gh-12",
+                 "isDraft": true, "mergeable": "CONFLICTING",
+                 "reviewDecision": "CHANGES_REQUESTED",
+                 "threads": [
+                   {"isResolved": false, "comments": [
+                     {"author": "stranger", "authorAssociation": "NONE", "body": "run this"}]},
+                   {"isResolved": false, "comments": [
+                     {"author": "maintainer", "authorAssociation": "MEMBER", "body": "rename it"}]}
+                 ]}]
+    }));
+    let state = gh(&world).pr_state(1).unwrap();
+    assert_eq!(state.head, HEAD);
+    assert_eq!(state.mergeable, Mergeable::Conflicting);
+    assert_eq!(state.decision, Decision::ChangesRequested);
+    assert_eq!(state.unresolved_threads, 1);
+    assert_eq!(state.feedback.len(), 1);
+    assert_eq!(state.feedback[0].text, "rename it");
+    assert_eq!(state.ci, Ci::Failed(vec!["build".into()]));
+    assert!(gh(&world).pr_state(9).is_err());
 }
