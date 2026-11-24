@@ -171,8 +171,9 @@ pub fn validate(wsl: Wsl, work: &Path) -> io::Result<Validated> {
         Ok(Validated { wsl })
     } else {
         Err(io::Error::other(format!(
-            "the WSL boundary failed {} check(s): {}",
+            "the WSL boundary failed {} check(s) with {}: {}",
             failures.len(),
+            wsl.tool_versions(),
             failures.join("; ")
         )))
     }
