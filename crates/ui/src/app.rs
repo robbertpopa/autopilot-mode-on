@@ -739,6 +739,13 @@ impl App {
         self.auto_orchestrate();
         self.auto_advance();
         self.follow_system_theme(ctx);
+        // Under every panel, so a part no panel paints (a gap, a panel shorter
+        // than the window) shows the page colour and never the window's black.
+        ctx.layer_painter(egui::LayerId::background()).rect_filled(
+            ctx.content_rect(),
+            0.0,
+            theme::BACKGROUND(),
+        );
         Self::title_area(ctx);
         if self.is_first_run() {
             self.welcome(ctx);

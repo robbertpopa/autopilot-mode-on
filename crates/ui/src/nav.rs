@@ -329,7 +329,8 @@ impl App {
 
     pub(crate) fn nav(&mut self, ctx: &egui::Context) {
         let narrow = ctx.content_rect().width() < COLLAPSE_BELOW;
-        egui::SidePanel::left("nav")
+        let declared = if narrow { NARROW } else { WIDE };
+        let shown = egui::SidePanel::left("nav")
             .exact_width(if narrow { NARROW } else { WIDE })
             .resizable(false)
             .frame(
@@ -361,6 +362,19 @@ impl App {
                     }
                 });
             });
+        // Content wider than the panel makes the panel's frame wider than the
+        // part that paints (the fill is clipped to the declared width), and the
+        // page starts at the wider edge. Whatever the cause, the band between
+        // is painted as sidebar, never left to show the window's black.
+        let edge = shown.response.rect.right();
+        if edge > declared {
+            let band = egui::Rect::from_min_max(
+                egui::pos2(declared, ctx.content_rect().top()),
+                egui::pos2(edge, ctx.content_rect().bottom()),
+            );
+            ctx.layer_painter(egui::LayerId::background())
+                .rect_filled(band, 0.0, theme::SIDEBAR());
+        }
     }
 
     fn nav_head(&self, ui: &mut egui::Ui, narrow: bool) {

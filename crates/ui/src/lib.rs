@@ -2334,17 +2334,31 @@ effort = \"high\"
         } else {
             0.0
         };
-        let panels: Vec<egui::Rect> = output
+        let panels: Vec<(egui::Rect, egui::Color32)> = output
             .unwrap()
             .shapes
             .iter()
             .filter_map(|clipped| match &clipped.shape {
-                egui::Shape::Rect(rect) if rect.rect.height() >= 832.0 - title => Some(rect.rect),
+                egui::Shape::Rect(rect)
+                    if rect.rect.height() >= 832.0 - title
+                        && rect.rect.min.x >= 0.0
+                        && rect.rect.width() < 1280.0 =>
+                {
+                    Some((rect.rect, rect.fill))
+                }
                 _ => None,
             })
             .collect();
-        let nav = panels.iter().find(|rect| rect.min.x == 0.0).unwrap();
-        let page = panels.iter().find(|rect| rect.min.x > 0.0).unwrap();
+        let nav = &panels
+            .iter()
+            .find(|(_, fill)| *fill == theme::SIDEBAR())
+            .unwrap()
+            .0;
+        let page = &panels
+            .iter()
+            .find(|(rect, fill)| *fill == theme::BACKGROUND() && rect.min.x > 0.0)
+            .unwrap()
+            .0;
         assert!(nav.max.x <= 226.5, "the sidebar grew to {}", nav.max.x);
         assert_eq!(nav.max.x, page.min.x, "a gap between the panels");
     }
@@ -2497,5 +2511,206 @@ effort = \"high\"
         )
         .unwrap();
         assert!(ticket_menu::resume_action(&building).is_none());
+    }
+
+    // Invariant: the whole window is painted with the page colour before any
+    // panel, in both palettes, so a part no panel covers (a gap between
+    // panels, a panel shorter than the window) never shows the window's black.
+    // A black band of 8 to 35 px beside the sidebar was seen on the installed
+    // app with every page; the panel code left it unpainted.
+    #[test]
+    fn the_window_is_painted_end_to_end_before_any_panel() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        backend::mark_welcomed(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        for light in [false, true] {
+            theme::apply(&context, light);
+            for (width, height) in [(1070.0_f32, 365.0_f32), (1280.0, 832.0)] {
+                let screen =
+                    egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(width, height));
+                let input = egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                };
+                let mut output = None;
+                for _ in 0..3 {
+                    output = Some(context.run(input.clone(), |context| app.ui(context)));
+                }
+                let first =
+                    output
+                        .unwrap()
+                        .shapes
+                        .into_iter()
+                        .find_map(|clipped| match clipped.shape {
+                            egui::Shape::Rect(rect) => Some(rect),
+                            _ => None,
+                        });
+                let first = first.expect("a rect is drawn");
+                assert_eq!(first.rect, screen, "light={light} {width}x{height}");
+                assert_eq!(first.fill, theme::BACKGROUND());
+            }
+        }
+        theme::apply(&context, false);
+    }
+
+    // Invariant: when the sidebar's content is wider than its panel (here, text
+    // drawn larger than the layout allows for), the band between the painted
+    // sidebar and the page is painted as sidebar. Left alone it showed the
+    // window's black on the installed app, whose fonts are wider than the test
+    // fonts; no other test can force the overflow.
+    #[test]
+    fn a_sidebar_wider_than_its_panel_leaves_no_unpainted_band() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        backend::mark_welcomed(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        context.all_styles_mut(|style| {
+            for font in style.text_styles.values_mut() {
+                font.size *= 1.6;
+            }
+        });
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1280.0, 832.0));
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            ..Default::default()
+        };
+        let mut output = None;
+        for _ in 0..3 {
+            output = Some(context.run(input.clone(), |context| app.ui(context)));
+        }
+        let rects: Vec<(egui::Rect, egui::Color32)> = output
+            .unwrap()
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(rect) if rect.rect.height() > 300.0 => {
+                    Some((rect.rect, rect.fill))
+                }
+                _ => None,
+            })
+            .collect();
+        let page = rects
+            .iter()
+            .filter(|(rect, fill)| rect.min.x > 100.0 && *fill == theme::BACKGROUND())
+            .map(|(rect, _)| rect.min.x)
+            .fold(f32::MAX, f32::min);
+        // Every x from the sidebar's left edge to the page is covered by a
+        // sidebar-coloured rect.
+        let mut x = 0.0_f32;
+        while x < page {
+            assert!(
+                rects.iter().any(|(rect, fill)| *fill == theme::SIDEBAR()
+                    && rect.min.x <= x
+                    && x <= rect.max.x),
+                "x={x} is not sidebar (page starts at {page}): {rects:?}"
+            );
+            x += 2.0;
+        }
+    }
+
+    // Invariant: no two pieces of text on a page are drawn over each other, in
+    // either palette, at the usual width and at narrower ones. The status pill
+    // was drawn over the Stop button, the step state over the step's name, and
+    // a mark over its own text; each looked like a stray overprint. Nothing else
+    // measures text against text.
+    #[test]
+    fn no_two_texts_overlap_on_any_page() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        backend::mark_welcomed(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        demo::seed_build_states(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let mut found = Vec::new();
+        for light in [false, true] {
+            theme::apply(&context, light);
+            for width in [1280.0_f32, 1070.0, 980.0] {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::pos2(0.0, 0.0),
+                        egui::vec2(width, 900.0),
+                    )),
+                    ..Default::default()
+                };
+                let mut pages = vec![(Mode::Today, None)];
+                pages.extend(
+                    [
+                        "demo-timezone",
+                        "demo-heartbeat",
+                        "demo-csrf",
+                        "demo-approved",
+                        "demo-stopped",
+                        "demo-passed",
+                        "demo-asked",
+                        "demo-approved-pr",
+                        "demo-opened",
+                    ]
+                    .map(|name| (Mode::Watch, Some(name))),
+                );
+                for (mode, ticket) in pages {
+                    app.mode = mode;
+                    match ticket {
+                        Some(name) => app.open(&autopilot_core::TicketId::from(name)),
+                        None => app.selected = None,
+                    }
+                    let mut output = None;
+                    for _ in 0..3 {
+                        output = Some(context.run(input.clone(), |context| app.ui(context)));
+                    }
+                    let mut texts = Vec::new();
+                    for clipped in output.unwrap().shapes {
+                        if let egui::Shape::Text(text) = &clipped.shape {
+                            let rect = egui::Rect::from_min_size(text.pos, text.galley.size())
+                                .intersect(clipped.clip_rect);
+                            if rect.width() > 0.0
+                                && rect.height() > 0.0
+                                && !text.galley.text().trim().is_empty()
+                            {
+                                texts.push((rect, text.galley.text().to_owned()));
+                            }
+                        }
+                    }
+                    for (index, (first, one)) in texts.iter().enumerate() {
+                        for (second, other) in &texts[index + 1..] {
+                            let both = first.intersect(*second);
+                            if both.width() > 2.0 && both.height() > 3.0 {
+                                found.push(format!(
+                                    "light={light} {width} {mode:?} {ticket:?}: {one:?} over {other:?}"
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        theme::apply(&context, false);
+        assert!(found.is_empty(), "{} overlaps: {:#?}", found.len(), found);
     }
 }

@@ -226,13 +226,18 @@ pub fn card(fill: Color32, border: Color32) -> Frame {
 
 /// A small coloured label such as "Needs you" or "always runs".
 pub fn pill(ui: &mut Ui, text: &str, fill: Color32, color: Color32) {
-    Frame::new()
-        .fill(fill)
-        .corner_radius(CornerRadius::same(5))
-        .inner_margin(Margin::symmetric(7, 2))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).monospace().size(11.0).color(color));
-        });
+    // Sized from the text and painted by hand: a framed label inside a
+    // right-to-left row was drawn over the button beside it.
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), color);
+    let padding = egui::vec2(7.0, 2.0);
+    let (rect, response) =
+        ui.allocate_exact_size(galley.size() + padding * 2.0, egui::Sense::hover());
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text));
+    ui.painter().rect_filled(rect, CornerRadius::same(5), fill);
+    ui.painter().galley(rect.min + padding, galley, color);
 }
 
 /// The `API $` or `SUB` tag that tells exact spend from an estimate.
