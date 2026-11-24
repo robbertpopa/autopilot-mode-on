@@ -2208,4 +2208,65 @@ effort = \"high\"
         assert!(workspace.is_some() && started.is_some());
         assert!(workspace < started, "{workspace:?} before {started:?}");
     }
+
+    // Invariant: the sidebar paints the whole width it takes, whatever the
+    // project is called. A long project name once widened its content past the
+    // panel, so the frame grew beyond the part that was painted and a black strip
+    // showed between the sidebar and the page; nothing else measures the two
+    // panels against each other.
+    #[test]
+    fn a_long_project_name_does_not_leave_a_gap_beside_the_sidebar() {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory
+            .path()
+            .join("a-project-with-a-very-long-name-that-keeps-on-going-and-going");
+        std::fs::create_dir_all(&project).unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        backend::mark_welcomed(&options.data_dir);
+        perform(
+            &options,
+            &Action::Start {
+                title: "Long".into(),
+                description: "Add an export option".into(),
+                attachments: Vec::new(),
+                workspace: Some(project),
+                pipeline: None,
+            },
+        )
+        .unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        app.mode = Mode::Today;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1280.0, 832.0),
+            )),
+            ..Default::default()
+        };
+        let mut output = None;
+        for _ in 0..3 {
+            output = Some(context.run(input.clone(), |context| app.ui(context)));
+        }
+        let panels: Vec<egui::Rect> = output
+            .unwrap()
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(rect) if rect.rect.height() >= 832.0 => Some(rect.rect),
+                _ => None,
+            })
+            .collect();
+        let nav = panels.iter().find(|rect| rect.min.x == 0.0).unwrap();
+        let page = panels.iter().find(|rect| rect.min.x > 0.0).unwrap();
+        assert!(nav.max.x <= 226.5, "the sidebar grew to {}", nav.max.x);
+        assert_eq!(nav.max.x, page.min.x, "a gap between the panels");
+    }
 }
