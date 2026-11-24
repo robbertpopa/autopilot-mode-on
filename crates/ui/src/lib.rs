@@ -2007,4 +2007,107 @@ effort = \"high\"
             }
         }
     }
+
+    fn github_only(accounts: Vec<(&str, bool, bool)>) -> autopilot_accounts::Accounts {
+        use autopilot_accounts::{GithubAccount, Status};
+        let github = if accounts.is_empty() {
+            Status::SignedOut
+        } else {
+            Status::SignedIn(
+                accounts
+                    .into_iter()
+                    .map(|(login, active, valid)| GithubAccount {
+                        host: "github.com".into(),
+                        login: login.into(),
+                        active,
+                        valid,
+                    })
+                    .collect(),
+            )
+        };
+        autopilot_accounts::Accounts {
+            claude: Status::SignedOut,
+            codex: Status::SignedOut,
+            github,
+            azure: Status::SignedOut,
+            azure_all: vec![],
+        }
+    }
+
+    // Invariant: the first-run Tools screen, the Settings accounts page and the
+    // tooltip of the GitHub icon all say WHICH GitHub account is connected, the
+    // active one marked, and a second account offers a selector. A row that
+    // said only "Connected" would leave the owner guessing which account
+    // opens the pull request.
+    #[test]
+    fn every_account_view_names_the_github_account() {
+        type Case<'a> = (Vec<(&'a str, bool, bool)>, &'a [&'a str], &'a [&'a str]);
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let cases: [Case; 4] = [
+            (
+                vec![("robbertpopa", true, true)],
+                &["robbertpopa on github.com (active)", "Connected"],
+                &["Use"],
+            ),
+            (
+                vec![("robbertpopa", true, true), ("sheila-dot", false, true)],
+                &[
+                    "robbertpopa on github.com (active)",
+                    "sheila-dot on github.com",
+                    "Use",
+                ],
+                &[],
+            ),
+            (
+                vec![("old-login", true, false)],
+                &[
+                    "old-login on github.com (active) (token rejected)",
+                    "Not signed in",
+                ],
+                &[],
+            ),
+            (
+                vec![],
+                &["Not signed in", "gh auth login"],
+                &["on github.com"],
+            ),
+        ];
+        for (accounts, present, absent) in cases {
+            let rows = accounts::rows(&github_only(accounts.clone()));
+            let tip = nav::tooltip(&rows[0]);
+            app.accounts = Some(github_only(accounts));
+            app.welcome_step = 1;
+            let first_run = drawn_text(&mut app, &context);
+            app.welcome_step = 0;
+            app.mode = Mode::Accounts;
+            app.welcomed = true;
+            let settings = drawn_text(&mut app, &context);
+            app.welcomed = false;
+            for want in present {
+                assert!(
+                    first_run.contains(want),
+                    "first run lacks {want:?}: {first_run}"
+                );
+                if *want != "Connected" && *want != "Use" && !want.starts_with("Not signed") {
+                    assert!(
+                        settings.contains(want),
+                        "settings lacks {want:?}: {settings}"
+                    );
+                    assert!(tip.contains(want), "the icon lacks {want:?}: {tip}");
+                }
+            }
+            for refuse in absent {
+                assert!(!first_run.contains(refuse), "first run shows {refuse:?}");
+            }
+        }
+    }
 }

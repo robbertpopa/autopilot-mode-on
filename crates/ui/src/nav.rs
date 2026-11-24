@@ -95,7 +95,7 @@ fn dot_color(level: Level) -> Color32 {
     }
 }
 
-fn tooltip(row: &Row) -> String {
+pub(crate) fn tooltip(row: &Row) -> String {
     let mut text = format!("{}: {}", row.name, row.lines.join(", "));
     if let Some(hint) = row.hint {
         text = format!("{text}\nfix: {hint}");
