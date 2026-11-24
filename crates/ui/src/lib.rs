@@ -2,6 +2,7 @@
 //! an `engine` action that the command line has too.
 
 mod accounts;
+mod ai_edit;
 mod app;
 #[doc(hidden)]
 pub mod backend;

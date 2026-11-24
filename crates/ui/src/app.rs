@@ -100,6 +100,8 @@ pub struct App {
     pub(crate) pipeline_notice: Option<(bool, String)>,
     /// A pipeline being made, renamed or deleted on the Pipelines page.
     pub(crate) pipeline_edit: crate::pipelines::PipelineEdit,
+    /// AI help in progress on the Pipelines and Projects pages.
+    pub(crate) ai: crate::ai_edit::AiState,
     pub(crate) draft_text: String,
     /// The question typed for the advisor on the open ticket.
     pub(crate) advise_text: String,
@@ -239,6 +241,7 @@ impl App {
             pipeline_selected: None,
             pipeline_notice: None,
             pipeline_edit: crate::pipelines::PipelineEdit::None,
+            ai: crate::ai_edit::AiState::default(),
             draft_text: String::new(),
             advise_text: String::new(),
             chat_text: String::new(),

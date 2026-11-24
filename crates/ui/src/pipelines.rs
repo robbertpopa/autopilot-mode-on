@@ -571,6 +571,13 @@ impl App {
             theme::pill(ui, tag, theme::GREY_FILL(), theme::GREY_TEXT());
             ui.label(theme::muted(text));
         });
+        if step == Step::Design {
+            self.design_explainer(ui);
+        } else if !step.is_custom() {
+            ui.label(theme::muted(
+                "Its instruction is built into the app and is not editable here. Its model, effort and limits are below, and \"Edit with AI\" can propose different ones.",
+            ));
+        }
         if step.is_custom() {
             self.custom_editor(ui, step);
         }
@@ -585,6 +592,7 @@ impl App {
         };
         ui.add_space(4.0);
         let edit = self.settings_fields(ui, step, &settings);
+        self.ai_step_box(ui, step, &settings);
         let locked = crate::settings::locked(step);
         let mut ask = settings.ask_after || locked;
         let label = if step == Step::PullRequest {
@@ -608,6 +616,185 @@ impl App {
         }
     }
 
+    /// The Design step in plain words, and what "Design draws from" changes.
+    fn design_explainer(&self, ui: &mut egui::Ui) {
+        ui.add_space(4.0);
+        for line in [
+            "What it does: draws the screens the ticket changes as HTML mockups, using the plan's words, in the look of your own application, and shows them to you.",
+            "When it runs: in a pipeline where Design is \"if needed\", only when Understand reports that the ticket changes a screen; where it is \"on\", every time.",
+            "What it produces: one to six mockup pages and short notes on the choices.",
+            "It always asks: you approve the mockups, or send feedback and it redraws the same ones, before Plan starts.",
+        ] {
+            ui.label(theme::muted(line));
+        }
+        self.design_mode_picker(ui);
+    }
+
+    /// "Edit with AI" for one step: say what to change, see the proposal as a
+    /// before and after, and nothing is saved until Apply.
+    fn ai_step_box(
+        &mut self,
+        ui: &mut egui::Ui,
+        step: Step,
+        settings: &autopilot_profile::StepSettings,
+    ) {
+        ui.add_space(6.0);
+        ui.label(RichText::new("Edit with AI").strong());
+        ui.add(
+            egui::TextEdit::singleline(&mut self.ai.step_request)
+                .hint_text("e.g. make this step ask fewer questions")
+                .desired_width(f32::INFINITY),
+        );
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt(("ai-model", step.as_str()))
+                .selected_text(crate::ai_edit::HELPERS[self.ai.step_model])
+                .show_ui(ui, |ui| {
+                    for (at, name) in crate::ai_edit::HELPERS.iter().enumerate() {
+                        ui.selectable_value(&mut self.ai.step_model, at, *name);
+                    }
+                });
+            let ready = !self.ai.step_request.trim().is_empty();
+            if ui
+                .add_enabled(ready, theme::primary("Propose a change"))
+                .clicked()
+            {
+                self.propose_step_change(step, settings);
+            }
+        });
+        if let Some((ok, text)) = &self.ai.note {
+            let color = if *ok { theme::GREEN() } else { theme::RED() };
+            ui.label(RichText::new(text).color(color));
+        }
+        if let Some(proposal) = self.ai.step.clone() {
+            self.step_proposal_view(ui, step, settings, &proposal);
+        }
+    }
+
+    fn propose_step_change(&mut self, step: Step, settings: &autopilot_profile::StepSettings) {
+        let custom = self
+            .profile
+            .as_ref()
+            .ok()
+            .and_then(|profile| profile.custom_step(step))
+            .cloned();
+        let name = custom
+            .as_ref()
+            .map_or_else(|| step_name(step).to_owned(), |each| each.name.clone());
+        let ask = crate::ai_edit::step_prompt(
+            &name,
+            custom.as_ref().map(|each| each.prompt.as_str()),
+            settings.model.as_deref().unwrap_or("default"),
+            settings.effort.as_deref().unwrap_or("default"),
+            &self.ai.step_request,
+        );
+        let helper = crate::ai_edit::HELPERS[self.ai.step_model];
+        let result = crate::backend::ask_text(&self.options, helper, &ask).and_then(|asked| {
+            crate::ai_edit::read_step_proposal(
+                &asked.text,
+                &name,
+                custom.is_some(),
+                &asked.cost_note,
+            )
+        });
+        match result {
+            Ok(proposal) => {
+                self.ai.step = Some(proposal);
+                self.ai.note = None;
+            }
+            Err(why) => {
+                self.ai.step = None;
+                self.ai.note = Some((false, why));
+            }
+        }
+    }
+
+    fn step_proposal_view(
+        &mut self,
+        ui: &mut egui::Ui,
+        step: Step,
+        settings: &autopilot_profile::StepSettings,
+        proposal: &crate::ai_edit::StepProposal,
+    ) {
+        use crate::ai_edit::{Line, line_diff};
+        let custom = self
+            .profile
+            .as_ref()
+            .ok()
+            .and_then(|profile| profile.custom_step(step))
+            .cloned();
+        egui::Frame::new()
+            .stroke(egui::Stroke::new(1.0_f32, theme::BORDER_STRONG()))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.label(RichText::new("Proposed change").strong());
+                if !proposal.why.is_empty() {
+                    ui.label(&proposal.why);
+                }
+                if let (Some(new), Some(old)) = (&proposal.prompt, &custom) {
+                    for line in line_diff(&old.prompt, new) {
+                        match line {
+                            Line::Same(text) => ui.label(theme::muted(text)),
+                            Line::Removed(text) => {
+                                ui.label(RichText::new(format!("- {text}")).color(theme::RED()))
+                            }
+                            Line::Added(text) => {
+                                ui.label(RichText::new(format!("+ {text}")).color(theme::GREEN()))
+                            }
+                        };
+                    }
+                }
+                if let Some(model) = &proposal.model {
+                    ui.label(format!(
+                        "model: {} -> {model}",
+                        settings.model.as_deref().unwrap_or("default")
+                    ));
+                }
+                if let Some(effort) = &proposal.effort {
+                    ui.label(format!(
+                        "effort: {} -> {effort}",
+                        settings.effort.as_deref().unwrap_or("default")
+                    ));
+                }
+                ui.label(theme::muted(format!("made by {}", proposal.cost_note)));
+                ui.horizontal(|ui| {
+                    if ui.add(theme::primary("Apply")).clicked() {
+                        self.apply_step_proposal(step, proposal);
+                    }
+                    if ui.button("Discard").clicked() {
+                        self.ai.step = None;
+                    }
+                });
+            });
+    }
+
+    fn apply_step_proposal(&mut self, step: Step, proposal: &crate::ai_edit::StepProposal) {
+        let custom = self
+            .profile
+            .as_ref()
+            .ok()
+            .and_then(|profile| profile.custom_step(step))
+            .cloned();
+        if let (Some(prompt), Some(old)) = (&proposal.prompt, &custom)
+            && let Err(error) = set_custom_step(&self.options.profile, step, &old.name, prompt)
+        {
+            self.ai.note = Some((false, error.to_string()));
+            return;
+        }
+        if let Some(model) = &proposal.model {
+            self.apply_edit(step, &autopilot_engine::StepField::Model(model.clone()));
+        }
+        if let Some(effort) = &proposal.effort {
+            self.apply_edit(step, &autopilot_engine::StepField::Effort(effort.clone()));
+        }
+        if let Ok(profile) = autopilot_engine::load_profile(&self.options.profile) {
+            self.profile = Ok(profile);
+        }
+        self.custom_edit = None;
+        self.ai.step = None;
+        self.ai.note = Some((true, "applied".to_owned()));
+    }
+
     /// The name and prompt of one of the owner's steps, with Save and Remove.
     fn custom_editor(&mut self, ui: &mut egui::Ui, step: Step) {
         let saved = self
@@ -622,10 +809,31 @@ impl App {
         if self.custom_edit.as_ref().map(|(each, _, _)| *each) != Some(step) {
             self.custom_edit = Some((step, saved.name.clone(), saved.prompt.clone()));
         }
+        let shared: Vec<String> = self.profile.as_ref().map_or_else(
+            |_| Vec::new(),
+            |profile| {
+                profile
+                    .pipelines()
+                    .into_iter()
+                    .filter(|each| each.mode(step) != StepMode::Off)
+                    .map(|each| each.name)
+                    .collect()
+            },
+        );
         let Some((_, name, prompt)) = self.custom_edit.as_mut() else {
             return;
         };
         ui.add_space(4.0);
+        if shared.len() > 1 {
+            ui.label(
+                RichText::new(format!(
+                    "This step is in {} pipelines ({}). Saving it changes all of them.",
+                    shared.len(),
+                    shared.join(", ")
+                ))
+                .color(theme::AMBER()),
+            );
+        }
         ui.label(theme::muted("Name"));
         ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
         ui.label(theme::muted(
