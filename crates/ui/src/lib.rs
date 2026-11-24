@@ -2161,7 +2161,7 @@ effort = \"high\"
                     for clipped in output.unwrap().shapes {
                         let bounds = clipped.shape.visual_bounding_rect();
                         assert!(
-                            !(bounds.max.x > width + 3.0),
+                            bounds.max.x.is_nan() || bounds.max.x <= width + 3.0,
                             "{mode:?} {ticket:?} light={light} width={width}: a shape ends at {} {:?}",
                             bounds.max.x,
                             clipped.shape
