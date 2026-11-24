@@ -195,7 +195,7 @@ impl App {
     }
 
     /// The steps and which of them will ask, read from the profile.
-    /// How Design gets to know the application: Claude Design reading the project
+    /// How Design gets to know the application: Claude reading the project
     /// (read-only), or the ticket's words alone.
     pub(crate) fn design_mode_picker(&self, ui: &mut egui::Ui) {
         // Without Claude there is no choice to make: the practice agent draws
@@ -208,9 +208,9 @@ impl App {
         ui.add_space(6.0);
         ui.label(theme::muted("Design draws from"));
         ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut choice, true, "Claude Design")
+            ui.selectable_value(&mut choice, true, "Read the project")
                 .on_hover_text(
-                    "Claude reads the whole application first (read-only): its screens, colours, fonts and names, so the mockups match the real pages. Costs more.",
+                    "Claude reads the application first (read-only): its screens, colours, fonts and names, so the mockups match the real pages. Costs more.",
                 );
             ui.selectable_value(&mut choice, false, "Normal")
                 .on_hover_text(

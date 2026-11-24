@@ -1,0 +1,72 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Autopilot Mode On</title><style>
+:root{--bg:#0F1012;--side:#131417;--card:#17181B;--sel:#26282D;--bd:#2A2C31;--bd2:#33363C;--tx:#ECEDEF;--soft:#C4C7CD;--mut:#9399A3;--arrow:#6B7079;--amber:#F0B94D;--green:#4CC38A;--red:#F59A9C;--amberfill:#2B2110;--onacc:#14181E}
+@media (prefers-color-scheme:light){:root{--bg:#F4F5F7;--side:#ECEEF2;--card:#FFFFFF;--sel:#E3E6EB;--bd:#DCDFE5;--bd2:#C9CED6;--tx:#15181D;--soft:#3A414B;--mut:#5F6773;--arrow:#8A929D;--amber:#8A5600;--green:#1E7A4E;--red:#B42F33;--amberfill:#FFF1D6;--onacc:#FFFFFF}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--tx);font:13px Inter,"Segoe UI",sans-serif;display:grid;grid-template-columns:233px 1fr 300px;height:100vh;overflow:hidden}
+.side{background:var(--side);border-right:1px solid var(--bd);padding:16px;display:flex;flex-direction:column;gap:4px;overflow:auto}
+.brand{display:flex;align-items:center;gap:10px;font:14px Consolas,monospace;margin-bottom:12px}
+.logo{width:28px;height:28px;border-radius:7px;background:var(--tx)}
+.newt{background:var(--tx);color:var(--onacc);border-radius:8px;padding:9px 12px;margin-bottom:14px;display:flex;justify-content:space-between}
+.link{padding:6px 8px;border-radius:6px;color:var(--soft);display:flex;justify-content:space-between}
+.link.on{background:var(--sel);color:var(--tx)}
+.badge{background:var(--amber);color:var(--onacc);border-radius:8px;padding:0 6px;font-size:11px}
+.label{font:11px Consolas,monospace;color:var(--mut);margin:16px 0 4px}
+.tk{padding:5px 8px;border-radius:6px;color:var(--soft);font:12px Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk.on{background:var(--sel);color:var(--tx)}
+.foot{margin-top:auto;border:1px solid var(--bd);border-radius:8px;padding:10px;font:11px Consolas,monospace;color:var(--mut)}
+.main{padding:20px 28px;overflow:auto;background:var(--bg)}
+.rail{background:var(--bg);border-left:1px solid var(--bd);padding:16px;display:flex;flex-direction:column;gap:12px;overflow:auto}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px}
+h1{font-size:20px;font-weight:600;margin:0 0 6px}
+.chip{font:11px Consolas,monospace;border:1px solid var(--bd2);border-radius:5px;padding:2px 7px;color:var(--soft);display:inline-block}
+.btn{border:1px solid var(--bd2);background:var(--card);color:var(--tx);border-radius:7px;padding:6px 12px;font-size:13px}
+.btn.primary{background:var(--tx);color:var(--onacc);border-color:var(--tx)}
+.dis{opacity:.45}
+.muted{color:var(--mut)}
+.amber{color:var(--amber)}
+.green{color:var(--green)}
+.red{color:var(--red)}
+.warn{background:var(--amberfill);border:1px solid var(--amber);border-radius:10px;padding:14px}
+.mark{outline:2px dashed var(--amber);outline-offset:3px}
+.step{display:flex;gap:10px;align-items:center;padding:6px 0}
+.dot{width:14px;height:14px;border-radius:50%;border:1px solid var(--arrow)}
+.dot.ok{background:var(--green);border-color:var(--green)}
+.step.on{background:var(--sel);border-radius:6px;padding:6px 8px}
+.cap{font:11px Consolas,monospace;color:var(--mut)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.stack>*+*{margin-top:12px}
+</style></head><body>
+<div class="side">
+ <div class="brand"><div class="logo"></div>autopilot-mode-on</div>
+ <div class="newt"><span>New ticket</span><span class="muted">^N</span></div>
+ <div class="link"><span>Inbox</span><span class="badge">1</span></div>
+ <div class="link"><span>Board</span></div>
+ <div class="link"><span>Projects</span></div>
+ <div class="link"><span>Pipelines</span></div>
+ <div class="link"><span>Health</span></div>
+ <div class="label">TICKETS</div>
+ <div class="tk on">Add the possibility to archive…</div>
+ <div class="tk">For every pipeline step I want…</div>
+ <div class="tk">Let's remove the top bar…</div>
+ <div class="foot">spend/day · no cap<br>api $0.00 · sub ~$3.66</div>
+</div>
+<div class="main stack"><!--CENTER-START-->
+ <div class="row"><span class="chip">Approved</span></div>
+ <h1>Ticket title</h1>
+ <div class="row"><span class="chip">API $ 0.00</span><span class="chip">SUB $1.07</span></div>
+ <div class="card">Replace this block with the page this ticket changes.</div>
+<!--CENTER-END--></div>
+<div class="rail"><!--RAIL-START-->
+ <div class="card"><div class="cap">PIPELINE</div>
+  <div class="step"><span class="dot ok"></span>Understand</div>
+  <div class="step"><span class="dot ok"></span>Clarify</div>
+  <div class="step"><span class="dot ok"></span>Design</div>
+  <div class="step on"><span class="dot ok"></span>Plan</div>
+  <div class="step"><span class="dot"></span>Build · Check</div>
+  <div class="step"><span class="dot"></span>Pull request</div>
+ </div>
+ <div class="card"><div class="cap">COST</div>API $0.00 · SUB $1.07</div>
+ <div class="card muted"><div>Re-run from here</div><div>Open the worktree</div><div>Explain in plain words</div></div>
+<!--RAIL-END--></div>
+</body></html>
