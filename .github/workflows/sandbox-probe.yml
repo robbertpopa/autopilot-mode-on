@@ -1,0 +1,53 @@
+name: Sandbox probe
+
+# Runs the real escape probe on a Linux host: srt, bubblewrap, the deny hook.
+# `Rust CI` never starts a real sandbox. Separate from it so a runner change
+# (user namespaces, AppArmor) shows up here and does not block other checks.
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "crates/process/**"
+      - "crates/policy/**"
+      - "tools/wsl/**"
+      - ".github/workflows/sandbox-probe.yml"
+  pull_request:
+    branches: [develop, master]
+    paths:
+      - "crates/process/**"
+      - "crates/policy/**"
+      - "tools/wsl/**"
+      - ".github/workflows/sandbox-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Linux host probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Rust toolchain
+        run: rustup show
+      - name: Install the sandbox packages
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap socat ripgrep python3
+      - name: Allow unprivileged user namespaces
+        # Ubuntu 24.04 restricts them through AppArmor by default; bubblewrap
+        # needs them. The probe still runs the real boundary afterwards.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install srt
+        # Same version the probe was validated with (docs/spikes/S6-containment.md).
+        run: |
+          npm config set prefix ~/.npm-global
+          npm install -g @anthropic-ai/sandbox-runtime@0.0.83
+          ~/.npm-global/bin/srt --version
+      - name: Install the deny hook
+        run: bash tools/wsl/install-hook.sh
+      - name: Build the guardian
+        run: cargo build -p autopilot-process --bins
+      - name: Run the probe
+        run: cargo test -p autopilot-process --lib -- --ignored the_real_boundary_passes_the_probe_on_a_linux_host --nocapture
