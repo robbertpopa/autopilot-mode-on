@@ -291,7 +291,7 @@ impl App {
     /// macOS only: the window draws under its title bar, so this row holds the
     /// window buttons' place, paints the nav colour behind them and lets the
     /// owner drag the window by it. Other systems keep their own title bar.
-    pub(crate) fn title_area(&self, ctx: &egui::Context) {
+    pub(crate) fn title_area(ctx: &egui::Context) {
         if !cfg!(target_os = "macos") {
             return;
         }
