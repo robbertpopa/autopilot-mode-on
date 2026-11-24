@@ -19,6 +19,7 @@ mod plan_review;
 mod projects;
 mod review_page;
 mod run;
+mod sandbox;
 mod search;
 mod settings;
 mod step;
@@ -140,8 +141,17 @@ mod tests {
             Mode::Watch,
             Mode::Cost,
             Mode::Accounts,
+            Mode::Sandbox,
         ] {
             app.mode = mode;
+            frame(&mut app, &context);
+        }
+        for state in [
+            sandbox::Probe::Running,
+            sandbox::Probe::Ready,
+            sandbox::Probe::Refused("this machine is missing: bwrap".into()),
+        ] {
+            app.sandbox = state;
             frame(&mut app, &context);
         }
         demo::seed(&options.data_dir, now_ms()).unwrap();
@@ -349,6 +359,7 @@ mod tests {
             ("design", Mode::Design),
             ("checks", Mode::Checks),
             ("look", Mode::Look),
+            ("sandbox", Mode::Sandbox),
             ("board", Mode::Board),
             ("projects", Mode::Projects),
             ("pipelines", Mode::Pipelines),

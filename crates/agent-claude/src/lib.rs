@@ -58,12 +58,35 @@ pub fn sandbox_boundary(
     folder: &std::path::Path,
     guardian: &std::path::Path,
 ) -> io::Result<Validated> {
-    let wsl = if cfg!(windows) {
-        autopilot_process::wsl::Wsl::discover(distro, folder.to_path_buf())?
+    autopilot_process::isolation::validate(discover(distro, folder, guardian)?, folder)
+}
+
+pub use autopilot_process::isolation::{Report as SandboxReport, RowResult as SandboxRow};
+
+/// The same discovery and probe as [`sandbox_boundary`], keeping every row, so
+/// a person can see why a Build would be refused without starting a ticket.
+///
+/// # Errors
+/// Returns an error if the machine is not ready or the probe could not run.
+/// Failing rows are in the report, not an error.
+pub fn sandbox_report(
+    distro: &str,
+    folder: &std::path::Path,
+    guardian: &std::path::Path,
+) -> io::Result<SandboxReport> {
+    autopilot_process::isolation::check(&discover(distro, folder, guardian)?, folder)
+}
+
+fn discover(
+    distro: &str,
+    folder: &std::path::Path,
+    guardian: &std::path::Path,
+) -> io::Result<autopilot_process::wsl::Wsl> {
+    if cfg!(windows) {
+        autopilot_process::wsl::Wsl::discover(distro, folder.to_path_buf())
     } else {
-        autopilot_process::wsl::Wsl::discover_local(folder.to_path_buf(), guardian.to_path_buf())?
-    };
-    autopilot_process::isolation::validate(wsl, folder)
+        autopilot_process::wsl::Wsl::discover_local(folder.to_path_buf(), guardian.to_path_buf())
+    }
 }
 
 /// Where build turns run: inside a boundary that passed its probe. Each ticket
