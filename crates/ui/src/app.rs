@@ -191,6 +191,7 @@ impl App {
     /// Build the window state. `watch` starts the thread that follows the data
     /// directory; tests leave it off and feed snapshots themselves.
     #[must_use]
+    #[allow(clippy::too_many_lines, reason = "one field per piece of window state")]
     pub fn new(context: &egui::Context, options: Options, watch: bool) -> Self {
         let choice = read_theme(&options);
         let light = choice.is_light(context.system_theme());
