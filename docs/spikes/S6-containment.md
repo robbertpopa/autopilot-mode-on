@@ -129,12 +129,14 @@ Limits of this evidence:
 - **Refused on purpose:**
   - *Subscription mode.* Its sign-in would have to be readable inside the sandbox, and a token the agent can read can be sent to the provider host under an attacker's own key and read back from their console. `srt` can mask a credential file as it masks the key, but without a request filter that does not close the path, so it is not shipped.
   - *Git inside the sandbox.* A linked worktree's `.git` names a Windows path. Making the repository behind it readable exposes `.git/config` (a remote URL can hold a token), and making any of it writable lets the agent plant `core.fsmonitor` or a hook that the host's own `git` runs. The turn is told git is off; the host records the work.
-  - *macOS hosts.* Still refused, now with a Mac to test on. The product runs on macOS (build, tests and the window pass, see the 2026-11-24 note below), but no Seatbelt boundary has been validated, so `Wsl::discover_local` returns `Unsupported` there and a real Build does not start. Reasons from the experiment below: the per-domain rule the agent needs cannot be written in Seatbelt, and a profile that allows by default leaks through system services.
+  - *macOS hosts.* Still refused, now with a Mac to test on. The product runs on macOS (build, tests and the window pass, see the macOS section at the end), but no Seatbelt boundary has been validated, so `Wsl::discover_local` returns `Unsupported` there and a real Build does not start. Reasons from the experiment below: the per-domain rule the agent needs cannot be written in Seatbelt, and a profile that allows by default leaks through system services.
 - The direct MXC run above stays preliminary evidence for one Windows CLI version and profile.
 
 ## macOS experiment, 2026-11-24
 
-Run on an Apple silicon Mac (macOS 27.0.1) with the built-in `sandbox-exec`, a hand-written profile (`(allow default)`, `(deny network*)`, writes denied outside one worktree, `.git` inside it denied) and plain `sh`, `nc` and `curl`. `srt` is not installed here and was not installed. No API spend. Only the rows below were run; this is evidence for keeping macOS refused, not a validated boundary.
+On the same Mac, with Rust 1.100.0: `cargo fmt --all --check`, `cargo xtask layers` and `cargo nextest run --workspace` (430 tests) pass; `cargo test --workspace` is not the supported runner and some window tests are flaky under it when they share one process. The CLI ran the fixture ticket, the window started on demo data, and the release build produced a disk image whose app starts and verifies its signature. The window was not looked at on screen. Clippy 1.100 reports two `map_unwrap_or` findings in `crates/rules` that the pinned 1.99.1 does not.
+
+The experiment: an Apple silicon Mac (macOS 27.0.1) with the built-in `sandbox-exec`, a hand-written profile (`(allow default)`, `(deny network*)`, writes denied outside one worktree, `.git` inside it denied) and plain `sh`, `nc` and `curl`. `srt` is not installed here and was not installed. No API spend. Only the rows below were run; this is evidence for keeping macOS refused, not a validated boundary.
 
 | Row | Result |
 |---|---|
