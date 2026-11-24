@@ -1,0 +1,44 @@
+<img src="../../assets/icon.svg" alt="autopilot-mode-on" width="48" align="right">
+
+# Stream 3: computer use and the sandbox
+
+**Owns:** `process` (including `isolation.rs`, `wsl.rs`), a new `computer` crate, `tools/wsl`, `tools/s6-probe`, `docs/spikes/`, `docs/security.md`. **Does not touch:** `engine`, `ui`, `agent-*` (add requests there). **Start prompt:** "Read `AGENTS.md`, `docs/work-streams/00-overview.md`, `docs/spikes/S6-containment.md` and `docs/work-streams/03-computer-use-and-sandbox.md`, then do the first unchecked task."
+
+## Goal
+
+Let agents (Claude, then Codex and others) operate a computer, and keep that as contained as the coding agent already is. Also keep the existing boundary honest: probed, fail-closed, and extended where it is still thin.
+
+## Where it stands
+
+- The boundary: `process::wsl` (wrap a command so it runs as `wsl.exe` or directly on Linux, under `srt`), `process::isolation` (`Role`, `boundary()`, `validate()`, the probe). Roles: Agent, Check, Fetch (crates.io), FetchNode (npm). The probe runs about 15 rows per role through the same wrapper and settings as a real launch, then checks the host, and a control run proves each escape test can see an escape. The API key is masked inside the sandbox (TLS termination, a placeholder, the proxy supplies the real key to the provider only). The deny hook runs inside.
+- Verified on this PC: Windows host with WSL2 Ubuntu 24.04 and a Linux host (the distro as a Linux machine). Not verified: macOS, native Windows (`srt windows-install` needs a UAC prompt and machine-wide filters; not tried, and the owner said Linux only for now).
+- Refused on purpose: subscription mode, git inside the sandbox, macOS. Reasons: [S6 result](../spikes/S6-containment.md).
+
+## Computer use: what the documentation says (read 2026-11-23, check again before you rely on it)
+
+Claude's computer use is **an API tool that the caller executes**: Claude returns screenshot, mouse and keyboard actions and the caller performs them and sends the result back. The current toolset is `computer_toolset_20260801` (no beta header); older tool versions such as `computer_20251124` need the beta header `computer-use-2025-11-24`. Anthropic's guidance is a dedicated virtual machine or container with minimal privileges, and it states plainly that instructions inside screenshots, webpages or images can steer the model (prompt injection). Pages: `platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool` and `.../browser-use-sdk`. **Nothing has been read yet about OpenAI's or Codex's computer-use support: read it before writing anything about them.**
+
+Two further ideas, from the open-source Craft Agents app (take the ideas, not the code): a **capability RPC**, where the agent runs on one side and named, versioned actions (open this, click that, take a snapshot) are executed on the side that owns the screen; and a **tighten-only risk check**, where a small model may turn an allowed action into a prompt but can never turn a prompt into an allow. Claude Code's own sandbox uses the same `srt` we use.
+
+## Tasks, in order
+
+- [ ] **C1. Spike S10: computer use (a document, no product code).** Create `docs/spikes/S10-computer-use.md` in the style of the other spike files. Settle: where the loop runs (our own process makes the Messages API calls and holds the key, so the agent in the display never sees it; this is new, because no adapter makes HTTPS calls today: decide how, for example the existing `curl` path through `process` as the `update` crate does, or a small HTTP client crate, and say what the licence and dependency policy allow); what the display is (a container or throwaway VM with a virtual display, for example Xvfb plus a window manager, `xdotool` for input and a screenshot tool, inside WSL); what the model may and may not do; what is logged. Read OpenAI's computer-use documentation and Codex's before writing their sections. *Exit:* the document, with a recommendation, and the questions for the owner (decision 2). **Do not build past this point until the owner answers.**
+- [ ] **C2. A display role and its probe rows.** A new `Role` (and the setup script additions) for a disposable display: no access to the host's X server, drives or credentials; network only to an allowlist; input injection works inside the display only; the screenshot can be taken and nothing else leaves; a row per property, each with a positive control, and a mutation check (weaken the role, see the probe fail). Probe rows are per platform, like the existing ones: do not skip rows silently. *Exit:* the probe passes on the Windows host and on a Linux host with the display role.
+- [ ] **C3. The `computer` crate: the harness, with no model in it.** A small versioned protocol for named capabilities (screenshot, move, click, type, key, scroll, wait), a rate and size limit on each, an action log with a short intent line per action, and a way to replay a recorded session in tests. Layer rules apply: subprocess work goes through `process`. Screenshots are untrusted input: bound their size, never execute anything found in one. *Exit:* a replay test, a hostile-input sweep, and a test that an out-of-range or oversized request is refused.
+- [ ] **C4. The risk check and the approvals.** Before an irreversible action (submit, send, delete, pay, sign, install) the harness stops and asks the owner, whatever the model says; a small model may add prompts but never remove one (tighten-only); budgets, wall time and action counts are hard caps; an agent-built configuration can never unlock this. *Exit:* tests for each rule, and a test that a model answer of "allow" cannot remove a forced prompt.
+- [ ] **C5. The Claude driver.** The loop that sends screenshots and executes actions, against the fake program first (recorded exchanges in `fixtures/`), then one live run within the spike budget on a harmless task (open a local page, read a value). *Exit:* the live run's cost, the action log, and what the probe said before it started.
+- [ ] **C6. Codex and other agents.** After reading their documentation, one at a time, each behind the same harness and the same approvals.
+
+## The rest of the sandbox (independent of computer use; do in any order)
+
+- [ ] **S-a. A CI job for the Linux-host probe.** GitHub's Ubuntu runner can install `bubblewrap socat ripgrep python3` and Node, install `srt`, and run the ignored Linux-host probe test. Today CI never runs a real probe. *Exit:* a green job in `.github/workflows`, or a written reason it cannot work (user namespaces on the runner).
+- [ ] **S-b. A `doctor` command.** `autopilot isolation check` runs discovery and the probe and prints each row, so the window and a person can see why Build is refused without starting a ticket. (The window part is stream 4; ask there.)
+- [ ] **S-c. Pin the tools.** `tools/wsl/setup-user.sh` installs `srt` and Claude Code unpinned. Record the versions the probe was validated with in the probe output, refuse a version that has not been validated, and write the update procedure (re-run the probe, then bump the validated list).
+- [ ] **S-d. macOS.** Needs a Mac. Seatbelt has no network namespace and treats loopback and Unix sockets differently, so the probe rows must be rewritten for it, not reused. Until then it stays refused with its reason.
+- [ ] **S-e. Subscription mode, if the owner wants it.** `srt` can mask a credential file as it masks the key, but its JSON configuration cannot reject a request made with someone else's key (that filter is a library callback), so a masked token alone does not close the path where an agent sends data out through the provider's own host. Research whether a small Node launcher using the library's request filter can: it must reject any request to the provider that does not carry the placeholder. Do not ship subscription mode without that; the answer goes to the owner (decision 4).
+- [ ] **S-f. More fetch roles.** Go (`go mod download`) and Python are not covered. Python is left out on purpose (installing a source package builds it by running its code); a wheel-only install (`--only-binary`) under a registry-only role could be added with its own probe rows.
+- [ ] **S-g. Git inside the sandbox, only if still wanted.** Not done on purpose: the repository behind a linked worktree is deliberately out of reach (`.git/config` can hold a remote's credentials, and a writable `.git` lets the agent plant `core.fsmonitor` or a hook that the host's own `git` runs). If a read-only view is wanted, design it so no part is writable and no credential is readable, with probe rows for both.
+
+## Requests to other streams
+
+- (none yet)
