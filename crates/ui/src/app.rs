@@ -98,6 +98,8 @@ pub struct App {
     pub(crate) search_selected: usize,
     pub(crate) pipeline_selected: Option<String>,
     pub(crate) pipeline_notice: Option<(bool, String)>,
+    /// A pipeline being made, renamed or deleted on the Pipelines page.
+    pub(crate) pipeline_edit: crate::pipelines::PipelineEdit,
     pub(crate) draft_text: String,
     /// The question typed for the advisor on the open ticket.
     pub(crate) advise_text: String,
@@ -236,6 +238,7 @@ impl App {
             search_selected: 0,
             pipeline_selected: None,
             pipeline_notice: None,
+            pipeline_edit: crate::pipelines::PipelineEdit::None,
             draft_text: String::new(),
             advise_text: String::new(),
             chat_text: String::new(),

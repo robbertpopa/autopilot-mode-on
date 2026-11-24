@@ -96,8 +96,8 @@ pub use pr_rules::{
 pub use pr_watch::{PrWatch, watch_pull_request};
 pub use profile_edit::{
     ProfileEditError, ProjectField, ReviewField, StepField, add_detected_check, add_pipeline,
-    edit_project, edit_review, edit_step, free_custom_slot, load_profile, remove_custom_step,
-    save_pipeline, set_custom_step,
+    delete_pipeline, edit_project, edit_review, edit_step, free_custom_slot, load_profile,
+    remove_custom_step, rename_pipeline, save_pipeline, set_custom_step, set_pipeline_order,
 };
 pub use proposals::{Suggestion, dismiss_proposal, proposals_for};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};

@@ -281,6 +281,119 @@ pub fn save_pipeline(
     write_checked(path, &document)
 }
 
+/// Give a custom pipeline a new name, and carry it to everything that names
+/// it: a project's default, another pipeline's base and the list order.
+///
+/// # Errors
+/// Returns an error for a built-in or unknown pipeline, a name already used,
+/// or an invalid result. The file is left as it was in that case.
+pub fn rename_pipeline(path: &Path, from: &str, to: &str) -> Result<Profile, ProfileEditError> {
+    let mut document = open_document(path)?;
+    let pipelines = child_table(document.as_table_mut(), "pipelines")?;
+    if pipelines.contains_key(to) {
+        return Err(ProfileEditError::Refused(format!(
+            "{to:?} is already a pipeline"
+        )));
+    }
+    let Some(item) = pipelines.remove(from) else {
+        return Err(ProfileEditError::Refused(format!(
+            "{from:?} is not a custom pipeline, so it cannot be renamed"
+        )));
+    };
+    pipelines.insert(to, item);
+    for (_, other) in pipelines.iter_mut() {
+        if let Some(table) = other.as_table_mut()
+            && table.get("based_on").and_then(Item::as_str) == Some(from)
+        {
+            table["based_on"] = value(to);
+        }
+    }
+    replace_references(&mut document, from, Some(to));
+    write_checked(path, &document)
+}
+
+/// Remove a custom pipeline. A project that used it as its default goes back
+/// to the profile's default; tickets keep the steps they were made with.
+///
+/// # Errors
+/// Returns an error for a built-in or unknown pipeline, one another pipeline
+/// is based on, or an invalid result. The file is left as it was in that case.
+pub fn delete_pipeline(path: &Path, name: &str) -> Result<Profile, ProfileEditError> {
+    let mut document = open_document(path)?;
+    let pipelines = child_table(document.as_table_mut(), "pipelines")?;
+    if pipelines.remove(name).is_none() {
+        return Err(ProfileEditError::Refused(format!(
+            "{name:?} is not a custom pipeline, so it cannot be deleted"
+        )));
+    }
+    let based: Vec<String> = pipelines
+        .iter()
+        .filter(|(_, each)| each.get("based_on").and_then(Item::as_str) == Some(name))
+        .map(|(key, _)| key.to_owned())
+        .collect();
+    if !based.is_empty() {
+        return Err(ProfileEditError::Refused(format!(
+            "{} is based on {name}: delete or change that one first",
+            based.join(", ")
+        )));
+    }
+    replace_references(&mut document, name, None);
+    write_checked(path, &document)
+}
+
+/// Save the order the Pipelines list shows.
+///
+/// # Errors
+/// Returns an error for an unreadable file or an invalid result.
+pub fn set_pipeline_order(path: &Path, order: &[String]) -> Result<Profile, ProfileEditError> {
+    let mut document = open_document(path)?;
+    let mut list = toml_edit::Array::new();
+    for name in order {
+        list.push(name.as_str());
+    }
+    document["pipeline_order"] = value(list);
+    write_checked(path, &document)
+}
+
+/// Point every project default and the list order at `to`, or drop them when
+/// there is none.
+fn replace_references(document: &mut DocumentMut, from: &str, to: Option<&str>) {
+    if let Some(projects) = document.get_mut("projects").and_then(Item::as_table_mut) {
+        for (_, project) in projects.iter_mut() {
+            let Some(table) = project.as_table_mut() else {
+                continue;
+            };
+            if table.get("default_pipeline").and_then(Item::as_str) != Some(from) {
+                continue;
+            }
+            match to {
+                Some(to) => table["default_pipeline"] = value(to),
+                None => {
+                    table.remove("default_pipeline");
+                }
+            }
+        }
+    }
+    if let Some(order) = document
+        .get_mut("pipeline_order")
+        .and_then(Item::as_array_mut)
+    {
+        let kept: Vec<String> = order
+            .iter()
+            .filter_map(|entry| entry.as_str())
+            .filter_map(|entry| match (entry == from, to) {
+                (false, _) => Some(entry.to_owned()),
+                (true, Some(to)) => Some(to.to_owned()),
+                (true, None) => None,
+            })
+            .collect();
+        order.clear();
+        for entry in kept {
+            order.push(entry);
+        }
+    }
+}
+
 /// The first free custom slot, or `None` when all of them are used.
 #[must_use]
 pub fn free_custom_slot(profile: &Profile) -> Option<Step> {
@@ -445,6 +558,60 @@ fn child_table<'a>(parent: &'a mut Table, key: &str) -> Result<&'a mut Table, Pr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const WITH_PIPELINES: &str = "[pipelines.mine]\nbased_on = \"full\"\noff = [\"design\"]\n\n[pipelines.child]\nbased_on = \"mine\"\n\n[projects.\"/work/app\"]\ndefault_pipeline = \"mine\"\n";
+
+    // Invariant: a built-in pipeline can be neither renamed nor deleted, and
+    // deleting a custom one leaves no project pointing at a pipeline that is
+    // gone. A change that dropped the built-in check would let the window
+    // delete `full`, which tickets without a recorded choice fall back to.
+    #[test]
+    fn pipelines_are_renamed_and_deleted_without_leaving_dangling_names() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("profile.toml");
+        fs::write(&path, WITH_PIPELINES).unwrap();
+        assert!(delete_pipeline(&path, "full").is_err());
+        assert!(rename_pipeline(&path, "full", "other").is_err());
+        assert!(rename_pipeline(&path, "mine", "full").is_err());
+        assert!(
+            delete_pipeline(&path, "mine").is_err(),
+            "child is based on it"
+        );
+        let profile = rename_pipeline(&path, "mine", "theirs").unwrap();
+        assert!(profile.pipeline("theirs").is_some());
+        assert_eq!(
+            profile.pipeline("child").map(|each| each.off()),
+            profile.pipeline("theirs").map(|each| each.off())
+        );
+        let project = profile.projects.values().next().unwrap();
+        assert_eq!(project.default_pipeline.as_deref(), Some("theirs"));
+        delete_pipeline(&path, "child").unwrap();
+        let profile = delete_pipeline(&path, "theirs").unwrap();
+        assert!(profile.pipeline("theirs").is_none());
+        assert_eq!(
+            profile.projects.values().next().unwrap().default_pipeline,
+            None
+        );
+    }
+
+    // Invariant: the saved order is what the list shows, after a restart too,
+    // and a name that no longer exists in it is ignored rather than an error.
+    #[test]
+    fn the_pipeline_order_is_kept_and_forgives_unknown_names() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("profile.toml");
+        fs::write(&path, WITH_PIPELINES).unwrap();
+        let order: Vec<String> = ["mine", "gone", "ask-only"].map(String::from).to_vec();
+        let profile = set_pipeline_order(&path, &order).unwrap();
+        let names: Vec<String> = load_profile(&path)
+            .unwrap()
+            .pipelines()
+            .into_iter()
+            .map(|each| each.name)
+            .collect();
+        assert_eq!(names[..3], ["mine", "ask-only", "full"]);
+        assert_eq!(profile.pipelines().len(), names.len());
+    }
 
     fn step_of(profile: &Profile, step: Step) -> &autopilot_profile::StepSettings {
         profile.step(step).unwrap()
