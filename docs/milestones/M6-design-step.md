@@ -9,12 +9,12 @@
 A ticket that changes a user-facing screen produces an approved design before any code is written.
 
 ## Tasks
-- [ ] Start with local HTML mockups. Enable the remote Claude Design path only after S4 verifies publishing, revisions and privacy.
-- [ ] Run only when Understand reports `needs_design`; skip with the reason otherwise.
-- [ ] Claude Design path: the agent makes the canvas, returns its link; revisions go to the same canvas (same URL); the link is stored in the ticket. Requires a claude.ai login, so the step's auth is subscription; the step is switchable off per project (the canvas lives on claude.ai under the user's account, so private repos may not want it).
-- [ ] Local path: the agent writes static HTML mockups into `design/` in the worktree. Display them with active content and external resource requests disabled.
-- [ ] Approval: always asked when the step runs (checkbox on by default, labelled "the design must be approved"); feedback in the inbox goes back to the same design; reject stops the ticket.
-- [ ] The approved design is attached to the plan and becomes context for the build.
+- [x] Start with local HTML mockups (`engine::design`). The remote Claude Design path is the separate item below and waits for S4.
+- [x] Run only when Understand reports `needs_design`; skip with the reason otherwise. A ticket that needs a design holds Build until the design is settled.
+- [ ] Claude Design path (waits for S4's live trial and a per-project opt-in): the agent makes the canvas, returns its link; revisions go to the same canvas (same URL); the link is stored in the ticket. Requires a claude.ai login, so the step's auth is subscription; the step is switchable off per project (the canvas lives on claude.ai under the user's account, so private repos may not want it).
+- [x] Local path: the agent returns static HTML mockups as its structured answer; the host refuses any that hold script, a frame, an event handler or an address, saves the rest under `designs/<ticket>/` in the data directory (not in the worktree, so no commit can contain them) and the window opens them in the browser from the approval.
+- [x] Approval: always asked when the step runs (checkbox on by default, labelled "the design must be approved"); feedback in the inbox goes back to the same design; reject stops the ticket.
+- [x] The approved design is attached to the plan and becomes context for the build (`engine::design::context` feeds the Plan prompt).
 - [ ] Optional later: a visual check that compares the built UI with the approved design.
 
 ## Tests that must exist

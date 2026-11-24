@@ -15,9 +15,9 @@ Use Codex as an agent next to Claude Code, on a ChatGPT subscription by default 
 - [ ] Codex steps run in a sandbox mode (read-only or workspace-write); `codex exec` rejects approval requests, so "Ask me after this step" works at step boundaries for Codex.
 - [ ] Cost: token counts and a Codex price table for API mode; subscription steps show tokens and an estimate labelled as such.
 - [ ] `agent` field in the profile selects `claude` or `codex` per step; the window shows it on each node. A different-family reviewer is available as a check option.
-- [ ] `mcp` crate: expose the `engine` actions as MCP tools; refuse to start without explicit read and write roots; refuse file access outside them.
+- [ ] `mcp` crate: expose the `engine` actions as MCP tools; refuse to start without explicit read and write roots; refuse file access outside them. (Done: the server over stdio with `list_tickets`, `ticket_status`, `read_file` and `write_file`, and the root checks. Open: engine actions; it starts no agent.)
 - [ ] GitHub App authentication option for `tracker`.
-- [ ] Packaging: Windows installer, `cargo install`, release workflow, update notes.
+- [ ] Packaging: Windows installer, macOS disk images, release workflow, update notes. (Built: `packaging/windows/installer.nsi`, `packaging/macos/build-dmg.sh`, `release.yml`, signed `latest.json` and the in-app update check, see [releasing](../releasing.md). Open: none of it has run for a real release; `cargo install` is not offered because the crates are not published.)
 
 ## Tests that must exist
 - Fixtures for `codex exec --json` parse; hostile sweep; unknown item types ignored.
