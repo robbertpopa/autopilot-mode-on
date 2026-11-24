@@ -475,8 +475,6 @@ pub fn run_build(
         _ => limits,
     };
 
-    let (last, hint) = begin(&mut store, &ticket.id, &state, &history, last)?;
-
     // A bare name is looked up on PATH; the Git crate wants an absolute program.
     let git = autopilot_checks::resolve_executable(
         &setup.git.to_string_lossy(),
@@ -506,6 +504,10 @@ pub fn run_build(
         .for_project(Some(&setup.repository.to_string_lossy()));
     let policy = Policy::new(&scoped).map_err(|error| Error::NotReady(error.to_string()))?;
     let checks = standard_checks(&toolbox, std::sync::Arc::new(policy), None);
+
+    // Marking the step running comes after everything that can refuse to start, so a
+    // refusal leaves no attempt open for the next build to trip over.
+    let (last, hint) = begin(&mut store, &ticket.id, &state, &history, last)?;
 
     let journal = Rc::new(RefCell::new(Journal {
         store,
