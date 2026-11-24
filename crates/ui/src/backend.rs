@@ -51,6 +51,8 @@ pub enum Message {
     /// Whether the API key is saved in the user environment, even if this
     /// running app was started before it was.
     KeySaved(bool),
+    /// The sandbox probe finished: ready, or the raw reason it refused.
+    Sandbox(Result<(), String>),
     /// Who Git signs commits as.
     GitIdentity(autopilot_accounts::GitIdentity),
     /// The outcome of an action: a short confirmation, or the reason it failed.
