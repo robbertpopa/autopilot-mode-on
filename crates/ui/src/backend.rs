@@ -34,6 +34,8 @@ pub struct Options {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub tickets: Vec<TicketView>,
+    /// Tickets the owner put away: hidden from the lists, restorable.
+    pub archived: Vec<TicketView>,
     pub today_api: Money,
     pub today_subscription: Money,
     /// Why the data could not be read, if it could not.
@@ -169,6 +171,9 @@ pub enum Action {
     Pause(TicketId),
     Resume(TicketId),
     Stop(TicketId),
+    Archive(TicketId),
+    Restore(TicketId),
+    Delete(TicketId),
 }
 
 #[must_use]
@@ -210,6 +215,9 @@ impl Action {
             | Self::OpenDesign(ticket)
             | Self::Pause(ticket)
             | Self::Resume(ticket)
+            | Self::Archive(ticket)
+            | Self::Restore(ticket)
+            | Self::Delete(ticket)
             | Self::Stop(ticket) => Some(ticket),
         }
     }
@@ -248,6 +256,9 @@ pub fn read(options: &Options) -> Snapshot {
     };
     for id in ids {
         match load_ticket(&options.data_dir, &id) {
+            // A deleted ticket is listed nowhere; its log stays on disk.
+            Ok(view) if view.deleted => {}
+            Ok(view) if view.archived => snapshot.archived.push(view),
             Ok(view) => snapshot.tickets.push(view),
             Err(error) => {
                 snapshot.problem = Some(format!("{}: {error}", id.as_str()));
@@ -256,6 +267,7 @@ pub fn read(options: &Options) -> Snapshot {
     }
     // Newest first, so what you just started is at the top.
     snapshot.tickets.reverse();
+    snapshot.archived.reverse();
     let now = now_ms();
     if let Ok((api, subscription)) = spent_since(&options.data_dir, now - now % 86_400_000) {
         snapshot.today_api = api;
@@ -1181,6 +1193,18 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
             .map_err(|error| error.to_string()),
         Action::Stop(ticket) => autopilot_engine::request_stop(directory, ticket)
             .map(|()| "Stop requested. It takes effect between turns.".to_owned())
+            .map_err(|error| error.to_string()),
+        Action::Archive(ticket) => autopilot_engine::archive_ticket(directory, ticket)
+            .map(|()| "Archived. It is hidden from the lists and can be restored.".to_owned())
+            .map_err(|error| error.to_string()),
+        Action::Restore(ticket) => autopilot_engine::restore_ticket(directory, ticket)
+            .map(|()| "Restored.".to_owned())
+            .map_err(|error| error.to_string()),
+        Action::Delete(ticket) => autopilot_engine::delete_ticket(directory, ticket)
+            .map(|()| {
+                "Deleted. Its history is kept on disk; its worktree and branch were not removed."
+                    .to_owned()
+            })
             .map_err(|error| error.to_string()),
     }
 }

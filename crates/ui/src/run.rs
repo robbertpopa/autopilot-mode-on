@@ -190,6 +190,9 @@ impl App {
                     }
                     ui.add_enabled(false, egui::Button::new("Open in a terminal"))
                         .on_disabled_hover_text("Not built: starting a terminal in the worktree.");
+                    ui.separator();
+                    let picked = crate::ticket_menu::ticket_menu(ui, view);
+                    self.apply_choice(picked);
                 });
                 let live = matches!(view.badge, Badge::Running | Badge::NeedsYou | Badge::Paused);
                 if live

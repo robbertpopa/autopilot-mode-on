@@ -95,11 +95,13 @@ pub(crate) fn sub_step_list(ui: &mut egui::Ui, view: &TicketView, step: Step) {
                 ("–", theme::TEXT_MUTED(), Some(format!("skipped: {reason}")))
             }
         };
-        ui.horizontal_wrapped(|ui| {
+        // A plain row, not a wrapped one: in a wrapped row the mark and the
+        // text started on the same spot and were drawn over each other.
+        ui.horizontal(|ui| {
             ui.label(RichText::new(mark).color(color));
-            ui.label(theme::muted(item.text));
+            ui.add(egui::Label::new(theme::muted(item.text)).wrap());
             if let Some(note) = note {
-                ui.label(RichText::new(note).color(color));
+                ui.add(egui::Label::new(RichText::new(note).color(color)).wrap());
             }
         });
     }
@@ -321,6 +323,11 @@ fn stepper_row(
     } else {
         egui::FontId::proportional(13.5)
     };
+    let name_width = ui
+        .painter()
+        .layout_no_wrap(step_name(card.step).to_owned(), font.clone(), text_color)
+        .size()
+        .x;
     ui.painter().text(
         egui::pos2(rect.left() + 32.0, y),
         egui::Align2::LEFT_CENTER,
@@ -335,6 +342,10 @@ fn stepper_row(
     } else {
         tag
     };
+    // Whatever does not fit beside the name is cut to a shorter word, so the
+    // state never prints over the step's name.
+    let room = rect.width() - 32.0 - name_width - 16.0;
+    let right = fit_state(ui, right, room);
     ui.painter().text(
         egui::pos2(rect.right() - 8.0, y),
         egui::Align2::RIGHT_CENTER,
@@ -343,6 +354,31 @@ fn stepper_row(
         mark(&card.state).1,
     );
     response
+}
+
+/// The state text that fits in `room` points: the full words, a shorter word,
+/// or nothing.
+fn fit_state<'a>(ui: &egui::Ui, text: &'a str, room: f32) -> &'a str {
+    let width = |text: &str| {
+        ui.painter()
+            .layout_no_wrap(
+                text.to_owned(),
+                egui::FontId::monospace(11.0),
+                Color32::WHITE,
+            )
+            .size()
+            .x
+    };
+    let shorter = match text {
+        "waiting for you" => "waiting",
+        "interrupted" => "stopped",
+        "ask · locked" => "locked",
+        other => other,
+    };
+    [text, shorter]
+        .into_iter()
+        .find(|candidate| width(candidate) <= room)
+        .unwrap_or("")
 }
 
 /// The state as one or two words, for the current row.
@@ -389,6 +425,14 @@ impl App {
             return;
         };
         self.run_header(ui, &view);
+        if view.archived {
+            ui.horizontal(|ui| {
+                ui.label(theme::muted("Archived: hidden from the lists."));
+                if ui.button("Restore").clicked() {
+                    self.act(Action::Restore(view.id.clone()));
+                }
+            });
+        }
         ui.horizontal(|ui| {
             let project = crate::nav::project_name(&view);
             theme::pill(

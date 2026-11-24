@@ -329,7 +329,8 @@ impl App {
 
     pub(crate) fn nav(&mut self, ctx: &egui::Context) {
         let narrow = ctx.content_rect().width() < COLLAPSE_BELOW;
-        egui::SidePanel::left("nav")
+        let declared = if narrow { NARROW } else { WIDE };
+        let shown = egui::SidePanel::left("nav")
             .exact_width(if narrow { NARROW } else { WIDE })
             .resizable(false)
             .frame(
@@ -361,6 +362,19 @@ impl App {
                     }
                 });
             });
+        // Content wider than the panel makes the panel's frame wider than the
+        // part that paints (the fill is clipped to the declared width), and the
+        // page starts at the wider edge. Whatever the cause, the band between
+        // is painted as sidebar, never left to show the window's black.
+        let edge = shown.response.rect.right();
+        if edge > declared {
+            let band = egui::Rect::from_min_max(
+                egui::pos2(declared, ctx.content_rect().top()),
+                egui::pos2(edge, ctx.content_rect().bottom()),
+            );
+            ctx.layer_painter(egui::LayerId::background())
+                .rect_filled(band, 0.0, theme::SIDEBAR());
+        }
     }
 
     fn nav_head(&self, ui: &mut egui::Ui, narrow: bool) {
@@ -479,6 +493,7 @@ impl App {
         let grouped = groups(&self.snapshot.tickets, self.group_by_status);
         let mut open = None;
         let mut toggled = None;
+        let mut menu = None;
         egui::ScrollArea::vertical()
             .max_height(room)
             .auto_shrink([false, true])
@@ -518,17 +533,70 @@ impl App {
                         continue;
                     }
                     for view in members {
-                        if ticket_row(ui, view, self.selected.as_ref() == Some(&view.id)) {
+                        let row = ticket_row(ui, view, self.selected.as_ref() == Some(&view.id));
+                        if row.clicked() {
                             open = Some(view.id.clone());
                         }
+                        row.context_menu(|ui| {
+                            if let Some(picked) = crate::ticket_menu::ticket_menu(ui, view) {
+                                menu = Some(picked);
+                            }
+                        });
                     }
                 }
             });
+        self.apply_choice(menu);
+        self.archived_list(ui);
         if let Some(name) = toggled
             && !self.closed_groups.remove(&name)
         {
             self.closed_groups.insert(name);
         }
+        if let Some(id) = open {
+            self.open(&id);
+        }
+    }
+
+    /// Tickets put away: hidden until the owner opens this list, restorable.
+    fn archived_list(&mut self, ui: &mut egui::Ui) {
+        if self.snapshot.archived.is_empty() {
+            return;
+        }
+        let count = self.snapshot.archived.len();
+        let arrow = if self.show_archived { "▼" } else { "▶" };
+        if ui
+            .add(
+                egui::Button::new(
+                    RichText::new(format!("{arrow} Archived  {count}"))
+                        .monospace()
+                        .size(12.0)
+                        .color(theme::TEXT_MUTED()),
+                )
+                .fill(Color32::TRANSPARENT)
+                .stroke(Stroke::NONE)
+                .truncate(),
+            )
+            .clicked()
+        {
+            self.show_archived = !self.show_archived;
+        }
+        if !self.show_archived {
+            return;
+        }
+        let mut open = None;
+        let mut menu = None;
+        for view in &self.snapshot.archived {
+            let row = ticket_row(ui, view, self.selected.as_ref() == Some(&view.id));
+            if row.clicked() {
+                open = Some(view.id.clone());
+            }
+            row.context_menu(|ui| {
+                if let Some(picked) = crate::ticket_menu::ticket_menu(ui, view) {
+                    menu = Some(picked);
+                }
+            });
+        }
+        self.apply_choice(menu);
         if let Some(id) = open {
             self.open(&id);
         }

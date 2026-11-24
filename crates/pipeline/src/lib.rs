@@ -39,10 +39,20 @@ impl StepState {
     }
 }
 
+/// Where the owner put the ticket: in the lists, away, or deleted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Shelf {
+    #[default]
+    Listed,
+    Archived,
+    Deleted,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TicketState {
     created: bool,
     done: bool,
+    shelf: Shelf,
     steps: BTreeMap<Step, StepState>,
     cost: Money,
     /// True once any cost tick was an estimate, so a total is never shown as a bill.
@@ -70,6 +80,18 @@ impl TicketState {
         self.done
     }
 
+    /// The owner put the ticket away. Its history is whole; it is only hidden.
+    #[must_use]
+    pub fn is_archived(&self) -> bool {
+        self.shelf == Shelf::Archived
+    }
+
+    /// The owner deleted the ticket. It is listed nowhere and takes no event.
+    #[must_use]
+    pub fn is_deleted(&self) -> bool {
+        self.shelf == Shelf::Deleted
+    }
+
     #[must_use]
     pub fn cost(&self) -> (Money, bool) {
         (self.cost, self.cost_estimated)
@@ -94,6 +116,9 @@ impl TicketState {
     )]
     fn transition(&mut self, event: &NewEvent) -> Result<(), TransitionError> {
         use TransitionError as E;
+        if self.is_deleted() {
+            return Err(E::AfterDeleted);
+        }
         if self.done {
             return Err(E::AfterDone);
         }
@@ -202,6 +227,27 @@ impl TicketState {
             | Event::Workspace { .. }
             | Event::Triaged { .. }
             | Event::DesignResult { .. } => {}
+            Event::Archived => {
+                if let Some(active) = self.active() {
+                    return Err(E::StepBusy { active });
+                }
+                if self.is_archived() {
+                    return Err(E::AlreadyArchived);
+                }
+                self.shelf = Shelf::Archived;
+            }
+            Event::Restored => {
+                if !self.is_archived() {
+                    return Err(E::NotArchived);
+                }
+                self.shelf = Shelf::Listed;
+            }
+            Event::Deleted => {
+                if let Some(active) = self.active() {
+                    return Err(E::StepBusy { active });
+                }
+                self.shelf = Shelf::Deleted;
+            }
             Event::Done => {
                 if let Some(active) = self.active() {
                     return Err(E::StepBusy { active });
@@ -239,6 +285,12 @@ pub enum TransitionError {
     BeforeCreation,
     #[error("the ticket is done and takes no more events")]
     AfterDone,
+    #[error("the ticket was deleted and takes no more events")]
+    AfterDeleted,
+    #[error("the ticket is already archived")]
+    AlreadyArchived,
+    #[error("the ticket is not archived")]
+    NotArchived,
     #[error("the event needs a step and had none")]
     MissingStep,
     #[error("{active:?} is still active")]

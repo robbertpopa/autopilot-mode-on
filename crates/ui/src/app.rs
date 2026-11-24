@@ -172,6 +172,10 @@ pub struct App {
     next_update_check: Option<std::time::Instant>,
     pub(crate) accounts: Option<autopilot_accounts::Accounts>,
     pub(crate) sandbox: crate::sandbox::Probe,
+    /// The ticket the owner asked to delete and has not yet confirmed.
+    pub(crate) confirm_delete: Option<TicketId>,
+    /// Whether the sidebar lists the archived tickets.
+    pub(crate) show_archived: bool,
     /// The API key is saved in the user environment (maybe after this start).
     pub(crate) key_saved: bool,
     /// Who Git signs commits as, read from the global Git settings.
@@ -291,6 +295,8 @@ impl App {
             next_update_check: None,
             accounts: None,
             sandbox: crate::sandbox::Probe::Unknown,
+            confirm_delete: None,
+            show_archived: false,
             key_saved: false,
             git_identity: None,
             git_edit: None,
@@ -488,7 +494,11 @@ impl App {
     }
 
     pub(crate) fn ticket(&self, id: &TicketId) -> Option<&TicketView> {
-        self.snapshot.tickets.iter().find(|view| &view.id == id)
+        self.snapshot
+            .tickets
+            .iter()
+            .chain(&self.snapshot.archived)
+            .find(|view| &view.id == id)
     }
 
     pub(crate) fn current(&self) -> Option<&TicketView> {
@@ -729,6 +739,13 @@ impl App {
         self.auto_orchestrate();
         self.auto_advance();
         self.follow_system_theme(ctx);
+        // Under every panel, so a part no panel paints (a gap, a panel shorter
+        // than the window) shows the page colour and never the window's black.
+        ctx.layer_painter(egui::LayerId::background()).rect_filled(
+            ctx.content_rect(),
+            0.0,
+            theme::BACKGROUND(),
+        );
         Self::title_area(ctx);
         if self.is_first_run() {
             self.welcome(ctx);
@@ -816,6 +833,7 @@ impl App {
                     });
             });
         self.search_overlay(ctx);
+        self.delete_dialog(ctx);
     }
 
     /// Files dropped on the window go to the open form, or to the ticket on
@@ -992,7 +1010,7 @@ pub fn badge_colors(badge: Badge, view: &TicketView) -> (String, Color32, Color3
     }
 }
 
-pub(crate) fn ticket_row(ui: &mut egui::Ui, view: &TicketView, selected: bool) -> bool {
+pub(crate) fn ticket_row(ui: &mut egui::Ui, view: &TicketView, selected: bool) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::click());
     let painter = ui.painter();
@@ -1036,9 +1054,7 @@ pub(crate) fn ticket_row(ui: &mut egui::Ui, view: &TicketView, selected: bool) -
         galley,
         theme::TEXT(),
     );
-    response
-        .on_hover_text(format!("{}: {}", view.title, view.badge.label()))
-        .clicked()
+    response.on_hover_text(format!("{}: {}", view.title, view.badge.label()))
 }
 
 /// A one-line message with a colour for good or bad news.

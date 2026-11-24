@@ -23,6 +23,7 @@ use autopilot_store::{SqliteStore, Store, StoreError};
 
 mod advise;
 mod allowances;
+mod archive;
 mod attachments;
 mod build;
 mod catalog;
@@ -58,6 +59,7 @@ pub use advise::{
     kept as advice_kept,
 };
 pub use allowances::{allow, allowed, list as allowances, revoke};
+pub use archive::{archive_ticket, delete_ticket, restore_ticket};
 pub use attachments::{
     Attachment, MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_FOLDER_ITEMS, MAX_TICKET_BYTES, attach, note,
     stage,
