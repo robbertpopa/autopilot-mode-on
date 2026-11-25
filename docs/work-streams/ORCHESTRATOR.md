@@ -107,6 +107,18 @@ Every 10 to 15 minutes while workers are active, and whenever a worker reports:
 - Tests that need the WSL distro, a Linux host or Mac with `srt`, or the npm registry are `#[ignore]`; run them with `cargo test -p <crate> -- --ignored <name>` on that host.
 - The real boundary found three gaps that unit tests missed (the `/tmp` proxy socket, a sibling folder readable on Linux, the worktree root that must exist). Prefer running the real thing once to trusting the mock.
 
+## Lessons from the second run (2026-11-25, four workers, 32 pull requests)
+
+- **A usage limit stops every worker at once and silently.** Headless runs ended with `rate_limit_error` and cost 0. Nothing was lost, but the orchestrator only noticed hours later. Check the last line of each log for `rate_limit_error` before trusting "running", and relaunch only after the reset.
+- **Launch headless workers from bash** (`nohup claude -p "$(cat prompt.txt)" ... > log.jsonl 2>&1 &`); PowerShell `Start-Process` mangled a multi-line prompt and the worker answered "not sure what you want me to read". Use PowerShell only for `wt new-tab`.
+- **A new interactive tab can hang at a startup prompt** (for example folder trust) that the orchestrator cannot answer; it showed up as a tab with no conversation file. A resumed session (`claude --resume <id>`) started fine. For a small task prefer a headless run.
+- **Resuming a headless session in a tab works** and keeps its context: stop the headless process first, then `wt new-tab ... claude --resume <session id> --permission-mode auto "<message>"`. The headless log stops updating; judge progress from pull requests, status notes and `git status`.
+- **The `gh` account flips** (it went to `sheila-dot` mid-session and a merge failed with 403). Run `gh auth switch --user robbertpopa` and check before each round of merges.
+- **A new worker's merge conflicts** came from two pull requests that changed the same test file or stream-file box (for example two tasks of one story). Merge the first, let the worker merge `origin/develop` into the second (never force push), then merge. A just-merged neighbour reads `UNKNOWN` for a few seconds.
+- **The auto-mode classifier refuses a live shell step** that was not explicitly authorised in the conversation. Put the owner's approval in the worker's prompt and the file `questions.md`; if it still refuses, run the exact command as the orchestrator.
+- **A worker that finds a bug outside its crates** should write it up, not fix it (stream 2 found `run_plan` could corrupt a ticket history; stream 4 fixed it as its own small pull request).
+- **Session cost:** the 22 worker runs cost about $17 in Claude usage, separate from the $1 API key cap; the key spent about $0.09.
+
 ## Ledger and reports
 
 `ledger.md`: one line per live run (date, stream, what, model, cost). Refuse a run that would take the total past $1. Report to the owner at the end of each round in this shape: **merged** (pull request, one line each), **open** (what is waiting and on what), **blocked** (decision number, what it blocks, your recommendation), **spend** (total so far), **not verified** (anything claimed but not run, and every screen nobody looked at).

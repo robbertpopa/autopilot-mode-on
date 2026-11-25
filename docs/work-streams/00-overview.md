@@ -11,7 +11,7 @@ Written 2026-11-24 for an orchestrator that runs four agents side by side, and u
 | 3. Computer use and the sandbox | [03-computer-use-and-sandbox.md](03-computer-use-and-sandbox.md) | `process`, new `computer`, `tools/wsl`, `docs/spikes`, `docs/security.md` | Agents that operate a desktop, inside a boundary we probe |
 | 4. Window and orchestration | [04-window-and-orchestration.md](04-window-and-orchestration.md) | `ui`, `pipeline`, `notify`, `eval`, `update`, packaging | A window that shows and runs all of it, and runs many tickets side by side |
 
-## What exists today (verified, `develop` at `5470df7`, PR 161)
+## What exists today (verified, `develop` at `167539e`, PR 213, 2026-11-25)
 
 The ticket flow, from the command line and from the window: **Understand, Clarify, Plan, approve, Build, checks, review, pull request approval, push, draft pull request.**
 
@@ -22,12 +22,20 @@ The ticket flow, from the command line and from the window: **Understand, Clarif
 - **Agents.** Every adapter must pass one conformance suite (`agent::conformance`, PR 145); the activity history says why each shell command ran (PR 146). Claude is the only real adapter.
 - **Window.** Build, Ask to open a pull request, Open the pull request, Open the worktree, a sandbox settings page, and demo tickets for every build and pull request state (`autopilot-ui --demo`, PR 150). A disk image for macOS is built by `packaging/macos/build-dmg.sh`.
 - **Live evidence.** Five small tickets built with the real model for about $0.01 to $0.02 each; one real refine round (with a planted project rule).
+- **Added on 2026-11-25 (PRs 182 to 213, second wave; each task and its tests are in the stream files).**
+  - *Pull request lifecycle:* repair of a published pull request as Build rounds for review feedback, failing checks and merge conflicts (`engine::repair`, PR 193); a repaired commit is published only after its own forced approval (PR 195); `autopilot pr review <n>` runs the reviewers on a pull request someone else opened, report only (PR 203), and `--comment` asks to post the findings as one comment, which `autopilot pr comment` posts only after the forced approval is answered (PR 207); a ticket's worktree and branch can be removed together (PR 182); the parallel-worktree lock is proven (PR 185); the fetch-role hook in `checks` (PR 209).
+  - *Agents:* `autopilot-mcp` serves ticket history and waiting requests (PR 183), lets a client answer questions and optional approvals (PR 186, never a forced one), and has a permission prompt tool `approve` that asks the owner, with live recordings in `fixtures/claude/` (PR 205; nothing launches Claude with it yet); a limit stop shows the money spent and a running turn and cost line (PR 192); the measured cost of Plan on Haiku and Sonnet is in `docs/advisors.md` (PR 198); Codex is no-go for now and the Agent SDK is deferred (PRs 200, 201).
+  - *Sandbox:* the probe result comes back as data with its rows (PR 184); a terminal can be started in a folder from `process` (PR 187); a macOS descendant that calls `setsid` is cleaned up (PR 190); a spike shows a request filter for subscription mode against a fake provider host only (PRs 197, 206).
+  - *Window:* spend limits (a total and a per-call cap) and a daily limit, raised only in Settings (PRs 188, 210); notices belong to one ticket (PR 189); long plan rows wrap (PR 191); an error log with "Open the log" (PR 194); "Open in a terminal" and "Reset the Build" (PR 202); one shared sandbox probe (PR 208); a slot limit and a queue behind tickets that change the same files (PR 212); a running call's turn and cost beside the recorded cost (PR 213); `run_plan` refuses while a plan waits for approval (PR 204); `engine::sync_inbox` keeps `perm-` requests (PR 211).
+  - *Live spend this wave:* about $0.09 of the $1 cap through the dedicated key (review run $0.0104, Plan measurement about $0.07 counting one unrecorded call at the cap, permission-prompt trial $0.0014). Worker sessions cost about $17 in Claude usage, separate from the key.
 
 ## What has NOT been proven
 
 - **No real pull request has been opened on GitHub.** The PR path ran against a local bare repository and a fake `gh`. A throwaway private repository `robbertpopa/autopilot-pr-test` exists (it holds only `main`), and ticket `live-5` in `D:\autopilot-live\data` is waiting for the owner's approval of its publish. Do not approve, push or open anything there without the owner saying so.
 - **The window's newest screens were looked at only partly.** The owner's first run on a Mac (computer use, 2026-11-24) is in [owner-scenarios.md](owner-scenarios.md); colours, spacing and clipping of the build screens were not seen, and the window's Build button was not clicked on a Mac.
-- **The multi-reviewer review has not run against the real model.**
+- **The multi-reviewer review has run once against the real model** (Haiku, ticket `live-6`, $0.0104, [S6 document](../spikes/S6-containment.md)): three reviewers ran (the owner-rules reviewer is skipped when the project has no rules), nothing was found at 80% or more, and the change was correct, so it shows no noise but cannot show that a real defect is caught. A run with a planted defect (about $0.015) and a project with rules have not been tried.
+- **No screen of the second wave was looked at by eye** (spend limits, queue, terminal and reset, live progress, error log): only frame-building and backend tests cover them.
+- **Nothing launches Claude with the permission prompt tool yet**, and the window does not list or answer `perm-` requests.
 - Subscription mode and git inside the sandbox: refused on purpose, with reasons in the S6 document. macOS hosts run the same `srt` boundary with their own probe (S-d, PR 161, done on one Mac; Intel Macs and other macOS versions are not covered).
 - The checkboxes in `docs/IMPLEMENTATION-PLAN.md` and the milestone files were brought in line with the code on 2026-11-24: `[x]` done, `[~]` partly with the rest named, `[ ]` open. Trust the code and `git log` over any box, and update the boxes you touch.
 
@@ -41,7 +49,9 @@ The ticket flow, from the command line and from the window: **Understand, Clarif
 
 Other open owner items, kept here so they are not lost:
 
-- **The $0.05 per-call budget default** (`crates/ui/src/backend.rs`, used when a step's profile sets no budget) is too small for Design and Plan on a real repository: Plan failed with `error_max_budget_usd` and no result (task A13). The owner chooses the real cap.
+- **The per-call budget default.** Settings now holds a total spending cap and a per-call cap (PR 188) and a daily limit (PR 210), raised only there. The owner still chooses the real numbers for Design and Plan on a real repository: a Plan on Opus stopped at the turn limit after $1.32. A limit stop now says how much was spent; a "raise the cap and retry" action in the window is still open (task A13 in stream 2, 4.5 in stream 4).
+- **Codex (decision 3, extended).** The S8 checks found no way to finish without a dedicated OpenAI API key with a Platform spend limit; the owner creates it and says whether the ChatGPT route may ever run unattended. Until then the adapter (A4) is no-go ([DESIGN 7a](../DESIGN.md)).
+- **Subscription mode (decision 4).** [S11](../spikes/S11-subscription-filter.md) and `tools/s11-launcher/` show a request filter can overwrite a credential in principle, tested only against a fake provider host. The owner reviews the result; the product still refuses subscription mode.
 - **Subscription sign-in on a Mac**: the sign-in check can fail because `USER` is missing from the environment allowlist in `crates/accounts`. A fix is in progress in another session; no document change is needed when it lands except removing this line.
 - **Key rotation**: rotate the dedicated API key if it was ever shown in a log, transcript or screenshot, and when the spike budget is spent; keep a Console spend limit on it ([security](../security.md#open-items-for-the-owner)).
 
