@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use autopilot_agent::{Agent, AgentError, AgentRun, StepRequest, Stopped};
 use autopilot_core::{
-    Ambiguity, Clarity, Event, Money, OpenQuestion, Ticket, TicketId, Understanding,
+    Ambiguity, Clarity, Event, Money, OpenQuestion, RequestId, Ticket, TicketId, Understanding,
 };
 use autopilot_engine::{
     ClarifyStart, Error, answer_clarify, approved_plan, build_awaits_run, effective_overrides,
@@ -25,7 +25,7 @@ use autopilot_engine::{
 };
 use autopilot_pipeline::{
     clarify::Choice,
-    inbox::{Decision, Inbox, Reply},
+    inbox::{Decision, Inbox, Reply, Request, RequestBody},
 };
 
 struct Synthetic {
@@ -285,6 +285,54 @@ fn an_answer_file_is_applied_exactly_once_across_restarts() {
     assert_eq!(sync_inbox(data.path(), &ticket).unwrap(), vec![]);
     assert_eq!(answered_count(data.path(), &ticket), 1);
     assert!(inbox.read_answer(&request).unwrap().is_none());
+}
+
+fn stray_request(id: &str, ticket: &TicketId) -> Request {
+    Request {
+        id: RequestId::from(id),
+        ticket: ticket.clone(),
+        body: RequestBody::Approval {
+            action: "run a tool".into(),
+            forced: true,
+        },
+    }
+}
+
+// Invariant: a permission request written by `autopilot-mcp approve` and its
+// answer survive a sync, because the event log never knows them. A change that
+// drops the `perm-` check deletes the request while `approve` still waits; the
+// other tests only use requests the log knows.
+#[test]
+fn a_permission_request_and_its_answer_survive_a_sync() {
+    let (data, ticket) = understood("ask").unwrap();
+    let inbox = Inbox::in_data_dir(data.path());
+    let permission = stray_request("perm-call-1", &ticket);
+    inbox.write_request(&permission).unwrap();
+    let answer = Reply::Approval {
+        decision: Decision::Approve,
+        allow_for_project: false,
+    };
+    inbox.write_answer(&permission.id, &answer).unwrap();
+
+    sync_inbox(data.path(), &ticket).unwrap();
+
+    assert!(inbox.read_request(&permission.id).unwrap().is_some());
+    assert!(inbox.read_answer(&permission.id).unwrap().is_some());
+}
+
+// Invariant: a request the log does not know and that is not a permission
+// request is still removed. It guards the `perm-` exception from growing into
+// "keep everything".
+#[test]
+fn an_unknown_request_file_is_still_removed() {
+    let (data, ticket) = understood("ask").unwrap();
+    let inbox = Inbox::in_data_dir(data.path());
+    let stray = stray_request("stale-1", &ticket);
+    inbox.write_request(&stray).unwrap();
+
+    sync_inbox(data.path(), &ticket).unwrap();
+
+    assert!(inbox.read_request(&stray.id).unwrap().is_none());
 }
 
 // Invariant: a wrong-kind or malformed answer is refused and leaves the

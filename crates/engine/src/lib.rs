@@ -616,6 +616,10 @@ pub enum ClarifyStart {
 
 const CLARIFY: Option<Step> = Some(Step::Clarify);
 const CLARIFY_REQUEST: &str = "clarify-1";
+/// Id prefix of a permission request that `autopilot-mcp approve` writes. The
+/// event log never knows these, so a sync must not read them as stale. The mcp
+/// crate depends on this one, so it keeps its own copy of the same value.
+const PERMISSION_REQUEST: &str = "perm-";
 
 /// Skip Clarify, or start it and ask. The questions come from the recorded
 /// Understand result, so a restarted process asks the same ones.
@@ -790,7 +794,8 @@ pub fn recover_all(directory: &Path) -> Result<Vec<(TicketId, Vec<Step>)>, Error
 /// A waiting question gets its request file back if it is missing. A valid
 /// answer file is committed once, and only then are the files removed. Files
 /// for requests that are no longer waiting (a crash after the commit) are
-/// removed without being applied.
+/// removed without being applied. Permission requests (`perm-`) and their
+/// answers belong to `autopilot-mcp approve`, which removes them itself.
 ///
 /// # Errors
 /// Returns an error for an invalid history or an unusable answer file. An
@@ -846,7 +851,9 @@ pub fn sync_inbox(directory: &Path, ticket: &TicketId) -> Result<Vec<RequestId>,
         let waiting = Step::EVERY
             .iter()
             .any(|step| state.step(*step) == &StepState::Asking(request.id.clone()));
-        if request.ticket == *ticket && !waiting {
+        // `approve` is still waiting for the owner's answer to this file.
+        let permission = request.id.as_str().starts_with(PERMISSION_REQUEST);
+        if request.ticket == *ticket && !waiting && !permission {
             inbox.clean_up(&request.id)?;
         }
     }
