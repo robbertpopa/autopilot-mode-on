@@ -221,6 +221,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         (Some("pr"), Some("view")) => pr_view_command(&state, &args, &mut out)?,
+        (Some("pr"), Some("comment")) => pr_comment_command(&mut state, &args)?,
         (Some("pr"), Some("diff")) => pr_diff_command(&mut state, &args, &mut out)?,
         (Some("api"), Some("graphql")) => graphql_command(&state, &args, &mut out)?,
         (Some("api"), Some(route)) if route.ends_with("/logs") => {
@@ -242,4 +243,21 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     };
     fs::write(&path, serde_json::to_string(&state)?)?;
     Ok(code)
+}
+
+/// Records the comment text from stdin under `comments`; nothing is posted
+/// anywhere, so a test can read exactly what would have been.
+fn pr_comment_command(state: &mut Value, args: &[String]) -> Result<ExitCode, Fail> {
+    let mut body = String::new();
+    io::stdin().read_to_string(&mut body)?;
+    let number = args.get(2).ok_or("pull request")?;
+    let number = number.parse::<u64>().unwrap_or(0);
+    if state.get("comments").is_none() {
+        state["comments"] = json!([]);
+    }
+    state["comments"]
+        .as_array_mut()
+        .ok_or("comments")?
+        .push(json!({"number": number, "body": body}));
+    Ok(ExitCode::SUCCESS)
 }
