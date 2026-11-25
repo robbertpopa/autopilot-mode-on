@@ -45,3 +45,70 @@ The `@anthropic-ai/sandbox-runtime` 0.0.83 package (the version we pin as `VALID
 - **Keep subscription mode refused for now.** The filter makes closing the path plausible, but the pieces that would make it safe (the exact set of sign-in hosts, a placeholder Claude Code accepts, a probe that runs through the launcher, the macOS file case) are unproven, and a wrong guess puts a real sign-in inside a sandbox.
 - **If the owner wants it,** the next step is a spike with a small Node launcher and no real sign-in: check that Claude Code starts on a placeholder, record the hosts it calls, and show with a control that a request carrying another key is replaced or refused. Budget: $0 for the filter tests; a live call only within the S6 spike budget.
 - **Separately, consider the same filter for API-key mode** (point 4 above): the same launcher and the same probe work, and it removes the "provider host is a way out" caveat from the S6 document.
+
+## Launcher spike, 2026-11-25 (fake host, fake credentials, no spend)
+
+Asked for by the owner. Code: [`tools/s11-launcher`](../../tools/s11-launcher) (`filter.mjs` the request filter, `launcher.mjs` the `SandboxManager` wiring, tests under `test/`). It is a spike: nothing in the engine, an adapter or `process` loads it, and subscription mode stays refused. `@anthropic-ai/sandbox-runtime` is pinned to exactly 0.0.83. CI does not run these tests (no Node job); they were run by hand.
+
+**What ran.** WSL2 Ubuntu 24.04, Node 22.22.0, the `srt` library 0.0.83 through the public `SandboxManager.initialize` and `wrapWithSandbox` (the same bubblewrap, proxy and TLS termination as a real launch), a fake HTTPS provider on loopback with a throwaway CA, a fake token in the environment and a fake `.credentials.json`. The client inside the sandbox was `curl`. No real sign-in, no real Claude install, no provider call, $0. Not run: native Windows (`srt` needs its service account there), macOS, any Claude Code process.
+
+Results: `test/filter.test.mjs` 32 unit rows (run on this PC's Node, all pass); `test/integration.test.mjs` 17 rows and `test/tunnel.test.mjs` 2 rows in WSL (all pass). Every row is judged on what the fake provider received, not only on the client's status.
+
+### What the filter sees (the question that decided the design)
+
+| | Filter sees | Fake provider receives |
+|---|---|---|
+| `Authorization` header | `Bearer fake_value_<uuid>…` (the placeholder) | `Bearer <the real fake token>` |
+| Body containing the placeholder | the placeholder | the real token |
+| TLS name | `localhost` (in `info.sni` and `info.target.host`) | |
+
+The filter runs **before** srt's substitution, on headers and on the body, and it can read the body. It can compare against the placeholder, and it can see a placeholder sent where it must not go.
+
+### The hole a header check alone leaves
+
+srt also substitutes the placeholder in request **bodies** on the provider host. Mutation, run: with a filter that allows everything, a request with a foreign `x-api-key` and a body holding the placeholder reaches the provider with the **real token in the body** under the foreign key. That is the exfiltration path, and it also lets the token be sent as prompt text for the model to repeat. So the filter does three things: exactly one credential header holding exactly the placeholder; the placeholder nowhere else (other headers, request target, body scanned whole up to 32 MiB, larger refused); host, scheme and target checks.
+
+### Rows
+
+| Row | Result | Control or mutation |
+|---|---|---|
+| Placeholder in `Authorization` | allowed, provider sees the real token | the control for every refusal below |
+| Foreign `x-api-key`, no placeholder | 403 from the filter, nothing arrives | allow-all filter: the foreign key arrives |
+| Placeholder plus a foreign key in a second header | 403 `more than one credential header` | |
+| Valid header, placeholder in the body | 403 `placeholder in the body` | allow-all filter: the real token arrives in the body under a foreign key |
+| `Host` header unlike the target | 421 from srt (`requireHostMatch`) | |
+| `/v1/x/../messages` (dot segment) | 400 from srt (`ambiguousRequestTarget: refuse`) | |
+| Host not on the domain list | CONNECT refused 403 by the domain rule; the filter was never asked | shows which layer refused |
+| Plain `http://` to the provider host | 403 `provider requests must be https` | |
+| Filter throws | 403 `sandbox policy check failed`, nothing arrives | fails closed |
+| Opaque tunnel (host allowed, not terminated) | refused with `refuseOpaqueTunnels` | switch off: the foreign key lands at the provider |
+| Overwrite mode, three spellings of a foreign key | allowed, provider gets only the launcher's header | |
+| Fake credential file masked with `extract` | still valid JSON, access and refresh values are placeholders, rest kept, real file unchanged | |
+| Refresh request (placeholder in body) | refused by the filter | allow-all: the real refresh token goes out **and the new real access token comes back to the agent in the response** |
+| Unit filter with the credential compare disabled | 6 of 32 unit rows fail; restored, 32 pass | |
+
+Unit rows also cover `X_Api_Key` and `x.api.key` spellings, duplicate headers, text after the placeholder, a placeholder split across body chunks, a percent-encoded placeholder in the query, an oversized body, missing request info, and a filter given no placeholders (refuses everything).
+
+### Hosts, from documentation only
+
+[Claude Code network configuration](https://code.claude.com/docs/en/network-config), read 2026-11-25: `api.anthropic.com` (API requests), `claude.ai` (account authentication), `claude.com` (sign-in page that redirects to claude.ai), `platform.claude.com` ("OAuth token exchange, refresh, and revocation also go to this host for claude.ai accounts"), `sso.claude.com` (SSO sign-in only). Refresh is **not** on the API host. [Authentication](https://code.claude.com/docs/en/authentication): `claude setup-token` makes a one-year OAuth token for `CLAUDE_CODE_OAUTH_TOKEN`; the Linux login is `~/.claude/.credentials.json` (mode 0600), macOS uses the Keychain. The pages do **not** say which HTTP header `CLAUDE_CODE_OAUTH_TOKEN` travels in, do not document the credential file's schema, give no refresh-token lifetime and say nothing about terms for launcher use. The probe's fake file format is invented and is not claimed to match the real one.
+
+### Answers to what S11 left open
+
+- **Hosts:** above. The sandbox needs only `api.anthropic.com`. Interactive sign-in happens on the host, so `claude.ai`, `claude.com`, `sso.claude.com` and `platform.claude.com` need not be reachable from inside.
+- **Refresh must stay outside the sandbox.** The filter can refuse a refresh body, but if refresh were allowed, srt masks only what the agent sends: the response with new real tokens reaches the agent unmasked (mutation row). So: refresh on the host, and give the sandbox a token that needs no refresh (the documented one-year `setup-token` value as a masked environment variable) or one the launcher renews between runs. Keep `platform.claude.com` off the domain list.
+- **Environment variable, not file:** masking a variable works on Linux and macOS, while a masked file is masked only on Linux (denied on macOS). Prefer the variable.
+- **Reject or overwrite:** both work. Overwrite (remove every credential header the agent sent, set the launcher's own) leaves no comparison to get wrong, but the body and target rule is still needed because srt substitutes in bodies.
+- **API-key mode has the same hole today**, and the same filter, with the key as the masked variable, closes it.
+
+### Not found out
+
+- Whether Claude Code starts on a placeholder, which header it uses for the OAuth variable, and which hosts it calls at start. That needs a Claude Code process; this spike did not run one (rule: no real Claude). A fresh copy with no sign-in against the fake host would answer it, with the owner's go-ahead.
+- macOS and native Windows behaviour; the other headers a real request carries (the credential-header list may need more names).
+- Terms of use for a subscription sign-in under a launcher: not stated in the pages read; the owner's question.
+
+### Recommendation for the owner
+
+1. **Keep subscription mode refused.** The filter works on Linux/WSL2 and closes the provider-host path, but a real sign-in inside a sandbox also needs a placeholder Claude Code accepts (untested) and a terms answer only you can give.
+2. **Use the launcher for API-key mode first.** It removes the "provider host is a way out" caveat in S6 with no new secret. That means a Node launcher in the validated surface (pinned `srt`, probe rows run through it, a Node job in CI) in place of the `srt` command in `crates/process/src/wsl.rs`: a later stream 3 task, not done here.
+3. **If you want subscription mode after that:** the `setup-token` environment variable, never the credential file, never refresh inside, and let me run one fresh Claude Code copy (no sign-in) against the fake host to settle the header and hosts.
