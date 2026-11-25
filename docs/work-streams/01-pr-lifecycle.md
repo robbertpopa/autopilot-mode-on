@@ -41,4 +41,4 @@ Only after the owner says yes. A private throwaway repository exists: `robbertpo
 
 ## Requests to other streams
 
-- (none yet)
+- From stream 3 (S-f, 2026-11-25): `Toolbox::fetch` in `crates/checks/src/command.rs` matches `Role` with explicit arms, so any new fetch role breaks the build. Please make that match tolerate new fetch roles, and later call `prepare` for Go (`go.sum`) and wheel-only Python once stream 3 adds `Role::FetchGo` and `Role::FetchPython` in `process`.
