@@ -961,6 +961,9 @@ pub fn run(
 ) {
     thread::spawn(move || {
         let outcome = perform(&options, &action);
+        if let Err(why) = &outcome {
+            crate::error_log::record(&options.data_dir, now_ms(), action.describe(), why);
+        }
         let _ = sender.send(Message::Done(Some(id), outcome));
         context.request_repaint();
     });

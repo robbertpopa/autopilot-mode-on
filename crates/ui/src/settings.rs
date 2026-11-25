@@ -252,5 +252,19 @@ impl App {
         {
             crate::backend::save_notifications(&self.options.data_dir, self.notify);
         }
+        ui.add_space(14.0);
+        ui.label(RichText::new("Error log").strong());
+        ui.label(theme::muted(
+            "Every action that failed, one line each, with keys and tokens left out.",
+        ));
+        let log = crate::error_log::path(&self.options.data_dir);
+        let button = ui.add_enabled(log.exists(), egui::Button::new("Open the log"));
+        if button
+            .on_disabled_hover_text("Nothing has failed yet, so there is no log.")
+            .clicked()
+            && let Err(why) = autopilot_update::open_installer(&log)
+        {
+            self.notice = Some((false, format!("Could not open the log: {why}")));
+        }
     }
 }
