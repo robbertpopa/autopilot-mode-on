@@ -552,10 +552,11 @@ pub(crate) fn parse_discovery(
         Host::Linux | Host::Macos => "this machine".to_owned(),
     };
     if !missing.is_empty() {
-        return Err(io::Error::other(format!(
-            "{place} is missing: {}",
-            missing.join(", ")
-        )));
+        return Err(crate::refusal::Refusal::Missing {
+            place,
+            tools: missing,
+        }
+        .into());
     }
     let (Some(home), Some(path), Some(srt), Some(seccomp), Some(hook)) =
         (home, path, srt, seccomp, hook)
