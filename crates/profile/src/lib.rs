@@ -185,6 +185,47 @@ pub struct ProjectBudgets {
     pub daily_microusd: Option<NonZeroU64>,
 }
 
+/// What the whole installation may spend on paid calls, and the most one call
+/// may cost when its step sets no budget. Only the profile file holds these:
+/// a project or a pipeline cannot carry them, so nothing an agent drafts can
+/// raise them.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SpendLimits {
+    pub total_microusd: NonZeroU64,
+    pub call_microusd: NonZeroU64,
+}
+
+impl SpendLimits {
+    /// The most one call may cost: the step's own budget, else the default.
+    #[must_use]
+    pub fn call_cap(&self, step_budget: Option<Money>) -> Money {
+        step_budget.unwrap_or_else(|| Money::from_microusd(self.call_microusd.get()))
+    }
+
+    /// One dollar in all.
+    pub const DEFAULT_TOTAL_MICROUSD: u64 = 1_000_000;
+    /// Five cents a call: enough for a small Haiku turn, too little for Plan
+    /// on a real repository, which the owner raises in Settings.
+    pub const DEFAULT_CALL_MICROUSD: u64 = 50_000;
+}
+
+const fn non_zero(value: u64) -> NonZeroU64 {
+    match NonZeroU64::new(value) {
+        Some(value) => value,
+        None => NonZeroU64::MIN,
+    }
+}
+
+impl Default for SpendLimits {
+    fn default() -> Self {
+        Self {
+            total_microusd: non_zero(Self::DEFAULT_TOTAL_MICROUSD),
+            call_microusd: non_zero(Self::DEFAULT_CALL_MICROUSD),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Limits {
     pub turns: u32,
@@ -212,6 +253,7 @@ pub struct Profile {
     pub protected_paths: Vec<String>,
     pub branch_rules: BranchRules,
     pub budgets: ProjectBudgets,
+    pub spend: SpendLimits,
     pub when_unsure: WhenUnsure,
     pub review: ReviewSettings,
     pub advisor: AdvisorSettings,
@@ -233,6 +275,7 @@ struct ProfileFile {
     protected_paths: Vec<String>,
     branch_rules: BranchRules,
     budgets: ProjectBudgets,
+    spend: SpendLimits,
     when_unsure: WhenUnsure,
     review: ReviewSettings,
     advisor: AdvisorSettings,
@@ -330,6 +373,7 @@ impl Profile {
             protected_paths: file.protected_paths,
             branch_rules: file.branch_rules,
             budgets: file.budgets,
+            spend: file.spend,
             when_unsure: file.when_unsure,
             review: file.review,
             advisor: file.advisor,

@@ -166,6 +166,54 @@ pub fn edit_project(
     Ok(profile)
 }
 
+/// One spend limit, in micro-dollars.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SpendField {
+    /// The most all paid calls may cost together.
+    Total(u64),
+    /// The most one call may cost when its step sets no budget.
+    PerCall(u64),
+}
+
+/// Change a spend limit. This is the only writer of `[spend]`: it is reached
+/// from Settings, never from a pipeline draft, a proposal or a tuning.
+///
+/// # Errors
+/// Returns an error for an unreadable file, or a refusal for a zero limit. The
+/// file is left as it was in that case.
+pub fn edit_spend(path: &Path, field: SpendField) -> Result<Profile, ProfileEditError> {
+    let (key, micro) = match field {
+        SpendField::Total(micro) => ("total_microusd", micro),
+        SpendField::PerCall(micro) => ("call_microusd", micro),
+    };
+    if micro == 0 {
+        return Err(ProfileEditError::Refused(
+            "a spend limit must be more than zero".into(),
+        ));
+    }
+    let micro = i64::try_from(micro)
+        .map_err(|_| ProfileEditError::Syntax("the limit is too large".into()))?;
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
+    let mut document: DocumentMut = source
+        .parse()
+        .map_err(|error: toml_edit::TomlError| ProfileEditError::Syntax(error.to_string()))?;
+    child_table(document.as_table_mut(), "spend")?[key] = value(micro);
+    let text = document.to_string();
+    let profile = Profile::parse(path, &text)?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, text)?;
+    Ok(profile)
+}
+
 /// One setting of the pipeline review.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReviewField {

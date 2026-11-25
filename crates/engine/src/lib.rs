@@ -99,9 +99,10 @@ pub use pr_rules::{
 };
 pub use pr_watch::{PrWatch, watch_pull_request};
 pub use profile_edit::{
-    ProfileEditError, ProjectField, ReviewField, StepField, add_detected_check, add_pipeline,
-    delete_pipeline, edit_project, edit_review, edit_step, free_custom_slot, load_profile,
-    remove_custom_step, rename_pipeline, save_pipeline, set_custom_step, set_pipeline_order,
+    ProfileEditError, ProjectField, ReviewField, SpendField, StepField, add_detected_check,
+    add_pipeline, delete_pipeline, edit_project, edit_review, edit_spend, edit_step,
+    free_custom_slot, load_profile, remove_custom_step, rename_pipeline, save_pipeline,
+    set_custom_step, set_pipeline_order,
 };
 pub use proposals::{Suggestion, dismiss_proposal, proposals_for};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
@@ -122,9 +123,10 @@ pub use tuning::{
     undo_tuning,
 };
 pub use view::{
-    AttachmentView, Badge, CheckFinding, CheckRow, CostLine, Fact, LogLine, RoundView, StepView,
-    TicketView, TimelineLine, dollars, load_ticket, name_custom_steps, spent_since, step_name,
-    ticket_view, tickets,
+    AttachmentView, Badge, CAP_REACHED, CheckFinding, CheckRow, CostLine, Fact, LogLine, RoundView,
+    SpendError, StepView, TicketView, TimelineLine, dollars, is_cap_refusal, load_ticket,
+    micro_from_dollars, name_custom_steps, paid_call_cap, spent_since, step_name, ticket_view,
+    tickets,
 };
 pub use workspace::{
     canonical as canonical_folder, of as workspace_of, record as record_workspace,

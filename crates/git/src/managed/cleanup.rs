@@ -20,6 +20,21 @@ impl WorktreeManager {
     /// Returns an error when Git identity, ownership or cleanliness cannot be verified,
     /// or when a filesystem operation fails.
     pub fn remove(&self, ticket: &TicketId) -> Result<Removal, Error> {
+        self.remove_checkout(ticket, false)
+    }
+
+    /// Remove a managed checkout and its branch even when they hold uncommitted
+    /// files or commits. The caller must have asked the owner first: nothing here
+    /// can bring the work back. Identity, ownership and lock checks still apply.
+    ///
+    /// # Errors
+    /// Returns an error when Git identity or ownership cannot be verified, the
+    /// checkout is locked, or a filesystem operation fails.
+    pub fn remove_discarding_work(&self, ticket: &TicketId) -> Result<Removal, Error> {
+        self.remove_checkout(ticket, true)
+    }
+
+    fn remove_checkout(&self, ticket: &TicketId, discard: bool) -> Result<Removal, Error> {
         let (branch, key) = ticket_worktree(ticket)?;
         let path = self.root.join(&key);
         let marker = path.with_extension("owner.json");
@@ -48,7 +63,11 @@ impl WorktreeManager {
             let checkout = self
                 .exact_checkout(&path, &reference)?
                 .ok_or_else(|| Error::WorktreeConflict(path.clone()))?;
-            self.require_clean_checkout(&checkout)?;
+            if discard && !checkout.locked {
+                self.verify_checkout_config(&path)?;
+            } else {
+                self.require_clean_checkout(&checkout)?;
+            }
         } else if !owner.ready && !owner.removing {
             // Creation may have ended before Git registered a checkout. Never
             // delete a branch on the strength of a pending reservation alone.
@@ -80,7 +99,7 @@ impl WorktreeManager {
             retry_file_lock(|| fs::rename(&path, &retired))?;
         }
         if managed_directory_exists(&retired)? {
-            self.remove_retired_files(&retired, &path, &reference)?;
+            self.remove_retired_files(&retired, &path, &reference, discard)?;
         }
         if managed_directory_exists(&path)? {
             return Err(Error::RecoveryRequired(path));
@@ -96,7 +115,7 @@ impl WorktreeManager {
         if self.cleanup_registration(&path, &reference)? {
             return Err(Error::RecoveryRequired(path));
         }
-        let result = self.remove_branch(&branch, &reference, &base)?;
+        let result = self.remove_branch(&branch, &reference, &base, discard)?;
         fs::remove_file(marker)?;
         Ok(result)
     }
@@ -135,6 +154,7 @@ impl WorktreeManager {
         retired: &Path,
         original: &Path,
         reference: &str,
+        discard: bool,
     ) -> Result<(), Error> {
         let gitfile = retired.join(".git");
         match gitfile.symlink_metadata() {
@@ -147,7 +167,9 @@ impl WorktreeManager {
             Err(error) => return Err(error.into()),
         }
         self.verify_checkout_identity(retired, original, reference)?;
-        self.verify_checkout_files(retired, true)?;
+        if !discard {
+            self.verify_checkout_files(retired, true)?;
+        }
         for entry in fs::read_dir(retired)? {
             let entry = entry?;
             if entry.file_name() == ".git" {
@@ -173,13 +195,13 @@ impl WorktreeManager {
         branch: &str,
         reference: &str,
         base: &ObjectId,
+        discard: bool,
     ) -> Result<Removal, Error> {
         match self.repository.resolve_local_branch(branch) {
-            Ok(tip) if tip == *base => {
-                self.repository.read_git(
-                    "update-ref",
-                    &["--no-deref", "-d", reference, base.as_str()],
-                )?;
+            Ok(tip) if tip == *base || discard => {
+                // Deleting against the tip just read keeps a concurrent commit safe.
+                self.repository
+                    .read_git("update-ref", &["--no-deref", "-d", reference, tip.as_str()])?;
                 Ok(Removal::Removed)
             }
             Ok(_) => Ok(Removal::BranchPreserved),

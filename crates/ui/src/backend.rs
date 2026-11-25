@@ -589,8 +589,8 @@ pub(crate) fn claude_config(
     options: &Options,
     step: Step,
     ticket: Option<&TicketId>,
-) -> autopilot_agent_claude::ClaudeConfig {
-    let mut config = profile_config(options, step);
+) -> Result<autopilot_agent_claude::ClaudeConfig, String> {
+    let mut config = profile_config(options, step)?;
     if let Some(ticket) = ticket
         && let Ok(chosen) = autopilot_engine::effective_overrides(&options.data_dir, ticket, step)
     {
@@ -605,15 +605,22 @@ pub(crate) fn claude_config(
             config.max_turns = turns.max(2);
         }
     }
-    config
+    Ok(config)
 }
 
-fn profile_config(options: &Options, step: Step) -> autopilot_agent_claude::ClaudeConfig {
-    let settings = autopilot_engine::load_profile(&options.profile)
-        .ok()
+/// The settings of a step's call. An API call is refused here once the total
+/// spending cap is reached, and its per-call cap never passes what is left of
+/// the total.
+fn profile_config(
+    options: &Options,
+    step: Step,
+) -> Result<autopilot_agent_claude::ClaudeConfig, String> {
+    let profile = autopilot_engine::load_profile(&options.profile).ok();
+    let settings = profile
+        .as_ref()
         .and_then(|profile| profile.step(step).cloned());
     let Some(settings) = settings else {
-        return autopilot_agent_claude::ClaudeConfig {
+        return Ok(autopilot_agent_claude::ClaudeConfig {
             auth: autopilot_profile::Auth::Subscription,
             model: "haiku".to_owned(),
             effort: None,
@@ -621,26 +628,32 @@ fn profile_config(options: &Options, step: Step) -> autopilot_agent_claude::Clau
             max_budget_usd: None,
             executable: None,
             timeout: Duration::from_secs(300),
-        };
+        });
     };
-    let api = settings.auth == autopilot_profile::Auth::Api;
-    autopilot_agent_claude::ClaudeConfig {
+    // Only an API run has a per-call dollar cap; a subscription has none.
+    let max_budget_usd = if settings.auth == autopilot_profile::Auth::Api {
+        let limits = profile.map(|profile| profile.spend).unwrap_or_default();
+        let cap = autopilot_engine::paid_call_cap(
+            &options.data_dir,
+            &limits,
+            settings.limits.budget_microusd,
+        )
+        .map_err(|error| error.to_string())?;
+        let micro = cap.as_microusd();
+        Some(format!("{}.{:06}", micro / 1_000_000, micro % 1_000_000))
+    } else {
+        None
+    };
+    Ok(autopilot_agent_claude::ClaudeConfig {
         auth: settings.auth,
         model: settings.model.unwrap_or_else(|| "haiku".to_owned()),
         effort: settings.effort,
         // Structured output needs a turn after the answer.
         max_turns: settings.limits.turns.max(2),
-        // Only an API run has a per-call dollar cap; a subscription has none.
-        max_budget_usd: api.then(|| {
-            let micro = settings
-                .limits
-                .budget_microusd
-                .map_or(50_000, autopilot_core::Money::as_microusd);
-            format!("{}.{:06}", micro / 1_000_000, micro % 1_000_000)
-        }),
+        max_budget_usd,
         executable: None,
         timeout: Duration::from_secs(u64::from(settings.limits.wall_seconds.max(30))),
-    }
+    })
 }
 
 /// The project folder recorded on a ticket, if it still exists.
@@ -685,7 +698,7 @@ fn chosen_agent(
     match AgentChoice::read(&options.data_dir) {
         AgentChoice::Practice => fixture_agent().map(Chosen::Practice),
         AgentChoice::Claude => {
-            let config = claude_config(options, step, ticket);
+            let config = claude_config(options, step, ticket)?;
             claude_agent(config, workspace).map(|agent| Chosen::Claude(Box::new(agent)))
         }
     }
@@ -759,7 +772,7 @@ fn orchestrate(options: &Options, ticket: &TicketId) -> Result<String, String> {
         .model()
         .ok_or_else(|| "the orchestrator is switched off in Settings".to_owned())?;
     let folder = ticket_folder(options, ticket);
-    let mut config = profile_config(options, Step::Understand);
+    let mut config = profile_config(options, Step::Understand)?;
     model.clone_into(&mut config.model);
     let agent = claude_agent(config, folder.as_deref())?;
     autopilot_engine::triage_ticket(&options.data_dir, ticket, folder.is_some(), |prompt| {
@@ -797,7 +810,7 @@ fn advise(options: &Options, ticket: &TicketId, question: &str) -> Result<String
         autopilot_engine::load_profile(&options.profile).map_err(|error| error.to_string())?;
     let settings = profile.advisor.clone();
     let folder = ticket_folder(options, ticket);
-    let mut config = profile_config(options, Step::Understand);
+    let mut config = profile_config(options, Step::Understand)?;
     config.model = settings.model;
     config.effort = settings.effort;
     let agent = claude_agent(config, folder.as_deref())?;
@@ -838,7 +851,7 @@ pub(crate) fn ask_text(options: &Options, model: &str, prompt: &str) -> Result<A
     if AgentChoice::read(&options.data_dir) != AgentChoice::Claude {
         return Err("AI help needs the Claude agent: choose it in Settings".to_owned());
     }
-    let mut config = profile_config(options, Step::Understand);
+    let mut config = profile_config(options, Step::Understand)?;
     model.clone_into(&mut config.model);
     config.effort = None;
     let paid = match (config.auth, config.max_budget_usd.as_deref()) {
@@ -882,7 +895,7 @@ fn chat(
     let history =
         autopilot_engine::watch(&options.data_dir, ticket, 0).map_err(|error| error.to_string())?;
     let view = autopilot_engine::ticket_view(&history).map_err(|error| error.to_string())?;
-    let mut config = profile_config(options, Step::Understand);
+    let mut config = profile_config(options, Step::Understand)?;
     chat_model(
         view.triage.as_ref().map(|triage| triage.complexity),
         question,

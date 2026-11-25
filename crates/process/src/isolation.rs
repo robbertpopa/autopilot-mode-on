@@ -164,12 +164,7 @@ pub fn validate(wsl: Wsl, work: &Path) -> io::Result<Validated> {
     if report.failures.is_empty() {
         Ok(Validated { wsl: Arc::new(wsl) })
     } else {
-        Err(io::Error::other(format!(
-            "the WSL boundary failed {} check(s) with {}: {}",
-            report.failures.len(),
-            report.versions,
-            report.failures.join("; ")
-        )))
+        Err(crate::refusal::Refusal::Failed(report).into())
     }
 }
 

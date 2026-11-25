@@ -253,3 +253,32 @@ fn steps_default_to_a_model_that_fits_their_job() {
     assert_eq!(model(Step::Understand), "sonnet");
     assert_eq!(model(Step::BuildCheck), "haiku");
 }
+
+// Invariant: with no `[spend]` section the total is one dollar and a call is
+// five cents, and the file can lower or raise them. Breaks if a default moves
+// (the live ledger's $1 cap rests on it).
+#[test]
+fn spend_limits_default_to_one_dollar_and_five_cents_a_call() {
+    let profile = Profile::parse("project.toml", "").unwrap();
+    assert_eq!(profile.spend.total_microusd.get(), 1_000_000);
+    assert_eq!(profile.spend.call_microusd.get(), 50_000);
+    let set = Profile::parse("project.toml", "[spend]\ntotal_microusd = 3000000\n").unwrap();
+    assert_eq!(set.spend.total_microusd.get(), 3_000_000);
+    assert_eq!(set.spend.call_microusd.get(), 50_000);
+    assert!(Profile::parse("project.toml", "[spend]\ntotal_microusd = 0\n").is_err());
+}
+
+// Invariant: only the profile's own `[spend]` sets these limits. A project
+// entry or a pipeline that tries to carry one is refused, so neither can raise
+// the cap. Breaks if `ProjectFile` or `PipelineFile` gains a spend field or
+// stops denying unknown fields.
+#[test]
+fn a_project_or_pipeline_cannot_carry_spend_limits() {
+    let project =
+        "[projects.\"D:/work/app\"]\n[projects.\"D:/work/app\".spend]\ntotal_microusd = 99000000\n";
+    assert!(Profile::parse("project.toml", project).is_err());
+    let pipeline = "[pipelines.mine]\nbased_on = \"full\"\n[pipelines.mine.spend]\ntotal_microusd = 99000000\n";
+    assert!(Profile::parse("project.toml", pipeline).is_err());
+    let budgets = "[projects.\"D:/work/app\"]\n[projects.\"D:/work/app\".budgets]\ntotal_microusd = 99000000\n";
+    assert!(Profile::parse("project.toml", budgets).is_err());
+}

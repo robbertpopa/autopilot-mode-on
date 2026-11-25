@@ -9,6 +9,7 @@ use std::{
 mod attachments;
 #[cfg(windows)]
 mod build;
+mod spend;
 
 use std::sync::{Arc, Mutex};
 
