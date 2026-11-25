@@ -168,6 +168,57 @@ fn removing_a_checkout_keeps_unsaved_changes_and_commits() {
 }
 
 #[test]
+fn discarding_removal_deletes_unsaved_files_and_the_branch_that_plain_removal_keeps() {
+    let fixture = Fixture::new().unwrap();
+    let manager = fixture.manager().unwrap();
+    let ticket = TicketId::from("42");
+    let run = manager.create(&ticket, "base").unwrap();
+    let native = fixture.root.join(run.checkout.path.file_name().unwrap());
+    fs::write(
+        native.join("item.txt"),
+        b"edited
+",
+    )
+    .unwrap();
+    fs::write(
+        native.join("new.txt"),
+        b"untracked
+",
+    )
+    .unwrap();
+    git(&fixture.program, &native, &["commit", "-a", "-m", "work"]).unwrap();
+    fs::write(
+        native.join("item.txt"),
+        b"uncommitted
+",
+    )
+    .unwrap();
+
+    assert!(matches!(
+        manager.remove(&ticket),
+        Err(Error::RecoveryRequired(_))
+    ));
+    assert!(native.exists());
+
+    assert_eq!(
+        manager.remove_discarding_work(&ticket).unwrap(),
+        Removal::Removed
+    );
+    assert!(!native.exists());
+    assert!(matches!(
+        fixture
+            .repository()
+            .unwrap()
+            .resolve_local_branch("ticket/42"),
+        Err(Error::LocalBranch(_))
+    ));
+    assert_eq!(
+        manager.remove_discarding_work(&ticket).unwrap(),
+        Removal::AlreadyAbsent
+    );
+}
+
+#[test]
 fn removing_a_worktree_can_resume_after_the_files_are_moved_aside() {
     let fixture = Fixture::new().unwrap();
     let manager = fixture.manager().unwrap();
