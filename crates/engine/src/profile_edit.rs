@@ -173,6 +173,10 @@ pub enum SpendField {
     Total(u64),
     /// The most one call may cost when its step sets no budget.
     PerCall(u64),
+    /// The most all paid calls may cost in one day.
+    Daily(u64),
+    /// Remove the daily limit.
+    NoDaily,
 }
 
 /// Change a spend limit. This is the only writer of `[spend]`: it is reached
@@ -182,11 +186,13 @@ pub enum SpendField {
 /// Returns an error for an unreadable file, or a refusal for a zero limit. The
 /// file is left as it was in that case.
 pub fn edit_spend(path: &Path, field: SpendField) -> Result<Profile, ProfileEditError> {
-    let (key, micro) = match field {
-        SpendField::Total(micro) => ("total_microusd", micro),
-        SpendField::PerCall(micro) => ("call_microusd", micro),
+    let (table_name, key, micro) = match field {
+        SpendField::Total(micro) => ("spend", "total_microusd", micro),
+        SpendField::PerCall(micro) => ("spend", "call_microusd", micro),
+        SpendField::Daily(micro) => ("budgets", "daily_microusd", micro),
+        SpendField::NoDaily => ("budgets", "daily_microusd", 0),
     };
-    if micro == 0 {
+    if micro == 0 && field != SpendField::NoDaily {
         return Err(ProfileEditError::Refused(
             "a spend limit must be more than zero".into(),
         ));
@@ -201,7 +207,12 @@ pub fn edit_spend(path: &Path, field: SpendField) -> Result<Profile, ProfileEdit
     let mut document: DocumentMut = source
         .parse()
         .map_err(|error: toml_edit::TomlError| ProfileEditError::Syntax(error.to_string()))?;
-    child_table(document.as_table_mut(), "spend")?[key] = value(micro);
+    let table = child_table(document.as_table_mut(), table_name)?;
+    if field == SpendField::NoDaily {
+        table.remove(key);
+    } else {
+        table[key] = value(micro);
+    }
     let text = document.to_string();
     let profile = Profile::parse(path, &text)?;
     if let Some(parent) = path

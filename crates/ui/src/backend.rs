@@ -277,8 +277,9 @@ pub fn read(options: &Options) -> Snapshot {
     // Newest first, so what you just started is at the top.
     snapshot.tickets.reverse();
     snapshot.archived.reverse();
-    let now = now_ms();
-    if let Ok((api, subscription)) = spent_since(&options.data_dir, now - now % 86_400_000) {
+    if let Ok((api, subscription)) =
+        spent_since(&options.data_dir, autopilot_engine::start_of_today_ms())
+    {
         snapshot.today_api = api;
         snapshot.today_subscription = subscription;
     }
@@ -641,10 +642,13 @@ fn profile_config(
     };
     // Only an API run has a per-call dollar cap; a subscription has none.
     let max_budget_usd = if settings.auth == autopilot_profile::Auth::Api {
-        let limits = profile.map(|profile| profile.spend).unwrap_or_default();
+        let (limits, daily) = profile
+            .map(|profile| (profile.spend, profile.budgets.daily_microusd))
+            .unwrap_or_default();
         let cap = autopilot_engine::paid_call_cap(
             &options.data_dir,
             &limits,
+            daily,
             settings.limits.budget_microusd,
         )
         .map_err(|error| error.to_string())?;

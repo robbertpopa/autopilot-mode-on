@@ -7,7 +7,7 @@ use std::path::Path;
 use autopilot_core::{Event, Money, NewEvent, Step, TicketId};
 use autopilot_engine::{
     SpendError, SpendField, edit_spend, is_cap_refusal, load_profile, micro_from_dollars,
-    paid_call_cap,
+    paid_call_cap, paid_call_cap_since,
 };
 use autopilot_profile::SpendLimits;
 use autopilot_store::{SqliteStore, Store};
@@ -50,11 +50,12 @@ fn spend(directory: &Path, ticket: &str, micro: u64, estimated: bool) {
 fn a_call_gets_its_step_budget_or_the_profile_default() {
     let directory = tempfile::tempdir().unwrap();
     let limits = limits(1_000_000, 50_000);
-    let cap = paid_call_cap(directory.path(), &limits, None).unwrap();
+    let cap = paid_call_cap(directory.path(), &limits, None, None).unwrap();
     assert_eq!(cap.as_microusd(), 50_000);
     let own = paid_call_cap(
         directory.path(),
         &limits,
+        None,
         Some(Money::from_microusd(200_000)),
     )
     .unwrap();
@@ -71,10 +72,10 @@ fn the_cap_counts_every_ticket_and_stops_a_call_at_zero_left() {
     let limits = limits(100_000, 50_000);
     spend(directory.path(), "a", 40_000, false);
     spend(directory.path(), "b", 30_000, false);
-    let cap = paid_call_cap(directory.path(), &limits, None).unwrap();
+    let cap = paid_call_cap(directory.path(), &limits, None, None).unwrap();
     assert_eq!(cap.as_microusd(), 30_000, "70k of 100k spent, 30k left");
     spend(directory.path(), "c", 30_000, false);
-    let refused = paid_call_cap(directory.path(), &limits, None).unwrap_err();
+    let refused = paid_call_cap(directory.path(), &limits, None, None).unwrap_err();
     assert!(matches!(refused, SpendError::CapReached { .. }));
     assert!(is_cap_refusal(&refused.to_string()));
 }
@@ -85,7 +86,7 @@ fn the_cap_counts_every_ticket_and_stops_a_call_at_zero_left() {
 fn an_estimated_subscription_cost_does_not_count() {
     let directory = tempfile::tempdir().unwrap();
     spend(directory.path(), "a", 5_000_000, true);
-    assert!(paid_call_cap(directory.path(), &limits(100_000, 50_000), None).is_ok());
+    assert!(paid_call_cap(directory.path(), &limits(100_000, 50_000), None, None).is_ok());
 }
 
 // Invariant: raising the cap in Settings lets the stopped call go again, and
@@ -98,10 +99,10 @@ fn raising_the_cap_in_the_profile_lets_a_stopped_call_through() {
     std::fs::write(&path, "# mine\nprotected_paths = [\"infra/**\"]\n").unwrap();
     spend(directory.path(), "a", 1_000_000, false);
     let profile = load_profile(&path).unwrap();
-    assert!(paid_call_cap(directory.path(), &profile.spend, None).is_err());
+    assert!(paid_call_cap(directory.path(), &profile.spend, None, None).is_err());
 
     let profile = edit_spend(&path, SpendField::Total(2_000_000)).unwrap();
-    assert!(paid_call_cap(directory.path(), &profile.spend, None).is_ok());
+    assert!(paid_call_cap(directory.path(), &profile.spend, None, None).is_ok());
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains("# mine") && text.contains("infra/**"));
 }
@@ -119,4 +120,85 @@ fn a_zero_limit_is_refused_and_writes_nothing() {
     for bad in ["", ".", "-1", "1e3", "0.0000001", "$1", "1,5"] {
         assert_eq!(micro_from_dollars(bad), None, "{bad}");
     }
+}
+
+fn spend_at(directory: &Path, ticket: &str, micro: u64, at_ms: u64) {
+    let mut store = SqliteStore::open(directory.join("events.sqlite3")).unwrap();
+    let id = TicketId::from(ticket);
+    let events = [
+        NewEvent {
+            at_ms,
+            step: None,
+            kind: Event::TicketCreated {
+                title: ticket.into(),
+            },
+        },
+        NewEvent {
+            at_ms,
+            step: Some(Step::Understand),
+            kind: Event::CostTick {
+                amount: Money::from_microusd(micro),
+                estimated: false,
+            },
+        },
+    ];
+    store.append(&id, 0, &events).unwrap();
+}
+
+const DAY: u64 = 86_400_000;
+
+// Invariant: the daily limit counts what every ticket spent since the start of
+// today, and a call is refused at the limit even with plenty of the total left.
+// Breaks if yesterday's spend is counted, only one ticket is counted, `>` is
+// used for `>=`, or the day check is skipped.
+#[test]
+fn the_daily_limit_counts_today_across_tickets_and_not_yesterday() {
+    let directory = tempfile::tempdir().unwrap();
+    let limits = limits(10_000_000, 50_000);
+    let daily = std::num::NonZeroU64::new(100_000);
+    spend_at(directory.path(), "old", 900_000, DAY - 1);
+    spend_at(directory.path(), "a", 40_000, DAY + 5);
+    let cap = paid_call_cap_since(directory.path(), &limits, daily, None, DAY).unwrap();
+    assert_eq!(
+        cap.as_microusd(),
+        50_000,
+        "60k of the day left, call cap 50k"
+    );
+    spend_at(directory.path(), "b", 30_000, DAY + 6);
+    let cap = paid_call_cap_since(directory.path(), &limits, daily, None, DAY).unwrap();
+    assert_eq!(
+        cap.as_microusd(),
+        30_000,
+        "a call never passes what is left today"
+    );
+    spend_at(directory.path(), "c", 30_000, DAY + 7);
+    let refused = paid_call_cap_since(directory.path(), &limits, daily, None, DAY).unwrap_err();
+    assert!(matches!(refused, SpendError::DayReached { .. }));
+    assert!(!is_cap_refusal(&refused.to_string()));
+    // Tomorrow it goes again.
+    assert!(paid_call_cap_since(directory.path(), &limits, daily, None, 2 * DAY).is_ok());
+    // No daily limit: only the total applies.
+    assert!(paid_call_cap_since(directory.path(), &limits, None, None, DAY).is_ok());
+}
+
+// Invariant: only Settings writes the daily limit, it can be removed again,
+// and the owner's other text stays. Breaks if the key is written under
+// `[spend]` (the profile would refuse the file) or `NoDaily` leaves it.
+#[test]
+fn the_daily_limit_is_written_to_budgets_and_can_be_removed() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("profile.toml");
+    std::fs::write(&path, "# mine\n").unwrap();
+    let profile = edit_spend(&path, SpendField::Daily(250_000)).unwrap();
+    assert_eq!(
+        profile
+            .budgets
+            .daily_microusd
+            .map(std::num::NonZeroU64::get),
+        Some(250_000)
+    );
+    let profile = edit_spend(&path, SpendField::NoDaily).unwrap();
+    assert_eq!(profile.budgets.daily_microusd, None);
+    assert!(std::fs::read_to_string(&path).unwrap().contains("# mine"));
+    assert!(edit_spend(&path, SpendField::Daily(0)).is_err());
 }
