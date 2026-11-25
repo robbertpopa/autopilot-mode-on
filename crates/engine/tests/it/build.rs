@@ -13,10 +13,10 @@ use std::{
 use autopilot_agent::{Agent, AgentError, AgentRun, StepRequest};
 use autopilot_agent_claude::{BuildConfig, ClaudeAgent, ClaudeConfig};
 use autopilot_core::{
-    Ambiguity, Clarity, Criterion, Event, Plan, Ticket, TicketId, Understanding, Verify,
+    Ambiguity, Clarity, Criterion, Event, Plan, Step, Ticket, TicketId, Understanding, Verify,
 };
 use autopilot_engine::{
-    BuildOutcome, BuildSetup, Error, Isolation, build_awaits_run, run_build, run_plan,
+    BuildOutcome, BuildSetup, Error, Isolation, build_awaits_run, reset_step, run_build, run_plan,
     run_understand, start_clarify, sync_inbox, watch,
 };
 use autopilot_engine::{PrAction, watch_pull_request};
@@ -1248,4 +1248,97 @@ fn an_npm_project_is_installed_in_the_sandbox_and_not_committed() {
         files.contains("fixed.txt"),
         "the agent's own work is there: {files}"
     );
+}
+
+/// A Build agent that adds one file, standing in for a repair.
+struct Editor;
+
+impl Agent for Editor {
+    fn start(&self, _request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        Err(AgentError::from(io::Error::other("only Build is expected")))
+    }
+
+    fn start_build(
+        &self,
+        request: autopilot_agent::BuildRequest<'_>,
+    ) -> Result<AgentRun, AgentError> {
+        let worktree = request.worktree.to_path_buf();
+        Ok(AgentRun::spawn_build(move |_| {
+            std::fs::write(worktree.join("repair.txt"), "fixed").unwrap();
+            Ok(())
+        })?)
+    }
+}
+
+// Invariant: a commit made after a pull request was published is pushed only
+// after the owner approves that commit. The new offer asks again for the new
+// head, an answer replayed for the old request cannot stand in for it, and
+// nothing reaches the remote before the new answer. Breaks if the offer a
+// publish reads is the first one instead of the latest. The "moved after
+// approval" test starts from a build that was never published.
+#[test]
+fn a_repaired_commit_is_published_only_after_its_own_approval() {
+    let world = built("p-repaired");
+    let bare = remote(&world, GITHUB);
+    let p = publishing(&world);
+    let gh = gh_for(&p);
+    let first = prepare_publish(world.data.path(), &world.ticket, &setup(&world, &p)).unwrap();
+    answer(world.data.path(), &world.ticket.id, Decision::Approve);
+    run_publish(world.data.path(), &world.ticket, &setup(&world, &p), &gh).unwrap();
+    let branch = WorktreeManager::ticket_branch(&world.ticket.id).unwrap();
+    let old = rev_parse(world.repository.path(), &branch);
+
+    reset_step(world.data.path(), &world.ticket.id, Step::BuildCheck, true).unwrap();
+    let profile = Profile::parse("p.toml", ALWAYS_PASS).unwrap();
+    let build_setup = BuildSetup {
+        repository: world.repository.path(),
+        base_branch: "main",
+        worktrees: world.worktrees.path(),
+        git: PathBuf::from("git"),
+        guardian: PathBuf::new(),
+        profile: &profile,
+        review: false,
+    };
+    let built_again = run_build(
+        world.data.path(),
+        &world.ticket,
+        &Editor,
+        &build_setup,
+        Isolation::Fixture,
+    );
+    assert_eq!(built_again.unwrap(), BuildOutcome::Ready);
+    let new = rev_parse(world.repository.path(), &branch);
+    assert_ne!(new, old);
+
+    let second = prepare_publish(world.data.path(), &world.ticket, &setup(&world, &p)).unwrap();
+    assert_ne!(first, second);
+    let waiting = Inbox::in_data_dir(world.data.path()).requests().unwrap();
+    assert!(format!("{:?}", waiting[0].body).contains(&new[..8]));
+    Inbox::in_data_dir(world.data.path())
+        .write_answer(
+            &first,
+            &Reply::Approval {
+                decision: Decision::Approve,
+                allow_for_project: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        sync_inbox(world.data.path(), &world.ticket.id).unwrap(),
+        Vec::new()
+    );
+    let refused = run_publish(world.data.path(), &world.ticket, &setup(&world, &p), &gh);
+    assert!(matches!(refused, Err(Error::NotReady(_))));
+    assert_eq!(rev_parse(bare.path(), &format!("refs/heads/{branch}")), old);
+
+    answer(world.data.path(), &world.ticket.id, Decision::Approve);
+    // The fake gh does not move a branch when Git pushes, so the move of the branch and of the pull request's head is made by hand.
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&p.state).unwrap()).unwrap();
+    state["heads"][&branch] = new.clone().into();
+    state["prs"][0]["headRefOid"] = new.clone().into();
+    std::fs::write(&p.state, state.to_string()).unwrap();
+    let published = run_publish(world.data.path(), &world.ticket, &setup(&world, &p), &gh);
+    assert!(matches!(published.unwrap(), Published::Existing(_)));
+    assert_eq!(rev_parse(bare.path(), &format!("refs/heads/{branch}")), new);
 }
