@@ -31,7 +31,14 @@ pub struct LiveStatus {
     pub idle_ms: u64,
     pub liveness: Liveness,
     pub spent: Money,
+    /// The running call's own count while it works, such as `turn 3, about
+    /// $0.04 so far`. The cost in `spent` moves only when a call ends; this
+    /// is what lets a long call show that it still moves. `None` once the call
+    /// has been paid for, so the same money is never shown twice.
+    pub progress: Option<String>,
 }
+
+const PROGRESS: &str = "progress: ";
 
 #[must_use]
 pub fn liveness(idle_ms: u64) -> Liveness {
@@ -75,11 +82,26 @@ pub fn live_status(view: &TicketView, step: Step, now_ms: u64) -> Option<LiveSta
     if card.state != StepState::Running {
         return None;
     }
-    let last_words = view
+    let last_words = view.log.iter().rev().find(|line| {
+        line.step == Some(step)
+            && !line.text.starts_with("publish offer")
+            && !line.text.starts_with(PROGRESS)
+    });
+    // A progress line older than the step's last cost belongs to a call that
+    // is already counted in `spent`.
+    let last_cost = view
+        .costs
+        .iter()
+        .filter(|cost| cost.step == Some(step))
+        .map(|cost| cost.at_ms)
+        .max();
+    let progress = view
         .log
         .iter()
         .rev()
-        .find(|line| line.step == Some(step) && !line.text.starts_with("publish offer"));
+        .find(|line| line.step == Some(step) && line.text.starts_with(PROGRESS))
+        .filter(|line| last_cost.is_none_or(|paid| line.at_ms > paid))
+        .map(|line| line.text[PROGRESS.len()..].to_owned());
     let words = last_words.map_or("starting", |line| phase_of(&line.text));
     let phase = if step == Step::BuildCheck {
         match view.rounds.last() {
@@ -104,6 +126,7 @@ pub fn live_status(view: &TicketView, step: Step, now_ms: u64) -> Option<LiveSta
         idle_ms,
         liveness: liveness(idle_ms),
         spent: card.api.checked_add(card.subscription).unwrap_or(card.api),
+        progress,
     })
 }
 
@@ -381,6 +404,38 @@ mod tests {
                 .phase,
             "round 1: build agent, thinking"
         );
+    }
+
+    // Invariant: a running call's own `progress:` line shows beside the cost
+    // while the call runs, is not taken for what the agent said, and is dropped
+    // once the call's cost is recorded. Breaks if the line becomes the phase or
+    // detail, or still shows after its money is in `spent` (counted twice).
+    #[test]
+    fn a_running_calls_progress_shows_until_its_cost_is_recorded() {
+        use autopilot_core::{Event, Money};
+        let progress = (
+            Some(Step::BuildCheck),
+            Event::AgentActivity {
+                summary: "progress: turn 3, about $0.04 so far".into(),
+            },
+        );
+        let view = running_build(vec![said("tool requested: Edit"), progress.clone()]);
+        let live = live_status(&view, Step::BuildCheck, view.last_ms).unwrap();
+        assert_eq!(live.progress.as_deref(), Some("turn 3, about $0.04 so far"));
+        assert_eq!(live.phase, "round 1: build agent, editing files");
+        assert_eq!(live.detail.as_deref(), Some("tool requested: Edit"));
+
+        let paid = (
+            Some(Step::BuildCheck),
+            Event::CostTick {
+                amount: Money::from_microusd(40_000),
+                estimated: false,
+            },
+        );
+        let view = running_build(vec![progress, paid]);
+        let live = live_status(&view, Step::BuildCheck, view.last_ms).unwrap();
+        assert_eq!(live.progress, None);
+        assert_eq!(live.spent.as_microusd(), 40_000);
     }
 
     // Invariant: once a check has reported, the round is in its checks, and the
