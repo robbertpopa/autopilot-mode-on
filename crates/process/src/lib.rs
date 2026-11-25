@@ -1,6 +1,7 @@
 //! Bounded execution and lifecycle supervision for a subprocess tree.
 
 pub mod isolation;
+pub mod refusal;
 pub mod terminal;
 pub mod wsl;
 

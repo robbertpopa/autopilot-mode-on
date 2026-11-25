@@ -143,6 +143,27 @@ fn an_interrupted_creation_can_only_reopen_a_clean_checkout() {
 }
 
 #[test]
+fn three_tickets_of_one_project_create_their_worktrees_side_by_side() {
+    let fixture = Fixture::new().unwrap();
+    let handles: Vec<_> = ["a1", "b2", "c3"]
+        .into_iter()
+        .map(|id| {
+            let manager = fixture.manager().unwrap();
+            thread::spawn(move || {
+                manager
+                    .create(&TicketId::from(id), "base")
+                    .map(|run| run.base)
+            })
+        })
+        .collect();
+    // The lock is per project folder; a ticket that arrives while another holds
+    // it must wait its turn instead of ending with Error::Busy.
+    for handle in handles {
+        handle.join().unwrap().unwrap();
+    }
+}
+
+#[test]
 fn removing_a_checkout_keeps_unsaved_changes_and_commits() {
     let fixture = Fixture::new().unwrap();
     let manager = fixture.manager().unwrap();
@@ -165,6 +186,57 @@ fn removing_a_checkout_keeps_unsaved_changes_and_commits() {
     let repo = fixture.repository().unwrap();
     assert_ne!(repo.resolve_local_branch("ticket/42").unwrap(), run.base);
     assert_eq!(manager.remove(&ticket).unwrap(), Removal::AlreadyAbsent);
+}
+
+#[test]
+fn discarding_removal_deletes_unsaved_files_and_the_branch_that_plain_removal_keeps() {
+    let fixture = Fixture::new().unwrap();
+    let manager = fixture.manager().unwrap();
+    let ticket = TicketId::from("42");
+    let run = manager.create(&ticket, "base").unwrap();
+    let native = fixture.root.join(run.checkout.path.file_name().unwrap());
+    fs::write(
+        native.join("item.txt"),
+        b"edited
+",
+    )
+    .unwrap();
+    fs::write(
+        native.join("new.txt"),
+        b"untracked
+",
+    )
+    .unwrap();
+    git(&fixture.program, &native, &["commit", "-a", "-m", "work"]).unwrap();
+    fs::write(
+        native.join("item.txt"),
+        b"uncommitted
+",
+    )
+    .unwrap();
+
+    assert!(matches!(
+        manager.remove(&ticket),
+        Err(Error::RecoveryRequired(_))
+    ));
+    assert!(native.exists());
+
+    assert_eq!(
+        manager.remove_discarding_work(&ticket).unwrap(),
+        Removal::Removed
+    );
+    assert!(!native.exists());
+    assert!(matches!(
+        fixture
+            .repository()
+            .unwrap()
+            .resolve_local_branch("ticket/42"),
+        Err(Error::LocalBranch(_))
+    ));
+    assert_eq!(
+        manager.remove_discarding_work(&ticket).unwrap(),
+        Removal::AlreadyAbsent
+    );
 }
 
 #[test]

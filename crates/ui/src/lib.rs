@@ -23,6 +23,7 @@ mod run;
 mod sandbox;
 mod search;
 mod settings;
+mod spend;
 mod step;
 mod theme;
 mod ticket;
