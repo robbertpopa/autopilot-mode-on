@@ -16,8 +16,10 @@ path = "src/main.rs"
 [dependencies]
 autopilot-core.workspace = true
 autopilot-engine = { path = "../engine" }
+autopilot-pipeline = { path = "../pipeline" }
 serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+autopilot-store = { path = "../store" }
 tempfile.workspace = true
