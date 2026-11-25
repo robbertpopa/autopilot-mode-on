@@ -22,7 +22,7 @@ Start it with `cargo run -p autopilot-ui -- --data-dir <dir> --profile <file>`. 
 | Settings | Asking, Checks, Accounts, Sandbox, Look. Sandbox runs the build probe on a button, lists every row and the commands that fix what is missing | `autopilot_agent_claude::sandbox_boundary`, the same path Build uses |
 | Ask for a change | a change to the pipeline read by a fixed grammar, shown as a diff of `profile.toml`, applied only when you press Apply, to this ticket or to all future ones | `engine::change` |
 
-Build, Ask to open a pull request, Open the pull request and Open the worktree are wired to the engine. Shown off with the reason: Open in a terminal, re-running a finished Build.
+Build, Ask to open a pull request, Open the pull request and Open the worktree are wired to the engine. Open in a terminal (More menu, step page) opens a terminal in the ticket's copy of the project. Reset the Build (More menu, Build step page) asks first, then deletes that copy and its branch and puts Build back to idle; it is refused while a step runs or waits for you and once a pull request was asked for. Shown off with the reason: resuming the provider's session in a terminal.
 
 ## Rules
 

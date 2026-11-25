@@ -188,8 +188,23 @@ impl App {
                         self.act(Action::OpenWorktree(view.id.clone()));
                         ui.close();
                     }
-                    ui.add_enabled(false, egui::Button::new("Open in a terminal"))
-                        .on_disabled_hover_text("Not built: starting a terminal in the worktree.");
+                    if ui
+                        .add_enabled(worktree.is_some(), egui::Button::new("Open in a terminal"))
+                        .on_disabled_hover_text(crate::backend::NO_WORKTREE)
+                        .clicked()
+                    {
+                        self.act(Action::OpenTerminal(view.id.clone()));
+                        ui.close();
+                    }
+                    let refusal = crate::build_actions::reset_refusal(view);
+                    let mut reset = ui.add_enabled(refusal.is_none(), egui::Button::new("Reset the Build…"));
+                    if let Some(why) = refusal {
+                        reset = reset.on_disabled_hover_text(format!("Not now: {why}."));
+                    }
+                    if reset.clicked() {
+                        self.confirm_reset = Some(view.id.clone());
+                        ui.close();
+                    }
                     ui.separator();
                     let picked = crate::ticket_menu::ticket_menu(ui, view);
                     self.apply_choice(picked);

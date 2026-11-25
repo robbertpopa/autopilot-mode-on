@@ -48,6 +48,7 @@ mod proposals;
 mod publish;
 mod repair;
 mod rerun;
+mod reset_build;
 mod review;
 mod rules;
 mod settings;
@@ -110,6 +111,7 @@ pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
 pub use repair::{RepairSetup, repair_pull_request};
 pub use rerun::ticket_words;
 pub use rerun::{rerun_plan, rerun_understand, reset_step};
+pub use reset_build::{ResetSetup, reset_build};
 pub use review::{Finding, ReviewOutcome, Rule, findings_for, open_findings, run_review};
 pub use rules::{
     MAX_RULES_BYTES, RulesInfo, check_rules, project_key, read_rules, rules_info, rules_path,

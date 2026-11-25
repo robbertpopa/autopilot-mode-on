@@ -90,6 +90,37 @@ impl App {
         }
     }
 
+    /// The confirmation before a Build is reset: the copy of the project holds
+    /// the agent's files and commits, and removing it cannot be undone.
+    pub(crate) fn reset_dialog(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.confirm_reset.clone() else {
+            return;
+        };
+        let title = self
+            .ticket(&id)
+            .map_or_else(|| id.as_str().to_owned(), |view| view.title.clone());
+        egui::Window::new("Reset the Build?")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.label(RichText::new(title).strong());
+                ui.label(
+                    "The copy of the project this Build worked in and its branch are deleted, with every file and commit in them, including work that was never committed. This cannot be undone. The ticket's history stays, and Build starts again from the project's base branch.",
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.add(theme::primary("Delete the copy and reset")).clicked() {
+                        self.act(Action::ResetBuild(id.clone()));
+                        self.confirm_reset = None;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.confirm_reset = None;
+                    }
+                });
+            });
+    }
+
     /// The confirmation before a delete. It says what stays and what does not.
     pub(crate) fn delete_dialog(&mut self, ctx: &egui::Context) {
         let Some(id) = self.confirm_delete.clone() else {

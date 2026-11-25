@@ -24,6 +24,7 @@ use autopilot_pipeline::inbox::{Decision, Inbox, Reply};
 use autopilot_profile::{Auth, Profile};
 
 mod repair;
+mod reset;
 
 /// The build check passes only once `fixed.txt` is committed, which the fake
 /// writes on a turn whose prompt carries a failure.

@@ -109,6 +109,16 @@ pub fn send(guardian: &Path, title: &str, text: &str) -> Result<(), String> {
     }
 }
 
+/// Open a terminal window in a folder, for the owner to look at a worktree by
+/// hand. It lives here because `ui` may not start programs and `notify` already
+/// is the window's way to the desktop.
+///
+/// # Errors
+/// Returns a sentence if the folder is not a folder or no terminal could start.
+pub fn open_terminal(folder: &Path) -> Result<(), String> {
+    autopilot_process::terminal::open_terminal(folder)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -321,11 +321,25 @@ impl App {
                         _ => Action::RerunPlan(view.id.clone()),
                     });
                 }
+            } else if step == Step::BuildCheck {
+                // A finished Build is not run again over its old copy: the copy
+                // is deleted first, which the owner confirms.
+                let refusal = crate::build_actions::reset_refusal(view);
+                let mut reset = ui.add_enabled(refusal.is_none(), button("Reset the Build…"));
+                reset = match refusal {
+                    Some(why) => reset.on_disabled_hover_text(format!("Not now: {why}.")),
+                    None => reset.on_hover_text(
+                        "Deletes the Build's copy of the project and its branch, then Build can start again from the base branch.",
+                    ),
+                };
+                if reset.clicked() {
+                    self.confirm_reset = Some(view.id.clone());
+                }
             } else {
                 let why = if rerunnable {
                     "The step has not finished, or another step is running or waiting for you"
                 } else {
-                    "A finished build is not re-run from here. Use Build again on the ticket if it stopped, or start a new ticket."
+                    "This step cannot be run again from here."
                 };
                 ui.add_enabled(false, button("Re-run this step"))
                     .on_disabled_hover_text(why);
@@ -404,8 +418,15 @@ impl App {
             {
                 self.act(Action::OpenWorktree(view.id.clone()));
             }
+            if ui
+                .add_enabled(worktree.is_some(), button("Open in a terminal"))
+                .on_disabled_hover_text(crate::backend::NO_WORKTREE)
+                .clicked()
+            {
+                self.act(Action::OpenTerminal(view.id.clone()));
+            }
             for text in [
-                "Open in a terminal (resume the session)",
+                "Resume the session in a terminal",
                 "Copy the session id",
             ] {
                 ui.add_enabled(false, button(text))
