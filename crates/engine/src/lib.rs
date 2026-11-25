@@ -46,6 +46,7 @@ mod pr_watch;
 mod profile_edit;
 mod proposals;
 mod publish;
+mod repair;
 mod rerun;
 mod review;
 mod rules;
@@ -106,6 +107,7 @@ pub use profile_edit::{
 };
 pub use proposals::{Suggestion, dismiss_proposal, proposals_for};
 pub use publish::{PublishSetup, ci_status, prepare_publish, run_publish};
+pub use repair::{RepairSetup, repair_pull_request};
 pub use rerun::ticket_words;
 pub use rerun::{rerun_plan, rerun_understand, reset_step};
 pub use review::{Finding, ReviewOutcome, Rule, findings_for, open_findings, run_review};

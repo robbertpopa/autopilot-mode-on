@@ -7,7 +7,7 @@ use crate::{DiffStats, Error, ObjectId};
 
 /// The identity the host commits under. Fixed, so a commit never depends on
 /// whatever name the machine's Git config holds.
-const IDENTITY: [(&str, &str); 4] = [
+pub(super) const IDENTITY: [(&str, &str); 4] = [
     ("GIT_AUTHOR_NAME", "autopilot"),
     ("GIT_AUTHOR_EMAIL", "autopilot@localhost"),
     ("GIT_COMMITTER_NAME", "autopilot"),
@@ -123,7 +123,7 @@ impl WorktreeManager {
     }
 
     /// The checkout path, after confirming this manager owns it and it is ready.
-    fn verified_checkout(&self, ticket: &TicketId) -> Result<std::path::PathBuf, Error> {
+    pub(super) fn verified_checkout(&self, ticket: &TicketId) -> Result<std::path::PathBuf, Error> {
         let (branch, key) = ticket_worktree(ticket)?;
         let path = self.root.join(&key);
         let marker = self.root.join(format!("{key}.owner.json"));

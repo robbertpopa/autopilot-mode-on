@@ -2774,4 +2774,55 @@ effort = \"high\"
         frame(&mut app, &context);
         assert_eq!(app.notice, None);
     }
+
+    // Invariant: on the plan review page at about 900 px, no text is drawn past
+    // the window's right edge, even for a long criterion or verification id. A
+    // criterion in one row with its pill ran off the screen. The overlap test
+    // does not look at the edge.
+    #[test]
+    fn plan_review_rows_stay_inside_a_narrow_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        backend::mark_welcomed(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let width = 900.0_f32;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(width, 900.0),
+            )),
+            ..Default::default()
+        };
+        let mut checked = 0;
+        for index in 0..app.snapshot.tickets.len() {
+            let id = app.snapshot.tickets[index].id.clone();
+            app.open(&id);
+            app.mode = Mode::PlanReview;
+            let mut output = None;
+            for _ in 0..3 {
+                output = Some(context.run(input.clone(), |context| app.ui(context)));
+            }
+            for clipped in output.unwrap().shapes {
+                if let egui::Shape::Text(text) = &clipped.shape {
+                    let right = text.pos.x + text.galley.size().x;
+                    assert!(
+                        right <= width,
+                        "{:?} ends at {right}, past {width}",
+                        text.galley.text()
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 20, "{checked} texts drawn");
+    }
 }

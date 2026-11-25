@@ -19,7 +19,9 @@ use serde::{Deserialize, Serialize};
 
 pub use body::{CheckLine, description, redact};
 pub use names::{Repo, valid_branch};
-pub use state::{Decision, Feedback, Mergeable, PrState, PullState, feedback_block};
+pub use state::{
+    Decision, FailedCheck, Feedback, Mergeable, PrState, PullState, ci_block, feedback_block,
+};
 
 const LIMITS: Limits = Limits {
     timeout: Duration::from_secs(60),
@@ -427,18 +429,55 @@ impl Gh {
         })
     }
 
-    /// CI for one exact commit, not for whatever the branch points at now.
+    /// The failing checks of one exact commit, each with the end of its log.
+    /// A log is attacker-controlled text: it is bounded and cleaned here and
+    /// goes to an agent only through [`ci_block`].
     ///
     /// # Errors
-    /// Returns an error if `gh` fails or its answer cannot be read.
-    pub fn ci(&self, head: &str) -> Result<Ci, Error> {
+    /// Returns an error if `gh` fails or the list of check runs cannot be read.
+    pub fn failed_checks(&self, head: &str) -> Result<Vec<FailedCheck>, Error> {
+        let runs = self.check_runs(head)?;
+        let mut found = Vec::new();
+        for run in runs
+            .iter()
+            .filter(|run| is_failed(run))
+            .take(state::MAX_FAILED)
+        {
+            // A job log is only there for GitHub Actions jobs and can be
+            // larger than the read limit; the run's own output text is the
+            // next best thing and may be all a third-party check has.
+            let log = run
+                .id
+                .and_then(|id| {
+                    let path = format!("repos/{}/actions/jobs/{id}/logs", self.repo);
+                    self.run(&["api", &path], &[]).ok()
+                })
+                .or_else(|| run.output.as_ref().map(RawOutput::text))
+                .unwrap_or_default();
+            found.push(FailedCheck {
+                name: state::clean_name(&run.name),
+                log: state::log_tail(&log),
+            });
+        }
+        Ok(found)
+    }
+
+    fn check_runs(&self, head: &str) -> Result<Vec<RawRun>, Error> {
         if head.len() < 40 || !head.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(Error::InvalidName(head.into()));
         }
         let path = format!("repos/{}/commits/{head}/check-runs", self.repo);
         let text = self.run(&["api", &path], &[])?;
         let runs: RawRuns = parse(&text)?;
-        Ok(summarize(&runs.check_runs))
+        Ok(runs.check_runs)
+    }
+
+    /// CI for one exact commit, not for whatever the branch points at now.
+    ///
+    /// # Errors
+    /// Returns an error if `gh` fails or its answer cannot be read.
+    pub fn ci(&self, head: &str) -> Result<Ci, Error> {
+        Ok(summarize(&self.check_runs(head)?))
     }
 }
 
@@ -453,19 +492,21 @@ fn same_head(approval: &Approval, pr: PullRequest) -> Result<PullRequest, Error>
     }
 }
 
+fn is_failed(run: &RawRun) -> bool {
+    run.status == "completed"
+        && !matches!(
+            run.conclusion.as_deref(),
+            Some("success" | "neutral" | "skipped")
+        )
+}
+
 fn summarize(runs: &[RawRun]) -> Ci {
     if runs.is_empty() {
         return Ci::NoChecks;
     }
     let failed: Vec<String> = runs
         .iter()
-        .filter(|run| {
-            run.status == "completed"
-                && !matches!(
-                    run.conclusion.as_deref(),
-                    Some("success" | "neutral" | "skipped")
-                )
-        })
+        .filter(|run| is_failed(run))
         .map(|run| run.name.clone())
         .collect();
     if !failed.is_empty() {
@@ -541,6 +582,26 @@ struct RawRun {
     name: String,
     status: String,
     conclusion: Option<String>,
+    id: Option<u64>,
+    output: Option<RawOutput>,
+}
+
+#[derive(Deserialize)]
+struct RawOutput {
+    title: Option<String>,
+    summary: Option<String>,
+    text: Option<String>,
+}
+
+impl RawOutput {
+    fn text(&self) -> String {
+        [&self.title, &self.summary, &self.text]
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 #[cfg(test)]
@@ -552,6 +613,8 @@ mod tests {
             name: name.into(),
             status: status.into(),
             conclusion: conclusion.map(Into::into),
+            id: None,
+            output: None,
         }
     }
 

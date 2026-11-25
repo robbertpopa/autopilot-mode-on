@@ -77,6 +77,33 @@ impl Repository {
         if !plain_name(remote, b"") || !plain_name(branch, b"/") || branch.starts_with('/') {
             return Err(Error::InvalidRemote(format!("{remote} {branch}")));
         }
+        let refspec = format!("{}:refs/heads/{branch}", commit.as_str());
+        self.network("push", &["--no-verify", "--porcelain", remote, &refspec])
+    }
+
+    /// Fetch one branch of `remote` into `refs/remotes/<remote>/<branch>` and
+    /// return the commit it points at. Used to merge what GitHub merges
+    /// against, not a local branch that may be behind.
+    ///
+    /// # Errors
+    /// Returns an error for an unusable name or when Git fails.
+    pub fn fetch_branch(&self, remote: &str, branch: &str) -> Result<ObjectId, Error> {
+        if !plain_name(remote, b"") || !plain_name(branch, b"/") || branch.starts_with('/') {
+            return Err(Error::InvalidRemote(format!("{remote} {branch}")));
+        }
+        let tracking = format!("refs/remotes/{remote}/{branch}");
+        let refspec = format!("+refs/heads/{branch}:{tracking}");
+        self.network(
+            "fetch",
+            &["--no-tags", "--no-write-fetch-head", remote, &refspec],
+        )?;
+        let id = self.read_git("rev-parse", &["--verify", &tracking])?;
+        ObjectId::parse(id.trim_ascii_end())
+    }
+
+    /// Run a Git operation that talks to a remote, with the user's own config
+    /// and credential helper and nothing else of the environment.
+    fn network(&self, operation: &'static str, arguments: &[&str]) -> Result<(), Error> {
         let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
             .filter(|(name, _)| {
                 ENV_ALLOWED.iter().any(|allowed| {
@@ -87,18 +114,11 @@ impl Repository {
             .collect();
         env.push(("GIT_TERMINAL_PROMPT".into(), "0".into()));
         env.push(("GIT_ALLOW_PROTOCOL".into(), "https:ssh:file".into()));
-        let refspec = format!("{}:refs/heads/{branch}", commit.as_str());
         let args: Vec<OsString> = ["--no-pager", "-c", "core.hooksPath=/dev/null", "-C"]
             .map(OsString::from)
             .into_iter()
-            .chain([
-                git_path(&self.directory),
-                "push".into(),
-                "--no-verify".into(),
-                "--porcelain".into(),
-                remote.into(),
-                refspec.into(),
-            ])
+            .chain([git_path(&self.directory), operation.into()])
+            .chain(arguments.iter().map(OsString::from))
             .collect();
         let output = self.runner.run(
             &CommandSpec {
@@ -114,12 +134,12 @@ impl Repository {
         match output.outcome {
             Outcome::Exited(status) if status.success() => Ok(()),
             Outcome::Exited(status) => Err(Error::Git {
-                operation: "push",
+                operation,
                 status,
                 diagnostic: String::from_utf8_lossy(&output.stderr).trim_end().into(),
             }),
-            Outcome::TimedOut => Err(Error::TimedOut("push")),
-            Outcome::OutputLimit => Err(Error::OutputLimit("push")),
+            Outcome::TimedOut => Err(Error::TimedOut(operation)),
+            Outcome::OutputLimit => Err(Error::OutputLimit(operation)),
             Outcome::Cancelled => Err(std::io::Error::new(
                 std::io::ErrorKind::Interrupted,
                 "Git was cancelled",

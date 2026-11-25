@@ -10,7 +10,7 @@ use std::{
 };
 
 use autopilot_core::TicketId;
-use autopilot_git::{Error, LineStats, Removal, Repository, WorktreeManager};
+use autopilot_git::{BaseMerge, Error, LineStats, Removal, Repository, WorktreeManager};
 
 const ABANDONED: &str = "abandoned";
 
@@ -681,4 +681,114 @@ fn synthetic_worktree_owner() {
     loop {
         thread::park();
     }
+}
+
+#[allow(clippy::unwrap_used)] // helper outside a #[test] function
+fn parents(fixture: &Fixture, revision: &str) -> usize {
+    let output = Command::new(&fixture.program)
+        .args([
+            "-C",
+            fixture.repository.to_str().unwrap(),
+            "rev-list",
+            "--parents",
+            "-n",
+            "1",
+            revision,
+        ])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .count()
+        - 1
+}
+
+// Invariant: merging a newer base leaves conflicts open for whoever resolves
+// them, the host's next commit is a real two-parent merge, and the ticket's
+// change list afterwards holds the ticket's own files only. Breaks if the
+// recorded base is not moved (upstream's file would be listed as the ticket's
+// work) or if the merge were squashed (the pull request would stay conflicting).
+// The engine test uses a fake agent and cannot see the parents.
+#[test]
+fn merging_a_newer_base_keeps_the_conflict_open_and_the_change_list_to_the_ticket() {
+    let fixture = Fixture::new().unwrap();
+    let manager = fixture.manager().unwrap();
+    let repository = fixture.repository().unwrap();
+    let ticket = TicketId::from("merge-1");
+    let owned = manager.create(&ticket, "base").unwrap();
+    let checkout = owned.checkout.path.clone();
+    fs::write(checkout.join("item.txt"), "ticket line\n").unwrap();
+    manager.commit_all(&ticket, "ticket").unwrap();
+
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["switch", "-c", "newer", "base"],
+    )
+    .unwrap();
+    fs::write(fixture.repository.join("item.txt"), "upstream line\n").unwrap();
+    fs::write(fixture.repository.join("upstream.txt"), "u\n").unwrap();
+    git(&fixture.program, &fixture.repository, &["add", "."]).unwrap();
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["commit", "-m", "upstream"],
+    )
+    .unwrap();
+    let newer = repository.resolve_local_branch("newer").unwrap();
+
+    let merged = manager.merge_base(&ticket, &newer).unwrap();
+    assert_eq!(merged, BaseMerge::Conflicts(vec!["item.txt".into()]));
+    assert!(
+        fs::read_to_string(checkout.join("item.txt"))
+            .unwrap()
+            .contains("<<<<<<<")
+    );
+    // Uncommitted work blocks a second merge instead of being folded in.
+    assert!(manager.merge_base(&ticket, &newer).is_err());
+
+    fs::write(checkout.join("item.txt"), "resolved\n").unwrap();
+    let head = manager.commit_all(&ticket, "resolve").unwrap().unwrap();
+    assert_eq!(parents(&fixture, head.as_str()), 2);
+    let files: Vec<String> = manager
+        .committed_changes(&ticket)
+        .unwrap()
+        .files
+        .iter()
+        .map(|file| file.path.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(files, ["item.txt"]);
+
+    // Already containing the base is not a conflict and makes no commit.
+    assert_eq!(
+        manager.merge_base(&ticket, &newer).unwrap(),
+        BaseMerge::Merged
+    );
+    assert_eq!(
+        repository.resolve_local_branch("ticket/merge-1").unwrap(),
+        head
+    );
+}
+
+// Invariant: a fetch brings the remote's branch into a remote-tracking ref
+// and names its commit; a name that could change the refspec is refused.
+#[test]
+fn a_fetch_reads_one_remote_branch_into_its_tracking_ref() {
+    let fixture = Fixture::new().unwrap();
+    let repository = fixture.repository().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    git(&fixture.program, remote.path(), &["init", "-q", "--bare"]).unwrap();
+    git(
+        &fixture.program,
+        &fixture.repository,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    )
+    .unwrap();
+    let base = repository.resolve_local_branch("base").unwrap();
+    repository.push_commit("origin", &base, "main").unwrap();
+    assert_eq!(repository.fetch_branch("origin", "main").unwrap(), base);
+    for bad in ["+main", "a:b", "-x", "../x", "/abs"] {
+        assert!(repository.fetch_branch("origin", bad).is_err(), "{bad}");
+    }
+    assert!(repository.fetch_branch("origin", "missing").is_err());
 }
