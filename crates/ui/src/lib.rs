@@ -24,6 +24,7 @@ mod run;
 mod sandbox;
 mod search;
 mod settings;
+mod shared_probe;
 mod spend;
 mod step;
 mod theme;
