@@ -122,28 +122,28 @@ impl App {
         for (criterion, (_, covered)) in plan.criteria.iter().zip(&analysis.coverage) {
             theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
                 ui.set_width(ui.available_width() - 38.0);
+                // The text goes under the id and the pill: a long criterion in
+                // the same row was drawn past the window's right edge.
                 ui.horizontal(|ui| {
                     ui.label(theme::mono(&criterion.id));
-                    ui.label(&criterion.text);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let unknown = criterion.verify == Verify::Unknown;
-                        let (fill, color) = if unknown {
-                            (theme::RED_FILL(), theme::RED())
-                        } else {
-                            (theme::GREY_FILL(), theme::GREY_TEXT())
-                        };
-                        let text = if criterion.verification_id.is_empty() {
-                            verify_label(criterion.verify).to_owned()
-                        } else {
-                            format!(
-                                "{} {}",
-                                verify_label(criterion.verify),
-                                criterion.verification_id
-                            )
-                        };
-                        theme::pill(ui, &text, fill, color);
-                    });
+                    let unknown = criterion.verify == Verify::Unknown;
+                    let (fill, color) = if unknown {
+                        (theme::RED_FILL(), theme::RED())
+                    } else {
+                        (theme::GREY_FILL(), theme::GREY_TEXT())
+                    };
+                    let text = if criterion.verification_id.is_empty() {
+                        verify_label(criterion.verify).to_owned()
+                    } else {
+                        format!(
+                            "{} {}",
+                            verify_label(criterion.verify),
+                            criterion.verification_id
+                        )
+                    };
+                    theme::pill(ui, &text, fill, color);
                 });
+                ui.label(&criterion.text);
                 if criterion.verify != Verify::Unknown && !covered {
                     ui.label(theme::muted("not named in the test plan"));
                 }

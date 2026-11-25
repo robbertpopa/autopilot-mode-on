@@ -103,7 +103,7 @@ fn plan() -> Plan {
             ),
             criterion(
                 "c2",
-                "A recording started near midnight shows the right day",
+                "A recording started a few minutes before midnight in the organiser's timezone, and ended after it, is listed on the day it started and not on the day it ended",
                 Verify::Test,
                 "midnight",
             ),
