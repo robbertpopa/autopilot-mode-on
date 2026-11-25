@@ -10,6 +10,7 @@ mod board;
 mod build_actions;
 mod composer;
 pub mod demo;
+mod error_log;
 mod first_run;
 mod health;
 mod nav;
@@ -2713,6 +2714,35 @@ effort = \"high\"
         }
         theme::apply(&context, false);
         assert!(found.is_empty(), "{} overlaps: {:#?}", found.len(), found);
+    }
+
+    // Invariant: an action that fails in the window leaves a line in the log,
+    // because the release window has no console. It fails if `backend::run`
+    // stops recording a failed outcome.
+    #[test]
+    fn a_failed_action_writes_one_line_to_the_log() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        let (sender, receiver) = std::sync::mpsc::channel();
+        backend::run(
+            1,
+            options.clone(),
+            backend::Action::OpenWorktree(autopilot_core::TicketId::from("nothing")),
+            egui::Context::default(),
+            sender,
+        );
+        let done = receiver
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .unwrap();
+        assert!(matches!(done, backend::Message::Done(_, Err(_))));
+        let text = std::fs::read_to_string(error_log::path(&options.data_dir)).unwrap();
+        assert_eq!(text.lines().count(), 1, "{text:?}");
+        assert!(text.contains("no copy of the project"), "{text:?}");
     }
 
     // Invariant: a notice describes the ticket that was open when it showed. A
