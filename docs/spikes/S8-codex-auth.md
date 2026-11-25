@@ -21,6 +21,15 @@ The installed VS Code-bundled executable reported `codex-cli 0.169.0-alpha.11.1`
 
 Local help advertised status, stdin API key, device authentication and stdin access token flows. It also advertised `exec --json`, `--ephemeral`, `--ignore-user-config`, sandbox modes and automatic approval options. The preflight made no model request and recorded no credentials.
 
+## Local checks on 2026-11-25 (stream 2, no model call, $0)
+
+Same executable (`codex-cli 0.169.0-alpha.11.1`, VS Code bundle), Windows. No login flow was started, no credential was read or written, and no OpenAI API key was present in the environment (no `OPENAI_*`, `CODEX_*` or `CHATGPT_*` variable was set).
+
+- **Logged in.** `codex login status` with the owner's default home printed `Logged in using ChatGPT` and exited 0. It says which mode the stored login is in, not whether a request would pass.
+- **Logged out.** With a fresh empty `CODEX_HOME` and `cli_auth_credentials_store="file"`, it printed `Not logged in` and exited 1. No `auth.json` appeared. The home did fill with `.sandbox`, `skills`, `installation_id` and several `*.sqlite` files, so a launch must give each run its own throw-away home and delete it.
+- **`codex exec --json --ephemeral -s read-only` logged out** (empty home, tiny prompt). It started a thread, then reconnected five times against `api.openai.com/v1/responses` (a WebSocket first, then HTTPS), each answered `401 Unauthorized: Missing bearer or basic authentication in header`. Observed JSONL: `{"type":"thread.started","thread_id":...}`, `{"type":"turn.started"}`, then `{"type":"error","message":"Reconnecting... N/5 (unexpected status 401 ...)"}` lines. The text log lines (`ERROR codex_api::...`) were mixed into the same pipe, so a parser must ignore any line that is not a JSON object. The run took several seconds before giving up, so an adapter needs its own prompt "not signed in" check from `login status` rather than waiting for the retries. I did not capture the final exit code (the output was piped), so that is open.
+- **Not run, on purpose.** An authenticated `exec` on the owner's ChatGPT login was not run: S8's terms assessment leaves unattended use of a plan unclear, so that route stays gated, and running it would use the owner's account without their say-so. An API-key run was not possible: there is no dedicated OpenAI key and no verified spend limit.
+
 ## Method
 
 - [x] Read the official authentication, CLI and terms pages and record the scope of their automation guidance.
@@ -34,4 +43,6 @@ Local help advertised status, stdin API key, device authentication and stdin acc
 
 ## Result
 
-The documentation and logged-out status preflight are complete. API credentials are the candidate for unattended execution. Authenticated fixtures, switching, usage limits and sandbox checks are pending, so S8 remains open.
+The documentation, the logged-in and logged-out status checks and the logged-out `exec --json` shape are complete (2026-11-25). The authenticated event shapes, cost and usage fields, mode switching, sandbox and network behaviour and the plan-limit outcome are not measured, because no dedicated API key exists and the ChatGPT route is gated. Decision for the adapter: **no-go for now** (see [DESIGN section 7a](../DESIGN.md)). What the owner must do to unblock it is listed there.
+
+Earlier result: the documentation and logged-out status preflight are complete. API credentials are the candidate for unattended execution. Authenticated fixtures, switching, usage limits and sandbox checks are pending, so S8 remains open.
