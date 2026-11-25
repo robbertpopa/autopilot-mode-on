@@ -7,7 +7,7 @@ mod publish;
 
 pub use conflicts::{PathOverlap, overlapping_paths};
 pub use diff::{DiffStats, FileAdditions, FileStats, LineStats};
-pub use managed::{OwnedWorktree, Removal, TreeFingerprint, WorktreeManager};
+pub use managed::{BaseMerge, OwnedWorktree, Removal, TreeFingerprint, WorktreeManager};
 
 use std::{
     env,

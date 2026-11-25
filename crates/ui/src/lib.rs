@@ -10,6 +10,7 @@ mod board;
 mod build_actions;
 mod composer;
 pub mod demo;
+mod error_log;
 mod first_run;
 mod health;
 mod nav;
@@ -2713,5 +2714,115 @@ effort = \"high\"
         }
         theme::apply(&context, false);
         assert!(found.is_empty(), "{} overlaps: {:#?}", found.len(), found);
+    }
+
+    // Invariant: an action that fails in the window leaves a line in the log,
+    // because the release window has no console. It fails if `backend::run`
+    // stops recording a failed outcome.
+    #[test]
+    fn a_failed_action_writes_one_line_to_the_log() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        let (sender, receiver) = std::sync::mpsc::channel();
+        backend::run(
+            1,
+            options.clone(),
+            backend::Action::OpenWorktree(autopilot_core::TicketId::from("nothing")),
+            egui::Context::default(),
+            sender,
+        );
+        let done = receiver
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .unwrap();
+        assert!(matches!(done, backend::Message::Done(_, Err(_))));
+        let text = std::fs::read_to_string(error_log::path(&options.data_dir)).unwrap();
+        assert_eq!(text.lines().count(), 1, "{text:?}");
+        assert!(text.contains("no copy of the project"), "{text:?}");
+    }
+
+    // Invariant: a notice describes the ticket that was open when it showed. A
+    // notice kept for the whole window would tell the owner that ticket B did
+    // what ticket A did. It fails if `notice` is shown again after the owner
+    // opens another ticket.
+    #[test]
+    fn a_notice_does_not_follow_the_owner_to_another_ticket() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let first = app.snapshot.tickets[0].id.clone();
+        let second = app.snapshot.tickets[1].id.clone();
+        app.open(&first);
+        frame(&mut app, &context);
+        app.notice = Some((true, "Opened the mockups".to_owned()));
+        frame(&mut app, &context);
+        assert!(app.notice.is_some(), "the notice stays on its own ticket");
+        app.open(&second);
+        frame(&mut app, &context);
+        assert_eq!(app.notice, None);
+    }
+
+    // Invariant: on the plan review page at about 900 px, no text is drawn past
+    // the window's right edge, even for a long criterion or verification id. A
+    // criterion in one row with its pill ran off the screen. The overlap test
+    // does not look at the edge.
+    #[test]
+    fn plan_review_rows_stay_inside_a_narrow_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        backend::mark_welcomed(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let width = 900.0_f32;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(width, 900.0),
+            )),
+            ..Default::default()
+        };
+        let mut checked = 0;
+        for index in 0..app.snapshot.tickets.len() {
+            let id = app.snapshot.tickets[index].id.clone();
+            app.open(&id);
+            app.mode = Mode::PlanReview;
+            let mut output = None;
+            for _ in 0..3 {
+                output = Some(context.run(input.clone(), |context| app.ui(context)));
+            }
+            for clipped in output.unwrap().shapes {
+                if let egui::Shape::Text(text) = &clipped.shape {
+                    let right = text.pos.x + text.galley.size().x;
+                    assert!(
+                        right <= width,
+                        "{:?} ends at {right}, past {width}",
+                        text.galley.text()
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 20, "{checked} texts drawn");
     }
 }

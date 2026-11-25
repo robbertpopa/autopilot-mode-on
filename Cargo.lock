@@ -662,6 +662,7 @@ dependencies = [
  "autopilot-pipeline",
  "autopilot-profile",
  "autopilot-store",
+ "autopilot-tracker",
  "autopilot-update",
  "eframe",
  "rfd",

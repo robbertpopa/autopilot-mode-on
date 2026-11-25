@@ -15,8 +15,10 @@ use crate::{Error, GIT_LIMITS, ObjectId, Repository, Worktree, git_os_value, git
 mod cleanup;
 mod commit;
 mod fingerprint;
+mod merge;
 pub use cleanup::Removal;
 pub use fingerprint::TreeFingerprint;
+pub use merge::BaseMerge;
 
 const OWNERSHIP_LIMIT: u64 = 256 * 1024;
 const CHECKOUT_LIMITS: Limits = Limits {

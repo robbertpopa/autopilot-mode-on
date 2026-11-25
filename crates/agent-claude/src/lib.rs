@@ -791,7 +791,7 @@ fn run_stream(
     if clean {
         decoder.finish_tail(&mut |summary| context.message(summary));
     }
-    let finish = decoder.into_finish();
+    let mut finish = decoder.into_finish();
     // What the run used, when Claude Code says; nothing is invented.
     if let Some(finish) = finish.as_ref()
         && let Some(used) = finish.usage
@@ -806,7 +806,10 @@ fn run_stream(
         });
     }
     // Cost is real even when the step failed, so it is reported first.
-    if let Some((amount, estimated)) = finish.as_ref().and_then(|f| step_cost(f, auth)) {
+    if let Some(finish) = finish.as_mut()
+        && let Some((amount, estimated)) = step_cost(finish, auth)
+    {
+        finish.spent_microusd = Some(amount);
         context.cost(Money::from_microusd(amount), estimated);
     }
     Ok((output.outcome, finish, stderr_tail(&output.stderr)))
@@ -862,6 +865,23 @@ fn conclude<T: StepOutput>(
     Ok(output)
 }
 
+/// Why a limit stop happened, with the money it cost, so the owner can choose
+/// a higher limit knowing what the stopped run already spent.
+fn stop_reason(finish: &stream::Finish) -> String {
+    let limit = if finish.subtype == "error_max_turns" {
+        "the turn limit"
+    } else {
+        "the cost cap"
+    };
+    let turns = finish
+        .turns
+        .map_or_else(String::new, |turns| format!(" after {turns} turns"));
+    let spent = finish.spent_microusd.map_or_else(String::new, |micro| {
+        format!(", {} spent", stream::money_text(micro))
+    });
+    format!("stopped at {limit}{turns}{spent}, with no result")
+}
+
 /// What every step shares: the run must have ended in a clean success.
 fn check_finish(
     outcome: &Outcome,
@@ -899,7 +919,7 @@ fn check_finish(
         finish.subtype.as_str(),
         "error_max_turns" | "error_max_budget_usd"
     ) {
-        return Err(Stopped(finish.subtype).into());
+        return Err(Stopped(stop_reason(&finish)).into());
     }
     // S2 saw subtype "success" with is_error true and exit 1, so the subtype
     // alone is never enough to call a run good.

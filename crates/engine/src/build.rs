@@ -107,6 +107,9 @@ struct BuildRound<'a, A: Agent> {
     hint: Option<String>,
     /// The project rules block and the log line that says it was included.
     rules: Option<(String, String)>,
+    /// What a pull request needs fixed, as data. Every round carries it: a
+    /// fresh session after a failed round has not seen the first prompt.
+    repair: Option<String>,
     cancel: AtomicBool,
 }
 
@@ -117,6 +120,10 @@ fn prompt(round: &BuildRound<'_, impl Agent>, request: &BuildRequest) -> Result<
         .map_err(|error| Error::History(error.to_string()))?;
     let mut text = String::new();
     match (&request.failed, &request.session) {
+        (None, _) if round.repair.is_some() => text.push_str(
+            "The pull request for this plan needs a fix. Change only what the fix needs, \
+             in the current directory, and keep to the plan.\n",
+        ),
         (None, _) => text.push_str("Implement this plan in the current directory.\n"),
         (Some(_), Session::Continue) => {
             text.push_str("The checks failed. Fix the problem and keep to the plan.\n");
@@ -129,6 +136,9 @@ fn prompt(round: &BuildRound<'_, impl Agent>, request: &BuildRequest) -> Result<
     }
     if let Some(failed) = &request.failed {
         let _ = writeln!(text, "FAILED: {failed}");
+    }
+    if let Some(repair) = &round.repair {
+        text.push_str(repair);
     }
     if let Some(hint) = &round.hint {
         let _ = writeln!(text, "Note from the owner: {hint}");
@@ -460,6 +470,18 @@ pub fn run_build(
     setup: &BuildSetup<'_>,
     isolation: Isolation,
 ) -> Result<BuildOutcome, Error> {
+    run_build_with(directory, ticket, agent, setup, isolation, None)
+}
+
+/// [`run_build`] with the text of a pull request fix in every prompt.
+pub(crate) fn run_build_with(
+    directory: &Path,
+    ticket: &Ticket,
+    agent: &impl Agent,
+    setup: &BuildSetup<'_>,
+    isolation: Isolation,
+    repair: Option<String>,
+) -> Result<BuildOutcome, Error> {
     let _owner = lock_run(directory, &ticket.id)?;
     let mut store = SqliteStore::open(directory.join(DATABASE))?;
     let history = store.events(&ticket.id, 0)?;
@@ -479,18 +501,7 @@ pub fn run_build(
     let plan = plan::approved_plan(directory, &ticket.id)?;
     let plan_hash =
         latest_plan_hash(&history).ok_or_else(|| Error::History("no plan approval".into()))?;
-    let limits = setup
-        .profile
-        .step(Step::BuildCheck)
-        .map(|settings| Limits::from(&settings.limits))
-        .ok_or_else(|| Error::NotReady("the profile has no build_check step".into()))?;
-    let limits = match crate::pipelines::chosen(&history) {
-        Some((_, _, Some(cap))) => Limits {
-            rounds: limits.rounds.min(cap),
-            ..limits
-        },
-        _ => limits,
-    };
+    let limits = build_limits(setup.profile, &history)?;
 
     // A bare name is looked up on PATH; the Git crate wants an absolute program.
     let git = autopilot_checks::resolve_executable(
@@ -550,6 +561,7 @@ pub fn run_build(
         session: latest_session(&history),
         hint,
         rules: crate::rules::prompt_block(directory, Some(&setup.repository.to_string_lossy())),
+        repair,
         cancel: AtomicBool::new(false),
     };
     let sink = Rc::clone(&journal);
@@ -567,6 +579,20 @@ pub fn run_build(
         return Err(error);
     }
     conclude(&mut journal, directory, &ticket.id, outcome)
+}
+
+fn build_limits(profile: &Profile, history: &[RecordedEvent]) -> Result<Limits, Error> {
+    let limits = profile
+        .step(Step::BuildCheck)
+        .map(|settings| Limits::from(&settings.limits))
+        .ok_or_else(|| Error::NotReady("the profile has no build_check step".into()))?;
+    Ok(match crate::pipelines::chosen(history) {
+        Some((_, _, Some(cap))) => Limits {
+            rounds: limits.rounds.min(cap),
+            ..limits
+        },
+        _ => limits,
+    })
 }
 
 /// Record how the refine loop ended and, if it needs the owner, ask.
