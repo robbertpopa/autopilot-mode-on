@@ -38,6 +38,7 @@ const FORBIDDEN: &[&str] = &[
     "protected_paths",
     "budgets",
     "spend",
+    "ticket_slots",
     "limits",
     "turns",
     "model",

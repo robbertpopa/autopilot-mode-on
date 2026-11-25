@@ -76,6 +76,12 @@ impl Scheduler {
         }
     }
 
+    /// Change how many tickets may run at once. Running tickets are not
+    /// stopped when the limit goes down; no new one starts until there is room.
+    pub fn set_slots(&mut self, slots: usize) {
+        self.slots = slots.max(1);
+    }
+
     /// Queue a ticket with the paths Understand and Plan predict it will change.
     /// A ticket already queued or running is left as it is.
     ///
@@ -316,5 +322,21 @@ mod tests {
         scheduler.finish(&id("2"));
         scheduler.finish(&id("1"));
         assert_eq!(started(&mut scheduler), ["3"]);
+    }
+
+    // Invariant: lowering the limit stops new starts without touching running
+    // tickets, and raising it lets a waiting one in. Breaks if `set_slots` is
+    // ignored by `start_ready`.
+    #[test]
+    fn the_slot_limit_can_change_while_tickets_run() {
+        let mut scheduler = Scheduler::new(2);
+        for name in ["a", "b", "c"] {
+            scheduler.submit(id(name), paths(&[name])).unwrap();
+        }
+        assert_eq!(scheduler.start_ready().len(), 2);
+        scheduler.set_slots(1);
+        assert_eq!(scheduler.running().len(), 2, "running tickets stay");
+        scheduler.set_slots(3);
+        assert_eq!(scheduler.start_ready(), vec![id("c")]);
     }
 }

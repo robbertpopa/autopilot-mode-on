@@ -19,6 +19,7 @@ mod pipeline;
 mod pipelines;
 mod plan_review;
 mod projects;
+mod queue;
 mod review_page;
 mod run;
 mod sandbox;

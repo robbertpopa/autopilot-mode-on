@@ -45,6 +45,16 @@ fn predicted(view: &TicketView) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+/// The repository-relative paths a ticket predicted it will change, with
+/// anything unusable dropped. Empty when nothing was predicted or the history
+/// cannot be read: a queue then treats the ticket as touching nothing.
+#[must_use]
+pub fn predicted_paths(directory: &Path, ticket: &TicketId) -> Vec<PathBuf> {
+    load_ticket(directory, ticket)
+        .map(|view| predicted(&view))
+        .unwrap_or_default()
+}
+
 /// The open tickets, other than `ticket`, that predicted a file this one
 /// predicts. Tickets in a different project folder are not compared.
 ///

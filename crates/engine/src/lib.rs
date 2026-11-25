@@ -92,7 +92,7 @@ pub use live::{
     LiveStatus, Liveness, QUIET_MS, STALLED_MS, SubState, SubStep, live_status, sub_steps,
 };
 pub use metrics::{PipelineMetrics, StepMetrics, UsageLine, metrics_of, pipeline_metrics};
-pub use overlap::{TicketOverlap, find_overlaps};
+pub use overlap::{TicketOverlap, find_overlaps, predicted_paths};
 pub use pipelines::{
     choose_pipeline, chosen as chosen_pipeline, chosen_custom as chosen_custom_steps,
 };

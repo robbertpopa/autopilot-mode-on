@@ -282,3 +282,24 @@ fn a_project_or_pipeline_cannot_carry_spend_limits() {
     let budgets = "[projects.\"D:/work/app\"]\n[projects.\"D:/work/app\".budgets]\ntotal_microusd = 99000000\n";
     assert!(Profile::parse("project.toml", budgets).is_err());
 }
+
+// Invariant: two tickets build side by side by default, the owner's number is
+// read, zero is refused, and a project or pipeline cannot carry the slot count
+// (an agent-drafted one could otherwise run more builds, and spend, at once).
+// Breaks if the default changes silently, zero is accepted, or a project gains
+// the field.
+#[test]
+fn ticket_slots_default_to_two_and_only_the_profile_sets_them() {
+    assert_eq!(
+        Profile::parse("project.toml", "")
+            .unwrap()
+            .ticket_slots
+            .get(),
+        2
+    );
+    let set = Profile::parse("project.toml", "ticket_slots = 4\n").unwrap();
+    assert_eq!(set.ticket_slots.get(), 4);
+    assert!(Profile::parse("project.toml", "ticket_slots = 0\n").is_err());
+    let project = "[projects.\"D:/work/app\"]\nticket_slots = 9\n";
+    assert!(Profile::parse("project.toml", project).is_err());
+}
