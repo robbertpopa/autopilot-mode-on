@@ -734,6 +734,73 @@ pub fn spent_since(directory: &Path, since_ms: u64) -> Result<(Money, Money), Er
     Ok((api, subscription))
 }
 
+/// The words every refusal for the total cap starts with, so a window can tell
+/// this stop from any other and offer to raise the cap.
+pub const CAP_REACHED: &str = "The spending cap is reached";
+
+/// Why a paid call may not start.
+#[derive(Debug, thiserror::Error)]
+pub enum SpendError {
+    #[error("{CAP_REACHED}: {} spent of {} allowed in all. Raise the cap in Settings, Cost, to go on.", dollars(*.spent), dollars(*.cap))]
+    CapReached { spent: Money, cap: Money },
+    #[error("cannot tell what was spent, so no paid call starts: {0}")]
+    Unreadable(#[from] Error),
+}
+
+/// Whether `text` is the refusal of [`SpendError::CapReached`].
+#[must_use]
+pub fn is_cap_refusal(text: &str) -> bool {
+    text.starts_with(CAP_REACHED)
+}
+
+/// The most the next paid call may cost: the step's budget (or the profile's
+/// default per call), cut down to what is left of the total. Refuses when
+/// nothing is left, so a call never starts that could pass the cap. Counts
+/// every exact (API) cost in the data directory.
+///
+/// # Errors
+/// Returns [`SpendError::CapReached`] when the total is spent, and
+/// [`SpendError::Unreadable`] when a history cannot be read (a call that
+/// cannot be counted is not allowed).
+pub fn paid_call_cap(
+    directory: &Path,
+    limits: &autopilot_profile::SpendLimits,
+    step_budget: Option<Money>,
+) -> Result<Money, SpendError> {
+    let (spent, _) = spent_since(directory, 0)?;
+    let cap = Money::from_microusd(limits.total_microusd.get());
+    let left = cap.as_microusd().saturating_sub(spent.as_microusd());
+    if left == 0 {
+        return Err(SpendError::CapReached { spent, cap });
+    }
+    let call = limits.call_cap(step_budget).as_microusd();
+    Ok(Money::from_microusd(call.min(left)))
+}
+
+/// Dollars written as `0.05` to micro-dollars, without floating point.
+#[must_use]
+pub fn micro_from_dollars(text: &str) -> Option<u64> {
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    if fraction.len() > 6 || whole.is_empty() && fraction.is_empty() {
+        return None;
+    }
+    let digits = |part: &str| part.chars().all(|c| c.is_ascii_digit());
+    if !digits(whole) || !digits(fraction) {
+        return None;
+    }
+    let whole: u64 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().ok()?
+    };
+    let fraction: u64 = if fraction.is_empty() {
+        0
+    } else {
+        format!("{fraction:0<6}").parse().ok()?
+    };
+    whole.checked_mul(1_000_000)?.checked_add(fraction)
+}
+
 /// Dollars with two decimals, for a cost label.
 #[must_use]
 pub fn dollars(money: Money) -> String {
