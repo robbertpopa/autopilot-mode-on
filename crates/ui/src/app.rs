@@ -132,6 +132,11 @@ pub struct App {
     pub(crate) advanced: bool,
     pub(crate) tab: Tab,
     pub(crate) notice: Option<(bool, String)>,
+    /// The ticket that was open when `notice` first showed. One window-wide
+    /// notice would otherwise follow the owner to the next ticket and describe
+    /// work that ticket never did.
+    notice_for: Option<TicketId>,
+    notice_stamped: bool,
     pub(crate) change_text: String,
     pub(crate) reading: Option<Result<autopilot_engine::Reading, String>>,
     pub(crate) for_project: bool,
@@ -271,6 +276,8 @@ impl App {
             advanced: true,
             tab: Tab::Summary,
             notice: None,
+            notice_for: None,
+            notice_stamped: false,
             change_text: String::new(),
             reading: None,
             for_project: false,
@@ -777,6 +784,7 @@ impl App {
             self.screen = Screen::Run;
         }
         self.take_drops(ctx);
+        self.scope_notice();
         self.nav(ctx);
         if self.mode == Mode::Watch && self.current().is_some() {
             self.side_panel(ctx);
@@ -870,6 +878,21 @@ impl App {
             && let Some(ticket) = self.current().map(|view| view.id.clone())
         {
             self.act(Action::Attach { ticket, paths });
+        }
+    }
+
+    fn scope_notice(&mut self) {
+        if self.notice.is_none() {
+            self.notice_stamped = false;
+            return;
+        }
+        if !self.notice_stamped {
+            self.notice_stamped = true;
+            self.notice_for.clone_from(&self.selected);
+        } else if self.notice_for != self.selected {
+            self.notice = None;
+            self.notice_stamped = false;
+            self.cap_retry = None;
         }
     }
 
