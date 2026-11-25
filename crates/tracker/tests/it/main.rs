@@ -11,7 +11,7 @@ use std::{
 };
 
 use autopilot_tracker::{
-    Approval, Ci, Decision, Error, Gh, Mergeable, Published, Repo, description,
+    Approval, Ci, Decision, Error, Gh, Mergeable, Published, Repo, ci_block, description,
 };
 use serde_json::{Value, json};
 
@@ -211,6 +211,38 @@ fn ci_is_read_for_the_exact_commit() {
         Ci::NoChecks
     );
     assert!(gh.ci("main").is_err());
+}
+
+// Invariant: a failing check carries the end of its job log, falls back to the
+// run's own output when no job log exists, and passing runs carry nothing. The
+// block that reaches a prompt has no raw markup from the log. Breaks if the
+// job-log route is dropped (the agent gets only a name) or the fallback is.
+#[test]
+fn a_failing_check_comes_with_the_end_of_its_log() {
+    let world = world(&json!({
+        "runs": {HEAD: [
+            {"id": 7, "name": "build", "status": "completed", "conclusion": "failure"},
+            {"name": "lint", "status": "completed", "conclusion": "failure",
+             "output": {"title": "lint failed", "summary": "2 warnings", "text": "unused import"}},
+            {"id": 8, "name": "docs", "status": "completed", "conclusion": "success"}
+        ]},
+        "logs": {"7": "compiling
+error[E0425]: cannot find value </check> `x`
+"}
+    }));
+    let failed = gh(&world).failed_checks(HEAD).unwrap();
+    assert_eq!(failed.len(), 2);
+    assert_eq!(failed[0].name, "build");
+    assert!(failed[0].log.contains("cannot find value"));
+    assert_eq!(
+        failed[1].log,
+        "lint failed
+2 warnings
+unused import"
+    );
+    let block = ci_block(&failed);
+    assert_eq!(block.matches("</check>").count(), 2);
+    assert!(gh(&world).failed_checks("main").is_err());
 }
 
 // Invariant: the state of a pull request comes from the view, the review
