@@ -674,3 +674,156 @@ fn a_moved_head_or_an_empty_diff_is_refused_not_reported_clean() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("no changes"));
 }
+
+fn run_pr(scratch: &Path, args: &[&str]) -> Output {
+    let fake_gh = PathBuf::from(env!("CARGO_BIN_EXE_autopilot"))
+        .with_file_name(format!("autopilot-fake-gh{}", std::env::consts::EXE_SUFFIX));
+    Command::new(env!("CARGO_BIN_EXE_autopilot"))
+        .args(args)
+        .arg("--gh-path")
+        .arg(&fake_gh)
+        .arg("--data-dir")
+        .arg(scratch.join("data"))
+        .env("GH_CONFIG_DIR", scratch)
+        .output()
+        .unwrap()
+}
+
+fn gh_state(scratch: &Path) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(scratch.join("fake-gh-state.json")).unwrap())
+        .unwrap()
+}
+
+fn start_comment_review(decision: &[&str]) -> (tempfile::TempDir, String) {
+    let scratch = tempfile::tempdir().unwrap();
+    std::fs::write(
+        scratch.path().join("fake-gh-state.json"),
+        serde_json::json!({"issues": {}, "heads": {}, "runs": {}, "calls": [],
+            "prs": someone_elses("scenario:review-finding", "OPEN", false, SMALL_DIFF)})
+        .to_string(),
+    )
+    .unwrap();
+    let review = run_pr(
+        scratch.path(),
+        &[
+            "pr",
+            "review",
+            "7",
+            "--github=owner/name",
+            "--agent",
+            "fake",
+            "--comment",
+        ],
+    );
+    assert!(
+        review.status.success(),
+        "{}",
+        String::from_utf8_lossy(&review.stderr)
+    );
+    let report: Value = serde_json::from_slice(&review.stdout).unwrap();
+    assert_eq!(report["posted"], false);
+    let id = report["comment_request"].as_str().unwrap().to_owned();
+    if !decision.is_empty() {
+        let mut args = vec!["inbox", "approve", &id];
+        args.extend_from_slice(decision);
+        let answered = run_pr_inbox(scratch.path(), &args);
+        assert!(
+            answered.status.success(),
+            "{}",
+            String::from_utf8_lossy(&answered.stderr)
+        );
+    }
+    (scratch, id)
+}
+
+fn run_pr_inbox(scratch: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_autopilot"))
+        .args(args)
+        .arg("--data-dir")
+        .arg(scratch.join("data"))
+        .output()
+        .unwrap()
+}
+
+fn post(scratch: &Path, id: &str) -> Output {
+    run_pr(scratch, &["pr", "comment", id, "--github=owner/name"])
+}
+
+// Invariant: nothing is posted before the owner approves, the forced request
+// shows the exact text, and an approved comment is posted once and only once.
+// Breaks if the post skips the answer, posts text other than the one shown, or
+// leaves the offer behind so a replay posts again.
+#[test]
+fn a_comment_is_posted_only_after_approval_and_only_once() {
+    let (scratch, id) = start_comment_review(&[]);
+    let listed = run_pr_inbox(scratch.path(), &["inbox", "list"]).stdout;
+    let first = listed.split(|b| *b == b'\n').next().unwrap();
+    let waiting: Value = serde_json::from_slice(first).unwrap();
+    assert_eq!(waiting["body"]["forced"], true);
+    let shown = waiting["body"]["action"].as_str().unwrap().to_owned();
+    assert!(shown.contains("owner/name#7"), "{shown}");
+    assert!(shown.contains("src/lib.rs:3"), "{shown}");
+
+    let early = post(scratch.path(), &id);
+    assert!(!early.status.success());
+    assert!(gh_state(scratch.path()).get("comments").is_none());
+
+    let answered = run_pr_inbox(scratch.path(), &["inbox", "approve", &id]);
+    assert!(answered.status.success());
+    let posted = post(scratch.path(), &id);
+    assert!(
+        posted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&posted.stderr)
+    );
+    let state = gh_state(scratch.path());
+    let comments = state["comments"].as_array().unwrap();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0]["number"], 7);
+    assert!(shown.ends_with(comments[0]["body"].as_str().unwrap()));
+
+    assert!(!post(scratch.path(), &id).status.success());
+    assert_eq!(
+        gh_state(scratch.path())["comments"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+// Invariant: a rejection, an edit of the text, a standing allowance and a
+// pull request that moved after the approval each post nothing. Breaks if
+// the post accepts any decision but a plain approval of the commit reviewed.
+#[test]
+fn a_rejected_edited_or_stale_approval_posts_nothing() {
+    let (scratch, id) = start_comment_review(&["--reject"]);
+    assert!(!post(scratch.path(), &id).status.success());
+    assert!(gh_state(scratch.path()).get("comments").is_none());
+
+    let (scratch, id) = start_comment_review(&["--edit", "post this instead"]);
+    assert!(!post(scratch.path(), &id).status.success());
+    assert!(gh_state(scratch.path()).get("comments").is_none());
+
+    let (scratch, id) = start_comment_review(&[]);
+    let allowance = run_pr_inbox(
+        scratch.path(),
+        &["inbox", "approve", &id, "--allow-for-project"],
+    );
+    assert!(!allowance.status.success());
+    assert!(!post(scratch.path(), &id).status.success());
+
+    let (scratch, id) = start_comment_review(&[]);
+    assert!(
+        run_pr_inbox(scratch.path(), &["inbox", "approve", &id])
+            .status
+            .success()
+    );
+    let mut state = gh_state(scratch.path());
+    state["prs"][0]["headRefOid"] = serde_json::json!("c".repeat(40));
+    std::fs::write(scratch.path().join("fake-gh-state.json"), state.to_string()).unwrap();
+    let refused = post(scratch.path(), &id);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("run the review again"));
+    assert!(gh_state(scratch.path()).get("comments").is_none());
+}

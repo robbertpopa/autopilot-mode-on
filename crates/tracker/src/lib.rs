@@ -452,6 +452,30 @@ impl Gh {
         state::decode_subject(&text)
     }
 
+    /// Post one comment on a pull request. The text is redacted like a pull
+    /// request body. Not retried: a comment that may have been posted must not
+    /// be posted twice, so an uncertain failure is the owner's to check.
+    ///
+    /// # Errors
+    /// Returns an error if `gh` fails.
+    pub fn pr_comment(&self, number: u64, body: &str) -> Result<(), Error> {
+        let number_text = number.to_string();
+        let repo = self.repo.to_string();
+        self.run(
+            &[
+                "pr",
+                "comment",
+                &number_text,
+                "--repo",
+                &repo,
+                "--body-file",
+                "-",
+            ],
+            redact(body).as_bytes(),
+        )?;
+        Ok(())
+    }
+
     /// The unified diff of one pull request, cleaned. It is attacker-controlled
     /// text that only a reviewer without tools may read. A diff over the output
     /// limit is an error, not a shorter diff.
