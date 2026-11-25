@@ -177,6 +177,30 @@ fn cancellation_and_timeout_end_the_worker_and_its_grandchild() {
     }
 }
 
+// A descendant that starts its own session leaves the process group, so only
+// the launch's marker finds it. Without the sweep in macos.rs it outlives the
+// call, and none of the tests above start a second session.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_descendant_in_its_own_session_does_not_outlive_the_call() {
+    let data = tempfile::tempdir().unwrap();
+    let output = runner()
+        .run(
+            &fixture("session", data.path()).unwrap(),
+            b"",
+            BASE_LIMITS,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(matches!(output.outcome, Outcome::Exited(status) if status.success()));
+    let pid = fs::read_to_string(data.path().join("session"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert_dead(&[pid]);
+}
+
 // macOS has no guardian, so a killed supervisor cannot clean up (see macos.rs).
 #[cfg(not(target_os = "macos"))]
 #[test]
@@ -335,6 +359,26 @@ fn fake_child() {
                     writeln!(io::stdout(), "ready to stop").unwrap();
                 }
                 thread::sleep(Duration::from_secs(20));
+            }
+        }
+        // macOS has no `setsid` program; perl makes the call itself.
+        "session" => {
+            #[allow(
+                clippy::zombie_processes,
+                reason = "The test supervisor must clean up the synthetic descendant after its parent exits."
+            )]
+            Command::new("/usr/bin/perl")
+                .args([
+                    "-e",
+                    "use POSIX; POSIX::setsid(); open F, '>', \"$ENV{AUTOPILOT_TEST_DATA}/partial\"; print F $$; close F; rename \"$ENV{AUTOPILOT_TEST_DATA}/partial\", \"$ENV{AUTOPILOT_TEST_DATA}/session\"; sleep 60",
+                ])
+                .stdin(Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !path.join("session").is_file() {
+                assert!(Instant::now() < deadline, "session leader never started");
+                thread::sleep(Duration::from_millis(10));
             }
         }
         "grandchild" => thread::sleep(Duration::from_secs(20)),

@@ -157,7 +157,7 @@ What this means for a macOS boundary:
 - The agent needs `api.anthropic.com` and nothing else. Seatbelt filters by address and port, not by name, so a per-domain rule needs a local proxy that the profile forces traffic through (what `srt` does on macOS). That proxy and its TLS handling were not tested.
 - A default-allow profile is not a boundary: system services act for the sandboxed process and write outside it. A default-deny profile for Node, `claude` and the build tools is a long allow-list that has to be found by trial and kept in step with each macOS release.
 - Loopback and Unix sockets are one rule (`network*`) rather than the separate rows the Linux probe has, so the rows need rewriting, not reuse. Mach lookups, `open`, `osascript` and the pasteboard are new escape routes with no Linux counterpart; the probe needs a row for each that the profile claims to block.
-- There is no child subreaper and no network namespace on macOS. `crates/process/src/macos.rs` kills the process group, and a descendant that calls `setsid` survives.
+- There is no child subreaper and no network namespace on macOS. `crates/process/src/macos.rs` kills the process group, and also every process of the user that still carries the launch's `AUTOPILOT_RUN_MARK` environment variable, which finds a descendant that called `setsid`. One that clears its environment first still survives.
 
 The next section is what happened when `srt` was used instead of a hand-written profile.
 
@@ -176,5 +176,5 @@ Result on this Mac (arm64, macOS 27.0.1, Claude Code 2.1.330): the probe passes 
 
 End-to-end Build, CLI, API-key mode, Haiku, against a clone of `robbertpopa/autopilot-pr-test` (a small Rust crate): Understand, Clarify (recommended answers), Plan, approval, then `autopilot build --agent claude`. The agent added `multiply` and its test inside the sandbox and the five checks (build, test and the rest of the profile's) passed in round 1: `{"build":"ready"}`. Cost of that whole ticket $0.015. Two earlier runs showed what to expect: a plan whose criteria name shell commands the profile does not define stops the build with a request to the owner (`criteria cannot pass yet`), and a key read from a file with Windows line endings made every request fail until the key was trimmed (now done in `env.rs`).
 
-Not covered: Intel Macs and other macOS versions; the window's Build button (same code path, not clicked); the draft pull request (not opened on purpose); a descendant that calls `setsid` escapes the process-group cleanup (macOS has no subreaper); Git inside the sandbox stays off, as on Linux; subscription mode stays refused.
+Not covered: Intel Macs and other macOS versions; the window's Build button (same code path, not clicked); the draft pull request (not opened on purpose); a descendant that calls `setsid` and then clears its environment escapes the cleanup (macOS has no subreaper; the marker sweep is checked only by the test in CI); Git inside the sandbox stays off, as on Linux; subscription mode stays refused.
 
