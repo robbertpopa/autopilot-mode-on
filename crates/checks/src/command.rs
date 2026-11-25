@@ -275,16 +275,18 @@ impl Toolbox {
                 tmp: sandbox.tmp.clone(),
             };
             let env = [("CARGO_TERM_COLOR", "never"), ("LANG", "C.UTF-8")];
-            self.fetch(sandbox, &role, "cargo", &["fetch"], &env, cancel)?;
+            let spec = fetch_spec(&worktree, "cargo", &["fetch"], &env);
+            self.fetch(sandbox, &role, &spec, cancel)?;
         }
         if worktree.join("package-lock.json").is_file() {
             let role = Role::FetchNode {
-                worktree,
+                worktree: worktree.clone(),
                 tmp: sandbox.tmp.clone(),
             };
             let env = [("LANG", "C.UTF-8"), ("NO_COLOR", "1")];
             let args = ["ci", "--ignore-scripts", "--no-audit", "--no-fund"];
-            self.fetch(sandbox, &role, "npm", &args, &env, cancel)?;
+            let spec = fetch_spec(&worktree, "npm", &args, &env);
+            self.fetch(sandbox, &role, &spec, cancel)?;
         }
         Ok(())
     }
@@ -293,30 +295,22 @@ impl Toolbox {
         &self,
         sandbox: &Sandbox,
         role: &Role,
-        program: &str,
-        args: &[&str],
-        env: &[(&str, &str)],
+        spec: &CommandSpec,
         cancel: &std::sync::atomic::AtomicBool,
     ) -> Result<(), String> {
-        let worktree = match role {
-            Role::Fetch { worktree, .. } | Role::FetchNode { worktree, .. } => worktree.clone(),
-            Role::Agent { .. } | Role::Check { .. } => {
-                return Err("only a fetch role may fetch".to_owned());
-            }
-        };
-        let what = format!("{program} {}", args.first().copied().unwrap_or_default());
-        let spec = CommandSpec {
-            program: PathBuf::from(program),
-            args: args.iter().map(OsString::from).collect(),
-            env: env
-                .iter()
-                .map(|(name, value)| ((*name).into(), (*value).into()))
-                .collect(),
-            cwd: Some(worktree),
-        };
+        // The command carries its own worktree, so a new fetch role in
+        // `process` needs no change here to compile.
+        let what = format!(
+            "{} {}",
+            spec.program.display(),
+            spec.args
+                .first()
+                .map(|arg| arg.to_string_lossy())
+                .unwrap_or_default()
+        );
         let wrapped = sandbox
             .boundary
-            .wrap(role, &spec, &[])
+            .wrap(role, spec, &[])
             .map_err(|error| format!("{what} could not start: {error}"))?;
         let limits = Limits {
             timeout: TIMEOUT,
@@ -544,5 +538,17 @@ mod tests {
         );
         let unc = Path::new(r"\\?\UNC\server\share\tree");
         assert_eq!(plain_directory(unc), unc);
+    }
+}
+
+fn fetch_spec(worktree: &Path, program: &str, args: &[&str], env: &[(&str, &str)]) -> CommandSpec {
+    CommandSpec {
+        program: PathBuf::from(program),
+        args: args.iter().map(OsString::from).collect(),
+        env: env
+            .iter()
+            .map(|(name, value)| ((*name).into(), (*value).into()))
+            .collect(),
+        cwd: Some(worktree.to_path_buf()),
     }
 }

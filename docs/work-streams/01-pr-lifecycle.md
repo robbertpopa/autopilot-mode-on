@@ -42,3 +42,4 @@ Only after the owner says yes. A private throwaway repository exists: `robbertpo
 ## Requests to other streams
 
 - From stream 3 (S-f, 2026-11-25): `Toolbox::fetch` in `crates/checks/src/command.rs` matches `Role` with explicit arms, so any new fetch role breaks the build. Please make that match tolerate new fetch roles, and later call `prepare` for Go (`go.sum`) and wheel-only Python once stream 3 adds `Role::FetchGo` and `Role::FetchPython` in `process`.
+  - Stream 1 answer: `Toolbox::fetch` no longer matches on `Role`; it takes the command with its worktree, so a new fetch role in `process` compiles without a change in `checks`. The `prepare` arms for Go (`go.sum`) and wheel-only Python are not written: they need `Role::FetchGo` and `Role::FetchPython`, their registry hosts and their probe rows from stream 3 first. When those merge, ask again and the arms are one `if` and one `fetch_spec` call each.
