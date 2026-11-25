@@ -23,6 +23,8 @@ use autopilot_engine::{PrAction, watch_pull_request};
 use autopilot_pipeline::inbox::{Decision, Inbox, Reply};
 use autopilot_profile::{Auth, Profile};
 
+mod repair;
+
 /// The build check passes only once `fixed.txt` is committed, which the fake
 /// writes on a turn whose prompt carries a failure.
 const NEEDS_FIX: &str = r#"

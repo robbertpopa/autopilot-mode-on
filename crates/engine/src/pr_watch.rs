@@ -5,7 +5,7 @@ use std::path::Path;
 
 use autopilot_checks::resolve_executable;
 use autopilot_core::{Step, TicketId};
-use autopilot_git::Repository;
+use autopilot_git::{ObjectId, Repository};
 use autopilot_pipeline::{StepState, fold};
 use autopilot_store::{SqliteStore, Store};
 use autopilot_tracker::{Ci, Decision, Gh, Mergeable, PullState};
@@ -54,7 +54,19 @@ pub fn watch_pull_request(
     let local =
         Repository::new(git, guardian.into(), repository.into())?.resolve_local_branch(branch)?;
 
-    let summary = PrSummary {
+    let summary = summarize(&remote, &local);
+    Ok(PrWatch {
+        number: pull.number,
+        url: pull.url,
+        feedback: remote.feedback.len(),
+        action: next_action(&summary),
+        summary,
+    })
+}
+
+/// The facts the rules read, from what GitHub says and the local branch's head.
+pub(crate) fn summarize(remote: &autopilot_tracker::PrState, local: &ObjectId) -> PrSummary {
+    PrSummary {
         state: match remote.state {
             PullState::Open => PrState::Open,
             PullState::Merged => PrState::Merged,
@@ -81,12 +93,5 @@ pub fn watch_pull_request(
         // differs from the pull request's head counts as unsynced.
         local_dirty: false,
         local_ahead: !local.as_str().eq_ignore_ascii_case(&remote.head),
-    };
-    Ok(PrWatch {
-        number: pull.number,
-        url: pull.url,
-        feedback: remote.feedback.len(),
-        action: next_action(&summary),
-        summary,
-    })
+    }
 }
