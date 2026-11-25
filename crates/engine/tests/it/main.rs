@@ -886,6 +886,40 @@ fn a_plan_that_cannot_be_checked_is_asked_for_once_more() {
     ));
 }
 
+struct CountsCalls(std::sync::atomic::AtomicUsize);
+
+impl Agent for CountsCalls {
+    fn start(&self, _request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        Err(io::Error::other("counts only plans").into())
+    }
+
+    fn start_plan(&self, _request: StepRequest<'_>) -> Result<AgentRun, AgentError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let plan = good_plan();
+        Ok(AgentRun::spawn_plan(move |_| Ok(plan))?)
+    }
+}
+
+// Invariant: a plan that waits for approval is not planned again; the agent is
+// never called (no spend) and the history stays valid.
+// Breaks if: the active-step check in `ready_to_plan` is removed. Nothing else
+// runs Plan twice in a row, so no other test sees it.
+#[test]
+fn a_plan_waiting_for_approval_is_not_planned_again() {
+    let (data, ticket) = ready_to_plan("plan-twice");
+    run_plan(data.path(), &ticket, &Planner(good_plan())).unwrap();
+    let before = watch(data.path(), &ticket.id, 0).unwrap().len();
+    let agent = CountsCalls(std::sync::atomic::AtomicUsize::new(0));
+    assert!(matches!(
+        run_plan(data.path(), &ticket, &agent),
+        Err(Error::NotReady(_))
+    ));
+    assert_eq!(agent.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let after = watch(data.path(), &ticket.id, 0).unwrap();
+    assert_eq!(after.len(), before);
+    assert!(autopilot_pipeline::fold(&after).is_ok());
+}
+
 // Invariant: an invalid plan fails the step, and the step can be tried again.
 #[test]
 fn an_invalid_plan_fails_the_step_and_it_can_run_again() {

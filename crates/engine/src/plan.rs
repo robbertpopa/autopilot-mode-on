@@ -115,6 +115,13 @@ fn ready_to_plan(
     if state.step(Step::Understand) != &StepState::Passed {
         return Err(Error::NotReady("Understand has not passed".into()));
     }
+    // A second plan while the first waits for approval would spend money and
+    // then be rejected when its start is appended, leaving the history invalid.
+    if state.step(Step::Plan).is_active() {
+        return Err(Error::NotReady(
+            "the plan is already running or waiting for your answer".into(),
+        ));
+    }
     // Appending a start to a skipped step would corrupt the history, so a
     // pipeline that turned the plan off ends here.
     if matches!(state.step(Step::Plan), StepState::Skipped(_)) {
