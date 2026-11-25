@@ -57,6 +57,17 @@ fn worktrees(options: &Options) -> Result<PathBuf, String> {
 /// Returns the reason in plain words: no project folder, the sandbox or the API
 /// key not being ready, or the build failing to run.
 pub(crate) fn make_build(options: &Options, ticket: &TicketId) -> Result<String, String> {
+    let slots = autopilot_engine::load_profile(&options.profile).map_or(
+        autopilot_profile::Profile::DEFAULT_TICKET_SLOTS,
+        |profile| profile.ticket_slots,
+    );
+    let paths = autopilot_engine::predicted_paths(&options.data_dir, ticket);
+    crate::queue::BUILDS.run(ticket, paths, slots.get() as usize, || {
+        build_in_slot(options, ticket)
+    })?
+}
+
+fn build_in_slot(options: &Options, ticket: &TicketId) -> Result<String, String> {
     let directory = options.data_dir.as_path();
     let profile =
         autopilot_engine::load_profile(&options.profile).map_err(|error| error.to_string())?;

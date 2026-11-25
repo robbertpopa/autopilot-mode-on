@@ -254,6 +254,9 @@ pub struct Profile {
     pub branch_rules: BranchRules,
     pub budgets: ProjectBudgets,
     pub spend: SpendLimits,
+    /// How many tickets may build at once; the rest wait their turn. Only the
+    /// profile file holds it: a project or a pipeline cannot carry it.
+    pub ticket_slots: NonZeroU32,
     pub when_unsure: WhenUnsure,
     pub review: ReviewSettings,
     pub advisor: AdvisorSettings,
@@ -276,6 +279,7 @@ struct ProfileFile {
     branch_rules: BranchRules,
     budgets: ProjectBudgets,
     spend: SpendLimits,
+    ticket_slots: Option<NonZeroU32>,
     when_unsure: WhenUnsure,
     review: ReviewSettings,
     advisor: AdvisorSettings,
@@ -316,6 +320,12 @@ struct LimitOverrides {
 }
 
 impl Profile {
+    /// Two tickets build side by side unless the owner says otherwise.
+    pub const DEFAULT_TICKET_SLOTS: NonZeroU32 = match NonZeroU32::new(2) {
+        Some(slots) => slots,
+        None => NonZeroU32::MIN,
+    };
+
     /// Parse a project profile. Missing step fields use their individual defaults.
     ///
     /// # Errors
@@ -374,6 +384,7 @@ impl Profile {
             branch_rules: file.branch_rules,
             budgets: file.budgets,
             spend: file.spend,
+            ticket_slots: file.ticket_slots.unwrap_or(Self::DEFAULT_TICKET_SLOTS),
             when_unsure: file.when_unsure,
             review: file.review,
             advisor: file.advisor,

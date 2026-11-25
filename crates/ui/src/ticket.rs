@@ -458,6 +458,7 @@ impl App {
         prompt_card(ui, &view);
         self.next_card(ui, &view);
         self.overlap_notice(ui, &view);
+        queue_notice(ui, &view);
         Self::orchestrator_card(ui, &view);
         self.advisor_box(ui, &view);
         self.story(ui, &view);
@@ -770,6 +771,14 @@ impl App {
             self.open_worktree_row(ui, view);
             self.open_terminal_row(ui, view);
         });
+    }
+}
+
+/// Said while this ticket's Build waits for a free slot or for a ticket that
+/// changes the same file; nothing is drawn once it runs.
+fn queue_notice(ui: &mut egui::Ui, view: &TicketView) {
+    if let Some(why) = crate::queue::BUILDS.waiting(&view.id) {
+        crate::app::banner(ui, &format!("Build is queued: {why}."), false);
     }
 }
 
