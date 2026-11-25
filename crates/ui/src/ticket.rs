@@ -137,11 +137,14 @@ pub(crate) fn live_status_at(ui: &mut egui::Ui, view: &TicketView, now_ms: u64) 
                         autopilot_engine::Liveness::Quiet => theme::AMBER(),
                         autopilot_engine::Liveness::Stalled => theme::RED(),
                     };
+                    let cost = match &live.progress {
+                        Some(progress) => format!("{} · {progress}", dollars(live.spent)),
+                        None => dollars(live.spent),
+                    };
                     (
                         format!(
-                            "Running {name} · {} · {beat} · {} · {} since start",
+                            "Running {name} · {} · {beat} · {cost} · {} since start",
                             live.phase,
-                            dollars(live.spent),
                             clock(since)
                         ),
                         color,
@@ -840,5 +843,22 @@ mod tests {
             done.contains("Round 1: tests"),
             "the sub-steps stay: {done}"
         );
+    }
+
+    // Invariant: a call that is still running shows its own turn and cost count
+    // beside the recorded cost, so a long call does not look frozen. Breaks if
+    // the window drops `LiveStatus::progress`.
+    #[test]
+    fn a_long_call_shows_its_running_turn_and_cost() {
+        let mut view = view_of("demo-timezone");
+        view.log.push(autopilot_engine::LogLine {
+            step: Some(Step::BuildCheck),
+            at_ms: view.last_ms + 1_000_000,
+            text: "progress: turn 3, about $0.04 so far".to_owned(),
+        });
+        let text = drawn(&view, view.last_ms + 3_000);
+        assert!(text.contains("turn 3, about $0.04 so far"), "{text}");
+        let plain = drawn(&view_of("demo-timezone"), view.last_ms + 3_000);
+        assert!(!plain.contains("so far"), "{plain}");
     }
 }
