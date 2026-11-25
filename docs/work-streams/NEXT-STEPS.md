@@ -30,7 +30,7 @@ Read this first on a new machine, then [ORCHESTRATOR.md](ORCHESTRATOR.md), [owne
 4. Subscription mode inside the sandbox (stays refused until the exfiltration path is closed).
 5. Spend: the $1 cap restarted on 2026-11-25 and about $0.09 has gone through the key (review run, Plan measurement, permission-prompt trial). The cap and the per-call cap now live in Settings (PR 188), so raise them there. Say whether Opus may be used for Plan.
 6. Codex: create a dedicated OpenAI API key with a Platform spend limit and say so, and decide whether the ChatGPT route may ever run unattended. Then one short session finishes S8 and the adapter becomes go or no-go on evidence.
-7. Subscription mode: read [S11](../spikes/S11-subscription-filter.md) and the spike in `tools/s11-launcher/`; the product still refuses subscription mode.
+7. Subscription mode: the owner wants to run everything on the subscription without API tokens, later. The plan is S-h in [stream 3](03-computer-use-and-sandbox.md), after A9 in stream 2. Needed from the owner: launcher (recommended), disposable machine or unprotected; a login to test with, not the main one; OK to read the provider's terms on unattended use. Read [S11](../spikes/S11-subscription-filter.md) and `tools/s11-launcher/` first. The product still refuses subscription mode.
 8. The real-GitHub proof (decision 1) and the release steps (`develop` to `master`, repository secrets, Pages) are unchanged and still need the owner in the session.
 
 ## Orchestration notes from this session
