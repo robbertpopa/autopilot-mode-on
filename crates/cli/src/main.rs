@@ -227,6 +227,25 @@ enum PrAction {
         #[arg(long)]
         gh_path: Option<PathBuf>,
     },
+    /// Have the reviewers read a pull request that someone else opened and
+    /// print what they found. Report only: nothing is written to GitHub.
+    Review {
+        number: u64,
+        /// The GitHub repository, as owner/name.
+        #[arg(long)]
+        github: String,
+        #[arg(long)]
+        agent: Agent,
+        /// The project profile; a real agent takes its model and budget from it.
+        #[arg(long)]
+        profile: Option<PathBuf>,
+        /// The project's folder, to read the owner's rules for it.
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// Absolute path to gh. Defaults to a PATH search.
+        #[arg(long)]
+        gh_path: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -449,6 +468,29 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 },
         } => {
             let result = pr_watch_command(&cli.data_dir, &ticket, &repo, &github, gh_path)?;
+            serde_json::to_writer(&mut out, &result)?;
+            writeln!(out)?;
+        }
+        Command::Pr {
+            action:
+                PrAction::Review {
+                    number,
+                    github,
+                    agent,
+                    profile,
+                    repo,
+                    gh_path,
+                },
+        } => {
+            let request = PrReviewRequest {
+                number,
+                github: &github,
+                agent,
+                profile: profile.as_deref(),
+                repo: repo.as_deref(),
+                gh_path,
+            };
+            let result = pr_review_command(&cli.data_dir, &request)?;
             serde_json::to_writer(&mut out, &result)?;
             writeln!(out)?;
         }
@@ -689,6 +731,85 @@ fn pr_watch_command(
     Ok(serde_json::json!({
         "pull_request": watch.number, "url": watch.url,
         "action": action, "trusted_comments": watch.feedback
+    }))
+}
+
+struct PrReviewRequest<'a> {
+    number: u64,
+    github: &'a str,
+    agent: Agent,
+    profile: Option<&'a Path>,
+    repo: Option<&'a Path>,
+    gh_path: Option<PathBuf>,
+}
+
+fn pr_review_command(
+    data_dir: &Path,
+    request: &PrReviewRequest<'_>,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let repo = autopilot_tracker::Repo::parse(request.github)?;
+    let exe = env::current_exe()?;
+    let guardian = exe.with_file_name(format!(
+        "autopilot-process-guardian{}",
+        env::consts::EXE_SUFFIX
+    ));
+    let program = match &request.gh_path {
+        Some(path) => path.clone(),
+        None => {
+            autopilot_engine::resolve_executable("gh", &env::var_os("PATH").unwrap_or_default())
+                .ok_or("gh was not found on PATH; pass --gh-path")?
+        }
+    };
+    let gh = autopilot_tracker::Gh::new(program, guardian.clone(), repo, env::vars_os())?;
+    let rules = request
+        .repo
+        .and_then(|path| autopilot_engine::prompt_block(data_dir, Some(&path.to_string_lossy())));
+    let block = rules.as_ref().map(|(block, _)| block.as_str());
+    // Reviewers have no tools and read only the text they are given, so a real
+    // one needs no worktree; it still needs an API key and the profile's budget.
+    let review = match request.agent {
+        Agent::Fake => {
+            let fake =
+                exe.with_file_name(format!("autopilot-fake-agent{}", env::consts::EXE_SUFFIX));
+            let config = ClaudeConfig {
+                auth: Auth::Subscription,
+                model: "fake".into(),
+                effort: None,
+                max_turns: 8,
+                max_budget_usd: None,
+                executable: Some(fake),
+                timeout: Duration::from_secs(120),
+            };
+            let agent = ClaudeAgent::new(config, guardian)?;
+            autopilot_engine::review_pull_request(&agent, &gh, request.number, block)?
+        }
+        Agent::Claude => {
+            let path = request
+                .profile
+                .ok_or("a real agent needs --profile for its model and budget")?;
+            let source = std::fs::read_to_string(path)?;
+            let profile = autopilot_profile::Profile::parse(path, &source)?;
+            let agent = claude_agent(&exe, sandbox_config(data_dir, &profile)?)?;
+            autopilot_engine::review_pull_request(&agent, &gh, request.number, block)?
+        }
+    };
+    let findings: Vec<serde_json::Value> = review
+        .findings
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "path": f.path, "line": f.line, "kind": f.kind,
+                "confidence": f.confidence, "issue": f.issue,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "pull_request": review.number, "head": review.head, "state": review.state,
+        "reviewers": review.reviewers, "rules": block.is_some(),
+        "findings": findings, "doubtful": review.doubtful,
+        "cost_microusd": review.cost.as_microusd(),
+        "diff_left_out": review.diff_left_out,
+        "posted": false,
     }))
 }
 

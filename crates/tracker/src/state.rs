@@ -93,18 +93,20 @@ pub(crate) struct View {
     pub decision: Decision,
 }
 
+fn pull_state(text: &str) -> Result<PullState, Error> {
+    match text {
+        "OPEN" => Ok(PullState::Open),
+        "MERGED" => Ok(PullState::Merged),
+        "CLOSED" => Ok(PullState::Closed),
+        other => Err(Error::Parse(format!(
+            "unknown pull request state {other:?}"
+        ))),
+    }
+}
+
 pub(crate) fn decode_view(text: &str) -> Result<View, Error> {
     let raw: RawView = crate::parse(text)?;
-    let state = match raw.state.as_str() {
-        "OPEN" => PullState::Open,
-        "MERGED" => PullState::Merged,
-        "CLOSED" => PullState::Closed,
-        other => {
-            return Err(Error::Parse(format!(
-                "unknown pull request state {other:?}"
-            )));
-        }
-    };
+    let state = pull_state(&raw.state)?;
     let mergeable = match raw.mergeable.as_str() {
         "MERGEABLE" => Mergeable::Clean,
         "CONFLICTING" => Mergeable::Conflicting,
@@ -123,6 +125,58 @@ pub(crate) fn decode_view(text: &str) -> Result<View, Error> {
         mergeable,
         decision,
     })
+}
+
+/// Title and body kept from a pull request, in characters. Both are written by
+/// whoever opened it.
+pub const MAX_TITLE_CHARS: usize = 200;
+pub const MAX_BODY_CHARS: usize = 4000;
+
+/// What a reviewer is told about a pull request someone else opened: the
+/// words are bounded and cleaned, and they are data, never instructions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrSubject {
+    pub number: u64,
+    pub head: String,
+    pub title: String,
+    pub body: String,
+    pub state: PullState,
+    pub draft: bool,
+}
+
+#[derive(Deserialize)]
+struct RawSubject {
+    number: u64,
+    #[serde(rename = "headRefOid")]
+    head: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(rename = "isDraft", default)]
+    draft: bool,
+    state: String,
+}
+
+pub(crate) fn decode_subject(text: &str) -> Result<PrSubject, Error> {
+    let raw: RawSubject = crate::parse(text)?;
+    Ok(PrSubject {
+        number: raw.number,
+        head: raw.head,
+        title: clean(&raw.title, MAX_TITLE_CHARS),
+        body: clean(raw.body.as_deref().unwrap_or_default(), MAX_BODY_CHARS),
+        state: pull_state(&raw.state)?,
+        draft: raw.draft,
+    })
+}
+
+/// A diff as text for a reviewer. Control characters other than line ends and
+/// tabs are dropped: a diff is written by the change's author and must not be
+/// able to carry terminal or protocol escapes into a prompt or a report.
+pub(crate) fn clean_diff(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t' | '\r'))
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -319,6 +373,47 @@ mod tests {
             r#"{{"data":{{"repository":{{"pullRequest":{{"reviewThreads":{{"nodes":[{}]}}}}}}}}}}"#,
             threads.join(",")
         )
+    }
+
+    // Invariant: a stranger's title and body reach a reviewer bounded, without
+    // control characters and with unknown fields ignored. Breaks if the
+    // bounds or the cleaning are dropped from `decode_subject`; the build-side
+    // tests never see text from outside.
+    #[test]
+    fn a_pull_request_subject_is_bounded_and_cleaned() {
+        let long = "x".repeat(MAX_BODY_CHARS + 50);
+        let text = serde_json::json!({
+            "number": 7, "headRefOid": "a".repeat(40), "isDraft": true, "state": "OPEN",
+            "title": "t\u{1b}[31mitle", "body": long, "future": {"field": 1}
+        })
+        .to_string();
+        let subject = decode_subject(&text).unwrap();
+        assert_eq!(subject.title, "t[31mitle");
+        assert_eq!(subject.body.chars().count(), MAX_BODY_CHARS);
+        assert!(subject.draft);
+        assert!(decode_subject(&text.replace("OPEN", "WEIRD")).is_err());
+    }
+
+    // Invariant: a diff keeps its line ends and tabs and loses every other
+    // control character. Breaks if the filter keeps escapes or drops tabs.
+    #[test]
+    fn a_diff_loses_escapes_and_keeps_layout() {
+        assert_eq!(
+            clean_diff("+a\tb\r\n\u{1b}[2J\u{0}-c\n"),
+            "+a\tb\r\n[2J-c\n"
+        );
+    }
+
+    // Hostile input: the decoder never panics on a prefix of a good answer.
+    #[test]
+    fn the_subject_decoder_survives_truncation() {
+        let text = r#"{"number":1,"headRefOid":"abc","title":"é","body":null,"state":"OPEN"}"#;
+        for end in 0..text.len() {
+            if text.is_char_boundary(end) {
+                let _ = decode_subject(&text[..end]);
+            }
+        }
+        assert!(decode_subject(text).is_ok());
     }
 
     // Invariant: a comment from someone who is not OWNER, MEMBER or COLLABORATOR

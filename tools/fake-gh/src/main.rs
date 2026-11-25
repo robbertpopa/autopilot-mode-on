@@ -10,7 +10,9 @@
 //! A pull request may also carry the fields real `gh` reports: `state` (default
 //! `OPEN`), `mergeable` (`MERGEABLE`, `CONFLICTING` or `UNKNOWN`),
 //! `reviewDecision`, and `threads`, each `{isResolved, comments: [{author,
-//! authorAssociation, body}]}`. Check runs are passed through as written, so a
+//! authorAssociation, body}]}`. A pull request may carry `title` and `diff`
+//! (what `pr diff` prints), and `headAfterDiff`, the commit its branch moves to
+//! once the diff has been read. Check runs are passed through as written, so a
 //! run may hold `output.text` as its log tail. Another person pushing to the
 //! branch is a change to `heads` in the state file; `pr view` reads it live.
 
@@ -69,7 +71,7 @@ fn pr_view(state: &Value, pr: &Value) -> Value {
     let head = state["heads"].get(branch).unwrap_or(&pr["headRefOid"]);
     json!({
         "number": pr["number"], "url": pr["url"], "headRefOid": head,
-        "isDraft": pr["isDraft"], "body": pr["body"],
+        "isDraft": pr["isDraft"], "body": pr["body"], "title": pr["title"],
         "headRefName": pr["branch"], "baseRefName": pr["base"],
         "state": pr.get("state").unwrap_or(&json!("OPEN")),
         "mergeable": pr.get("mergeable").unwrap_or(&json!("MERGEABLE")),
@@ -93,6 +95,25 @@ fn pr_view_command(state: &Value, args: &[String], out: &mut impl Write) -> Resu
         None => view,
     };
     writeln!(out, "{shown}")?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Prints the pull request's `diff` text. A pull request that carries
+/// `headAfterDiff` moves its branch to that commit once the diff has been
+/// read, the way another person pushing during a review would.
+fn pr_diff_command(
+    state: &mut Value,
+    args: &[String],
+    out: &mut impl Write,
+) -> Result<ExitCode, Fail> {
+    let Some(pr) = pr_by_selector(state, args.get(2).ok_or("pull request")?)? else {
+        eprintln!("no pull request found");
+        return Ok(ExitCode::from(1));
+    };
+    write!(out, "{}", pr["diff"].as_str().unwrap_or_default())?;
+    if let (Some(branch), Some(next)) = (pr["branch"].as_str(), pr.get("headAfterDiff")) {
+        state["heads"][branch] = next.clone();
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -200,6 +221,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         (Some("pr"), Some("view")) => pr_view_command(&state, &args, &mut out)?,
+        (Some("pr"), Some("diff")) => pr_diff_command(&mut state, &args, &mut out)?,
         (Some("api"), Some("graphql")) => graphql_command(&state, &args, &mut out)?,
         (Some("api"), Some(route)) if route.ends_with("/logs") => {
             log_command(&state, route, &mut out)?

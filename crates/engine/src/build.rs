@@ -30,7 +30,7 @@ use autopilot_store::{SqliteStore, Store};
 
 use crate::{DATABASE, Error, control, event, lock_run, plan, timestamp};
 
-mod review;
+pub(crate) mod review;
 
 const BUILD: Option<Step> = Some(Step::BuildCheck);
 pub(crate) const STUCK_REQUEST: &str = "build_check-stuck";
