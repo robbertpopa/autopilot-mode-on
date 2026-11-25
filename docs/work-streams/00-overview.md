@@ -44,7 +44,7 @@ The ticket flow, from the command line and from the window: **Understand, Clarif
 1. **Real GitHub test.** May the first real draft pull request be opened on the throwaway repository? (Blocks the proof in stream 1.) Open.
 2. **Computer use scope.** Operate a disposable VM or container only, or also the real desktop? The recommendation is the first only. (Blocks stream 3 past its spike document, S10.) Open.
 3. **Which open-source agents to adopt** besides Claude and Codex (OpenCode, others). The official `anthropics/claude-code` repository publishes no agent source and its licence is proprietary; leaked copies must not be used. (Stream 2.) Open.
-4. **Subscription mode** inside the sandbox stays refused unless the owner accepts the exfiltration path described in the S6 document or stream 3 finds a way to close it. Open.
+4. **Subscription mode** inside the sandbox stays refused unless the owner accepts the exfiltration path described in the S6 document or stream 3 finds a way to close it. Open. **The owner wants everything to run on the subscription without API tokens (2026-11-25, to be done later).** The plan is task S-h in [stream 3](03-computer-use-and-sandbox.md), with A9 (plan limits) first in stream 2. It needs three answers: launcher, disposable machine or unprotected; a test login; permission to read the provider's terms on unattended use.
 5. **A Mac** was needed to validate a macOS sandbox. Answered: the owner has one, and the macOS probe passes on it (PR 161, S6 document, last section).
 
 Other open owner items, kept here so they are not lost:
