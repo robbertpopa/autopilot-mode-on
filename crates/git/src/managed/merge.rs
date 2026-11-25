@@ -47,11 +47,15 @@ impl WorktreeManager {
             return Err(Error::WorktreeConflict(path));
         }
 
-        let merged = self.repository.git(
+        // Git asks for a committer even when the merge is left uncommitted, and
+        // a machine without a global identity (a CI runner) would refuse it.
+        let merged = self.repository.git_full(
             &path,
             "merge",
             ["--no-ff", "--no-commit", "--no-edit", base.as_str()],
             CHECKOUT_LIMITS,
+            None,
+            &identity(),
         );
         let unmerged = self.repository.git(
             &path,
@@ -90,10 +94,6 @@ impl WorktreeManager {
         if merging.is_err() {
             return Ok(());
         }
-        let environment: Vec<(OsString, OsString)> = super::commit::IDENTITY
-            .iter()
-            .map(|(name, value)| ((*name).into(), (*value).into()))
-            .collect();
         self.repository.git_full(
             path,
             "commit",
@@ -106,8 +106,15 @@ impl WorktreeManager {
             ],
             CHECKOUT_LIMITS,
             None,
-            &environment,
+            &identity(),
         )?;
         Ok(())
     }
+}
+
+fn identity() -> Vec<(OsString, OsString)> {
+    super::commit::IDENTITY
+        .iter()
+        .map(|(name, value)| ((*name).into(), (*value).into()))
+        .collect()
 }
