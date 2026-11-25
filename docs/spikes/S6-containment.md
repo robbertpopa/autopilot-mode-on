@@ -178,3 +178,13 @@ End-to-end Build, CLI, API-key mode, Haiku, against a clone of `robbertpopa/auto
 
 Not covered: Intel Macs and other macOS versions; the window's Build button (same code path, not clicked); the draft pull request (not opened on purpose); a descendant that calls `setsid` and then clears its environment escapes the cleanup (macOS has no subreaper; the marker sweep is checked only by the test in CI); Git inside the sandbox stays off, as on Linux; subscription mode stays refused.
 
+
+## Live review run (L1), 2026-11-25
+
+One real Haiku ticket (`live-6`, "add `checked_abs(a: i32) -> Option<i32>`") in `D:\autopilot-live` on Windows with the WSL2 boundary (the isolation check passed every row first), API-key mode, the multi-reviewer review of PR 140 included. Understand, Clarify (recommended answers), Plan, approval, then `autopilot build --agent claude` with a profile whose build step had a $0.05 budget (so each paid call was capped at $0.05).
+
+- **Build:** one round. The agent edited `src/lib.rs` only (a doc-commented `checked_abs` that calls `i32::checked_abs`, plus four tests: positive, zero, negative, `i32::MIN`). It said it could not run the checks because its Bash tool was denied in the sandbox; the host ran them: build, fmt, clippy (pedantic), test, diff scan (1 file, +39 -1) and the 9 plan criteria all passed.
+- **Review:** three reviewers ran (defects, tests, swallowed errors). The fourth, the owner-rules reviewer, is skipped when the project gives no rules, and the sample project has none, so **the four-reviewer path did not run live**. The three reported nothing at 80% or above: `3 reviewers read the change and found nothing at 80% or above`.
+- **Cost:** reviewers $0.0037 (three calls of $0.0012 to $0.0013); the agent's build call $0.0028; the whole ticket $0.0104 billed (Understand $0.0021, Plan $0.0018).
+- **Were the findings useful?** There were none, so this run cannot say. The change was small and correct, and the reviewers did not invent a finding, which is the only thing it shows (no noise on a clean change). Whether they catch a real defect, and what they cost on a bigger diff, is not measured: that needs a ticket with a planted defect and a rules file, and is not done.
+- Not covered: a diff large enough to be cut at the reviewers' size limit, and the rules reviewer.
