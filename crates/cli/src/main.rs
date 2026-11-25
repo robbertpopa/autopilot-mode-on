@@ -245,6 +245,21 @@ enum PrAction {
         /// Absolute path to gh. Defaults to a PATH search.
         #[arg(long)]
         gh_path: Option<PathBuf>,
+        /// Ask for approval to post the findings as one comment. Nothing is
+        /// posted until the request is approved and `pr comment` is run.
+        #[arg(long)]
+        comment: bool,
+    },
+    /// Post the comment that `pr review --comment` asked about, once the
+    /// request is approved and the pull request is still at the reviewed commit.
+    Comment {
+        request: String,
+        /// The GitHub repository, as owner/name.
+        #[arg(long)]
+        github: String,
+        /// Absolute path to gh. Defaults to a PATH search.
+        #[arg(long)]
+        gh_path: Option<PathBuf>,
     },
 }
 
@@ -480,6 +495,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                     profile,
                     repo,
                     gh_path,
+                    comment,
                 },
         } => {
             let request = PrReviewRequest {
@@ -489,10 +505,25 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                 profile: profile.as_deref(),
                 repo: repo.as_deref(),
                 gh_path,
+                comment,
             };
             let result = pr_review_command(&cli.data_dir, &request)?;
             serde_json::to_writer(&mut out, &result)?;
             writeln!(out)?;
+        }
+        Command::Pr {
+            action:
+                PrAction::Comment {
+                    request,
+                    github,
+                    gh_path,
+                },
+        } => {
+            let repo = autopilot_tracker::Repo::parse(&github)?;
+            let gh = pr_gh(&repo, gh_path)?;
+            let id = RequestId::from(request);
+            autopilot_engine::post_pr_comment(&cli.data_dir, &gh, &repo, &id)?;
+            writeln!(out, "{}", serde_json::json!({"posted": true}))?;
         }
         Command::Know { workspace } => {
             let path = workspace.to_string_lossy().into_owned();
@@ -741,6 +772,30 @@ struct PrReviewRequest<'a> {
     profile: Option<&'a Path>,
     repo: Option<&'a Path>,
     gh_path: Option<PathBuf>,
+    comment: bool,
+}
+fn pr_gh(
+    repo: &autopilot_tracker::Repo,
+    gh_path: Option<PathBuf>,
+) -> Result<autopilot_tracker::Gh, Box<dyn Error>> {
+    let exe = env::current_exe()?;
+    let guardian = exe.with_file_name(format!(
+        "autopilot-process-guardian{}",
+        env::consts::EXE_SUFFIX
+    ));
+    let program = match gh_path {
+        Some(path) => path,
+        None => {
+            autopilot_engine::resolve_executable("gh", &env::var_os("PATH").unwrap_or_default())
+                .ok_or("gh was not found on PATH; pass --gh-path")?
+        }
+    };
+    Ok(autopilot_tracker::Gh::new(
+        program,
+        guardian,
+        repo.clone(),
+        env::vars_os(),
+    )?)
 }
 
 fn pr_review_command(
@@ -753,14 +808,7 @@ fn pr_review_command(
         "autopilot-process-guardian{}",
         env::consts::EXE_SUFFIX
     ));
-    let program = match &request.gh_path {
-        Some(path) => path.clone(),
-        None => {
-            autopilot_engine::resolve_executable("gh", &env::var_os("PATH").unwrap_or_default())
-                .ok_or("gh was not found on PATH; pass --gh-path")?
-        }
-    };
-    let gh = autopilot_tracker::Gh::new(program, guardian.clone(), repo, env::vars_os())?;
+    let gh = pr_gh(&repo, request.gh_path.clone())?;
     let rules = request
         .repo
         .and_then(|path| autopilot_engine::prompt_block(data_dir, Some(&path.to_string_lossy())));
@@ -793,6 +841,13 @@ fn pr_review_command(
             autopilot_engine::review_pull_request(&agent, &gh, request.number, block)?
         }
     };
+    let comment_request = if request.comment {
+        Some(autopilot_engine::prepare_pr_comment(
+            data_dir, &repo, &review,
+        )?)
+    } else {
+        None
+    };
     let findings: Vec<serde_json::Value> = review
         .findings
         .iter()
@@ -810,6 +865,7 @@ fn pr_review_command(
         "cost_microusd": review.cost.as_microusd(),
         "diff_left_out": review.diff_left_out,
         "posted": false,
+        "comment_request": comment_request,
     }))
 }
 
@@ -1177,7 +1233,11 @@ fn run_inbox(
             };
             check_reply(&waiting, &reply)?;
             inbox.write_answer(&id, &reply)?;
-            let applied = autopilot_engine::sync_inbox(data_dir, &waiting.ticket)?;
+            // A comment on a pull request has no ticket history to sync.
+            let applied = match autopilot_engine::sync_inbox(data_dir, &waiting.ticket) {
+                Err(autopilot_engine::Error::UnknownTicket) => Vec::new(),
+                other => other?,
+            };
             serde_json::to_writer(&mut *out, &serde_json::json!({"applied": applied}))?;
             writeln!(out)?;
         }

@@ -41,6 +41,7 @@ mod overlap;
 mod pipelines;
 mod places;
 mod plan;
+mod pr_comment;
 mod pr_review;
 mod pr_rules;
 mod pr_watch;
@@ -97,6 +98,7 @@ pub use pipelines::{
 };
 pub use places::{Places, gh_for, places, worktree_of};
 pub use plan::{approved_plan, plan_ticket, run_plan};
+pub use pr_comment::{post_pr_comment, prepare_pr_comment};
 pub use pr_review::{PrReview, review_pull_request};
 pub use pr_rules::{
     ChecksState, MergeState, PrAction, PrState, PrSummary, ReviewDecision, next_action,
