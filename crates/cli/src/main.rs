@@ -967,9 +967,12 @@ fn paid_budget(
     profile: Option<&Path>,
     explicit: Option<&str>,
 ) -> Result<String, Box<dyn Error>> {
-    let limits = match profile {
-        Some(path) => autopilot_engine::load_profile(path)?.spend,
-        None => autopilot_profile::SpendLimits::default(),
+    let (limits, daily) = match profile {
+        Some(path) => {
+            let profile = autopilot_engine::load_profile(path)?;
+            (profile.spend, profile.budgets.daily_microusd)
+        }
+        None => (autopilot_profile::SpendLimits::default(), None),
     };
     let explicit = match explicit {
         Some(text) => Some(autopilot_core::Money::from_microusd(
@@ -978,7 +981,7 @@ fn paid_budget(
         )),
         None => None,
     };
-    let micro = autopilot_engine::paid_call_cap(data_dir, &limits, explicit)?.as_microusd();
+    let micro = autopilot_engine::paid_call_cap(data_dir, &limits, daily, explicit)?.as_microusd();
     Ok(format!("{}.{:06}", micro / 1_000_000, micro % 1_000_000))
 }
 
@@ -1002,9 +1005,13 @@ fn sandbox_config(
             "build_check must use auth = \"api\", because a subscription sign-in cannot be kept out of the agent's reach",
         ));
     }
-    let micro =
-        autopilot_engine::paid_call_cap(data_dir, &profile.spend, settings.limits.budget_microusd)?
-            .as_microusd();
+    let micro = autopilot_engine::paid_call_cap(
+        data_dir,
+        &profile.spend,
+        profile.budgets.daily_microusd,
+        settings.limits.budget_microusd,
+    )?
+    .as_microusd();
     Ok(ClaudeConfig {
         auth: Auth::Api,
         model: settings.model.clone().unwrap_or_else(|| "haiku".to_owned()),

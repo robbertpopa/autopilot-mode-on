@@ -13,6 +13,7 @@ use crate::theme;
 pub(crate) struct SpendEdit {
     total: Option<String>,
     call: Option<String>,
+    daily: Option<String>,
     raise: Option<String>,
     problem: Option<String>,
 }
@@ -42,6 +43,7 @@ impl App {
         let field = match field {
             SpendField::Total(_) => SpendField::Total(micro),
             SpendField::PerCall(_) => SpendField::PerCall(micro),
+            SpendField::Daily(_) | SpendField::NoDaily => SpendField::Daily(micro),
         };
         match edit_spend(&self.options.profile, field) {
             Ok(profile) => {
@@ -56,7 +58,24 @@ impl App {
         }
     }
 
-    /// Settings, Cost: the two limits and what has been spent against the total.
+    /// An empty box removes the daily limit; anything else must be dollars.
+    fn save_daily(&mut self, text: &str) -> bool {
+        if !text.trim().is_empty() {
+            return self.save_spend(SpendField::Daily(0), text.trim());
+        }
+        match edit_spend(&self.options.profile, SpendField::NoDaily) {
+            Ok(profile) => {
+                self.profile = Ok(profile);
+                true
+            }
+            Err(error) => {
+                self.spend_edit.problem = Some(error.to_string());
+                false
+            }
+        }
+    }
+
+    /// Settings, Cost: the limits and what has been spent against the total.
     pub(crate) fn spend_card(&mut self, ui: &mut egui::Ui) {
         let limits = self.saved_limits();
         let spent = autopilot_engine::spent_since(&self.options.data_dir, 0)
@@ -72,6 +91,16 @@ impl App {
             .call
             .clone()
             .unwrap_or_else(|| plain(limits.call_microusd.get()));
+        let saved_daily = self
+            .profile
+            .as_ref()
+            .ok()
+            .and_then(|profile| profile.budgets.daily_microusd);
+        let mut daily = self
+            .spend_edit
+            .daily
+            .clone()
+            .unwrap_or_else(|| saved_daily.map_or_else(String::new, |n| plain(n.get())));
         let mut save = false;
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -90,8 +119,16 @@ impl App {
                 ui.add(egui::TextEdit::singleline(&mut call).desired_width(80.0));
                 save = ui.add(theme::primary("Save")).clicked();
             });
+            ui.horizontal(|ui| {
+                ui.label("Most in one day, dollars");
+                ui.add(
+                    egui::TextEdit::singleline(&mut daily)
+                        .desired_width(80.0)
+                        .hint_text("no limit"),
+                );
+            });
             ui.label(theme::muted(
-                "A step that sets its own budget keeps it. Only this page changes these limits.",
+                "A step that sets its own budget keeps it. Only this page changes these limits.                  A day counts from midnight UTC; leave the daily box empty for no daily limit.",
             ));
             if let Some(problem) = &self.spend_edit.problem {
                 ui.label(RichText::new(problem).color(theme::RED()));
@@ -100,13 +137,16 @@ impl App {
         if save {
             let a = self.save_spend(SpendField::Total(0), &total);
             let b = self.save_spend(SpendField::PerCall(0), &call);
-            if a && b {
+            let c = self.save_daily(&daily);
+            if a && b && c {
                 self.spend_edit.total = None;
                 self.spend_edit.call = None;
+                self.spend_edit.daily = None;
             }
         } else {
             self.spend_edit.total = Some(total);
             self.spend_edit.call = Some(call);
+            self.spend_edit.daily = Some(daily);
         }
     }
 
@@ -277,6 +317,46 @@ total_microusd = 100000
             })
             .collect();
         assert!(drawn.contains("Raise the cap and retry"), "{drawn}");
+    }
+
+    // Invariant: the daily limit saved in Settings stops a paid step once today's
+    // spend reaches it, with words that do not offer to raise the total, and an
+    // empty daily box removes it. Breaks if `claude_config` ignores the daily
+    // limit or the card writes it anywhere but `[budgets]`.
+    #[test]
+    fn the_daily_limit_from_settings_stops_a_paid_step_today() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, options) = window(directory.path());
+        assert!(app.save_daily("0.04"));
+        std::fs::create_dir_all(&options.data_dir).unwrap();
+        let mut store = SqliteStore::open(options.data_dir.join("events.sqlite3")).unwrap();
+        let at_ms = autopilot_engine::start_of_today_ms() + 1;
+        let events = [
+            NewEvent {
+                at_ms,
+                step: None,
+                kind: Event::TicketCreated { title: "t".into() },
+            },
+            NewEvent {
+                at_ms,
+                step: Some(Step::Understand),
+                kind: Event::CostTick {
+                    amount: Money::from_microusd(40_000),
+                    estimated: false,
+                },
+            },
+        ];
+        store.append(&TicketId::from("t"), 0, &events).unwrap();
+        let refused = crate::backend::claude_config(&options, Step::Understand, None).unwrap_err();
+        assert!(
+            refused.starts_with(autopilot_engine::DAY_REACHED),
+            "{refused}"
+        );
+        assert!(!autopilot_engine::is_cap_refusal(&refused));
+
+        assert!(app.save_daily(""));
+        assert!(crate::backend::claude_config(&options, Step::Understand, None).is_ok());
+        assert!(!app.save_daily("not money"));
     }
 
     #[test]

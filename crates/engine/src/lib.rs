@@ -129,10 +129,10 @@ pub use tuning::{
     undo_tuning,
 };
 pub use view::{
-    AttachmentView, Badge, CAP_REACHED, CheckFinding, CheckRow, CostLine, Fact, LogLine, RoundView,
-    SpendError, StepView, TicketView, TimelineLine, dollars, is_cap_refusal, load_ticket,
-    micro_from_dollars, name_custom_steps, paid_call_cap, spent_since, step_name, ticket_view,
-    tickets,
+    AttachmentView, Badge, CAP_REACHED, CheckFinding, CheckRow, CostLine, DAY_REACHED, Fact,
+    LogLine, RoundView, SpendError, StepView, TicketView, TimelineLine, dollars, is_cap_refusal,
+    load_ticket, micro_from_dollars, name_custom_steps, paid_call_cap, paid_call_cap_since,
+    spent_since, start_of_today_ms, step_name, ticket_view, tickets,
 };
 pub use workspace::{
     canonical as canonical_folder, of as workspace_of, record as record_workspace,

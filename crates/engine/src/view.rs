@@ -743,9 +743,28 @@ pub const CAP_REACHED: &str = "The spending cap is reached";
 pub enum SpendError {
     #[error("{CAP_REACHED}: {} spent of {} allowed in all. Raise the cap in Settings, Cost, to go on.", dollars(*.spent), dollars(*.cap))]
     CapReached { spent: Money, cap: Money },
+    #[error("{DAY_REACHED}: {} spent today of {} allowed a day. Raise the daily limit in Settings, Cost, or wait for tomorrow.", dollars(*.spent), dollars(*.cap))]
+    DayReached { spent: Money, cap: Money },
     #[error("cannot tell what was spent, so no paid call starts: {0}")]
     Unreadable(#[from] Error),
 }
+
+/// The words a refusal for the daily limit starts with.
+pub const DAY_REACHED: &str = "The daily spending limit is reached";
+
+/// The start of the current day in milliseconds, the same day the Cost screen
+/// counts as today.
+#[must_use]
+pub fn start_of_today_ms() -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        });
+    now - now % DAY_MS
+}
+
+const DAY_MS: u64 = 86_400_000;
 
 /// Whether `text` is the refusal of [`SpendError::CapReached`].
 #[must_use]
@@ -756,22 +775,49 @@ pub fn is_cap_refusal(text: &str) -> bool {
 /// The most the next paid call may cost: the step's budget (or the profile's
 /// default per call), cut down to what is left of the total. Refuses when
 /// nothing is left, so a call never starts that could pass the cap. Counts
-/// every exact (API) cost in the data directory.
+/// every exact (API) cost in the data directory. `daily` is the overall daily
+/// limit (`budgets.daily_microusd`), counted from the start of today.
 ///
 /// # Errors
-/// Returns [`SpendError::CapReached`] when the total is spent, and
+/// Returns [`SpendError::CapReached`] when the total is spent,
+/// [`SpendError::DayReached`] when today's limit is, and
 /// [`SpendError::Unreadable`] when a history cannot be read (a call that
 /// cannot be counted is not allowed).
 pub fn paid_call_cap(
     directory: &Path,
     limits: &autopilot_profile::SpendLimits,
+    daily: Option<std::num::NonZeroU64>,
     step_budget: Option<Money>,
+) -> Result<Money, SpendError> {
+    paid_call_cap_since(directory, limits, daily, step_budget, start_of_today_ms())
+}
+
+/// [`paid_call_cap`] with the start of the day given, so a test does not depend
+/// on the clock.
+///
+/// # Errors
+/// The same as [`paid_call_cap`].
+pub fn paid_call_cap_since(
+    directory: &Path,
+    limits: &autopilot_profile::SpendLimits,
+    daily: Option<std::num::NonZeroU64>,
+    step_budget: Option<Money>,
+    day_start_ms: u64,
 ) -> Result<Money, SpendError> {
     let (spent, _) = spent_since(directory, 0)?;
     let cap = Money::from_microusd(limits.total_microusd.get());
-    let left = cap.as_microusd().saturating_sub(spent.as_microusd());
+    let mut left = cap.as_microusd().saturating_sub(spent.as_microusd());
     if left == 0 {
         return Err(SpendError::CapReached { spent, cap });
+    }
+    if let Some(daily) = daily {
+        let (today, _) = spent_since(directory, day_start_ms)?;
+        let cap = Money::from_microusd(daily.get());
+        let day_left = cap.as_microusd().saturating_sub(today.as_microusd());
+        if day_left == 0 {
+            return Err(SpendError::DayReached { spent: today, cap });
+        }
+        left = left.min(day_left);
     }
     let call = limits.call_cap(step_budget).as_microusd();
     Ok(Money::from_microusd(call.min(left)))
