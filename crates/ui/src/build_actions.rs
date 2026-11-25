@@ -128,6 +128,15 @@ pub(crate) fn probe_sandbox(
         .map_err(|error| error.to_string())
 }
 
+/// The probe Build uses: shared by Builds that start together, so three
+/// tickets do not each spend five seconds on the same check. The Sandbox page
+/// calls `probe_sandbox` itself and always runs it fresh.
+fn shared_boundary(options: &Options) -> Result<autopilot_agent_claude::Validated, String> {
+    static PROBE: crate::shared_probe::SharedProbe<autopilot_agent_claude::Validated> =
+        crate::shared_probe::SharedProbe::new();
+    PROBE.get(|| probe_sandbox(options))
+}
+
 /// Why the Build cannot be reset now, in words for a greyed button; `None`
 /// when it can. The engine checks the same rules again before it removes
 /// anything.
@@ -198,7 +207,7 @@ fn claude_build_agent(
             autopilot_agent_claude::API_KEY_SOURCE
         ));
     }
-    let boundary = probe_sandbox(options).map_err(|error| {
+    let boundary = shared_boundary(options).map_err(|error| {
         let (place, setup) = if cfg!(target_os = "macos") {
             ("macOS", "tools/macos/setup.sh")
         } else {
