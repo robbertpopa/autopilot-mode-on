@@ -268,6 +268,13 @@ fn a_distro_missing_a_tool_is_refused_by_name() {
         message.contains("bwrap") && message.contains("rg"),
         "{message}"
     );
+    // The window lists the tools one by one; it must get them as data.
+    match crate::refusal::Refusal::of(&error) {
+        Some(crate::refusal::Refusal::Missing { tools, .. }) => {
+            assert_eq!(tools.as_slice(), ["bwrap", "rg"]);
+        }
+        other => panic!("not a structured refusal: {other:?}"),
+    }
     assert!(
         parse_discovery(
             "home=/h\n",
