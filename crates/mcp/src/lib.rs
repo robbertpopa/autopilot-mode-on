@@ -5,7 +5,8 @@
 //! The server refuses to start without at least one read root and one write
 //! root, and refuses every file path that resolves outside them. Links are
 //! followed only to see where they lead, and a path that leads out is refused.
-//! Tools: `list_tickets`, `ticket_status`, `read_file`, `write_file`.
+//! Tools: `list_tickets`, `ticket_status`, `ticket_history`, `waiting_requests`,
+//! `read_file`, `write_file`.
 //! Nothing here starts an agent or spends money.
 
 mod scope;
@@ -16,6 +17,7 @@ use std::{
 };
 
 use autopilot_core::TicketId;
+use autopilot_pipeline::inbox::{Inbox, RequestBody};
 use serde_json::{Value, json};
 
 pub use scope::Scope;
@@ -25,6 +27,10 @@ const PROTOCOL: &str = "2024-11-05";
 pub const MAX_READ_BYTES: u64 = 256 * 1024;
 /// The most a write accepts.
 pub const MAX_WRITE_BYTES: usize = 1024 * 1024;
+/// A history call returns the latest lines only.
+const HISTORY_LINES: usize = 100;
+/// A line from a ticket or an agent is data of unknown size.
+const LINE_CHARS: usize = 500;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -135,11 +141,62 @@ impl Server {
                 }
                 Ok(lines.join("\n"))
             }
+            "ticket_history" => {
+                let id = TicketId::from(text("ticket")?.to_owned());
+                let view = autopilot_engine::load_ticket(&self.data, &id)
+                    .map_err(|error| Error::Refused(error.to_string()))?;
+                let skip = view.timeline.len().saturating_sub(HISTORY_LINES);
+                Ok(view
+                    .timeline
+                    .iter()
+                    .skip(skip)
+                    .map(|line| format!("{} {}", line.at_ms, bounded(&line.text)))
+                    .collect::<Vec<_>>()
+                    .join(
+                        "
+",
+                    ))
+            }
+            "waiting_requests" => {
+                let requests = Inbox::in_data_dir(&self.data)
+                    .requests()
+                    .map_err(|error| Error::Refused(error.to_string()))?;
+                Ok(requests
+                    .iter()
+                    .map(|request| match &request.body {
+                        RequestBody::Question { questions } => format!(
+                            "{} {} question ({} to answer)",
+                            request.id.as_str(),
+                            request.ticket.as_str(),
+                            questions.len()
+                        ),
+                        RequestBody::Approval { action, forced } => format!(
+                            "{} {} approval{}: {}",
+                            request.id.as_str(),
+                            request.ticket.as_str(),
+                            if *forced { " (forced, owner only)" } else { "" },
+                            bounded(action)
+                        ),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(
+                        "
+",
+                    ))
+            }
             "read_file" => self.scope.read(text("path")?),
             "write_file" => self.scope.write(text("path")?, text("text")?),
             other => Err(Error::Refused(format!("no tool {other}"))),
         }
     }
+}
+
+/// One line, control characters removed, cut to a fixed length.
+fn bounded(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(LINE_CHARS)
+        .collect()
 }
 
 fn failure(id: &Value, code: i64, message: &str) -> Value {
@@ -153,6 +210,10 @@ fn tools() -> Value {
          "inputSchema": object(&json!({}), &[])},
         {"name": "ticket_status", "description": "Show a ticket's title and where each step stands.",
          "inputSchema": object(&json!({"ticket": {"type": "string"}}), &["ticket"])},
+        {"name": "ticket_history", "description": "Show the latest timeline lines of a ticket.",
+         "inputSchema": object(&json!({"ticket": {"type": "string"}}), &["ticket"])},
+        {"name": "waiting_requests", "description": "List what is waiting for the owner: questions and approvals.",
+         "inputSchema": object(&json!({}), &[])},
         {"name": "read_file", "description": "Read a text file inside a read root.",
          "inputSchema": object(&json!({"path": {"type": "string"}}), &["path"])},
         {"name": "write_file", "description": "Write a text file inside a write root. The folder must exist.",
@@ -279,7 +340,7 @@ mod tests {
         let list = server
             .handle(r#"{"jsonrpc":"2.0","id":8,"method":"tools/list"}"#)
             .unwrap();
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 4);
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 6);
         assert!(
             server
                 .handle(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
@@ -289,5 +350,72 @@ mod tests {
             .handle(r#"{"jsonrpc":"2.0","id":9,"method":"nope"}"#)
             .unwrap();
         assert_eq!(unknown["error"]["code"], -32601);
+    }
+
+    // Invariant: history returns the ticket's timeline with control characters
+    // and over-long text neutralised, because ticket text is data from outside.
+    // A change that returned the raw text would let a newline fake a second
+    // line to the agent that reads it; the roots tests never touch this tool.
+    #[test]
+    fn history_is_bounded_and_one_line_per_event() {
+        use autopilot_core::{Event, NewEvent};
+        use autopilot_store::{SqliteStore, Store};
+        let dir = tempfile::tempdir().unwrap();
+        let ticket = TicketId::from("t-1");
+        let title = format!(
+            "a
+forged line {}",
+            "x".repeat(2000)
+        );
+        SqliteStore::open(dir.path().join("events.sqlite3"))
+            .unwrap()
+            .append(
+                &ticket,
+                0,
+                &[NewEvent {
+                    at_ms: 5,
+                    step: None,
+                    kind: Event::TicketCreated { title },
+                }],
+            )
+            .unwrap();
+        let server = server(dir.path(), dir.path());
+        let (error, text) = call(&server, "ticket_history", &json!({"ticket": "t-1"}));
+        assert!(!error, "{text}");
+        assert_eq!(text.lines().count(), 1, "{text}");
+        assert!(text.starts_with("5 Ticket created: a forged line"));
+        assert!(text.chars().count() < 600);
+        let (error, _) = call(&server, "ticket_history", &json!({"ticket": "nope"}));
+        assert!(error);
+    }
+
+    // Invariant: a waiting forced approval is shown as owner only, so the
+    // client knows it cannot answer it. Dropping the flag from the listing
+    // would hide that from the agent; no other test reads the listing.
+    #[test]
+    fn waiting_requests_name_the_kind_and_mark_forced_approvals() {
+        use autopilot_core::RequestId;
+        use autopilot_pipeline::inbox::Request;
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::in_data_dir(dir.path());
+        inbox
+            .write_request(&Request {
+                id: RequestId::from("r1"),
+                ticket: TicketId::from("t-1"),
+                body: RequestBody::Approval {
+                    action: "push
+the commit"
+                        .into(),
+                    forced: true,
+                },
+            })
+            .unwrap();
+        let server = server(dir.path(), dir.path());
+        let (error, text) = call(&server, "waiting_requests", &json!({}));
+        assert!(!error);
+        assert_eq!(
+            text,
+            "r1 t-1 approval (forced, owner only): push the commit"
+        );
     }
 }
