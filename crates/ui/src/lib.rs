@@ -2745,6 +2745,63 @@ effort = \"high\"
         assert!(text.contains("no copy of the project"), "{text:?}");
     }
 
+    // Invariant: the window offers to reset a Build only when it has run, no
+    // step holds the ticket and no pull request was asked for, because a reset
+    // deletes the copy of the project. It fails if the rule is loosened so that
+    // a Build waiting for the owner, an unbuilt ticket or an asked-for pull
+    // request can be reset.
+    #[test]
+    fn a_build_can_be_reset_only_when_it_has_run_and_nothing_depends_on_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        demo::seed_build_states(&options.data_dir, now_ms()).unwrap();
+        let snapshot = read(&options);
+        let refusal = |id: &str| {
+            let view = snapshot
+                .tickets
+                .iter()
+                .find(|view| view.id.as_str() == id)
+                .unwrap_or_else(|| panic!("no demo ticket {id}"));
+            build_actions::reset_refusal(view)
+        };
+        assert_eq!(refusal("demo-passed"), None);
+        assert!(refusal("demo-approved").unwrap().contains("not run"));
+        assert!(refusal("demo-asked").unwrap().contains("waiting for you"));
+        assert!(refusal("demo-opened").unwrap().contains("pull request"));
+        assert!(refusal("demo-approved-pr").is_some());
+        assert!(
+            refusal("demo-stopped")
+                .unwrap()
+                .contains("running or waiting")
+        );
+    }
+
+    // Invariant: a terminal is started only in a ticket's own copy of the
+    // project. Without one the action says why and starts nothing; it fails if
+    // the action falls back to another folder (the data folder, the home
+    // folder) when the copy is missing.
+    #[test]
+    fn a_terminal_is_not_opened_for_a_ticket_without_a_copy_of_the_project() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        let error = backend::perform(
+            &options,
+            &backend::Action::OpenTerminal(autopilot_core::TicketId::from("nothing")),
+        )
+        .unwrap_err();
+        assert_eq!(error, backend::NO_WORKTREE);
+    }
+
     // Invariant: a notice describes the ticket that was open when it showed. A
     // notice kept for the whole window would tell the owner that ticket B did
     // what ticket A did. It fails if `notice` is shown again after the owner

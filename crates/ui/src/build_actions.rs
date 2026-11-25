@@ -128,6 +128,52 @@ pub(crate) fn probe_sandbox(
         .map_err(|error| error.to_string())
 }
 
+/// Why the Build cannot be reset now, in words for a greyed button; `None`
+/// when it can. The engine checks the same rules again before it removes
+/// anything.
+pub(crate) fn reset_refusal(view: &autopilot_engine::TicketView) -> Option<&'static str> {
+    use autopilot_pipeline::StepState;
+    let state = |step| view.step(step).map(|card| &card.state);
+    if view.steps.iter().any(|card| card.state.is_active()) {
+        return Some("a step is running or waiting for you: stop it or answer it first");
+    }
+    if matches!(state(Step::BuildCheck), None | Some(StepState::Idle)) {
+        return Some("the build has not run yet");
+    }
+    if !matches!(
+        state(Step::PullRequest),
+        None | Some(StepState::Idle | StepState::Skipped(_))
+    ) {
+        return Some("a pull request was already asked for from this build");
+    }
+    None
+}
+
+/// Remove the Build's copy of the project and its branch, then put the step
+/// back. The files in the copy are gone for good: the window asks first.
+///
+/// # Errors
+/// Returns the reason in plain words: no project folder, a step running, a
+/// pull request already asked for, or Git refusing the removal.
+pub(crate) fn reset_build(options: &Options, ticket: &TicketId) -> Result<String, String> {
+    let repository = ticket_folder(options, ticket).ok_or_else(|| {
+        "The project folder this ticket was started in is gone, so its copy cannot be removed          safely."
+            .to_owned()
+    })?;
+    let setup = autopilot_engine::ResetSetup {
+        repository: &repository,
+        worktrees: &worktrees(options)?,
+        git: PathBuf::from("git"),
+        guardian: guardian(),
+    };
+    autopilot_engine::reset_build(&options.data_dir, ticket, &setup)
+        .map(|_| {
+            "Build reset: its copy of the project and its branch were removed. Build starts again from the base branch."
+                .to_owned()
+        })
+        .map_err(|error| error.to_string())
+}
+
 /// The real agent, inside the Linux boundary. Every way this can be refused has
 /// its own sentence, because the owner reads it where they pressed the button.
 fn claude_build_agent(

@@ -184,6 +184,8 @@ pub struct App {
     pub(crate) sandbox: crate::sandbox::Probe,
     /// The ticket the owner asked to delete and has not yet confirmed.
     pub(crate) confirm_delete: Option<TicketId>,
+    /// The ticket whose Build the owner asked to reset and has not yet confirmed.
+    pub(crate) confirm_reset: Option<TicketId>,
     /// Whether the sidebar lists the archived tickets.
     pub(crate) show_archived: bool,
     /// The API key is saved in the user environment (maybe after this start).
@@ -310,6 +312,7 @@ impl App {
             accounts: None,
             sandbox: crate::sandbox::Probe::Unknown,
             confirm_delete: None,
+            confirm_reset: None,
             show_archived: false,
             key_saved: false,
             git_identity: None,
@@ -856,6 +859,7 @@ impl App {
             });
         self.search_overlay(ctx);
         self.delete_dialog(ctx);
+        self.reset_dialog(ctx);
     }
 
     /// Files dropped on the window go to the open form, or to the ticket on

@@ -131,6 +131,12 @@ fn the_window_builds_an_approved_plan_and_refuses_a_pull_request_until_it_passes
         "{failed:?}"
     );
 
+    // A Build that waits for the owner is not reset from under them: the copy
+    // stays, because the reset would delete work the question is about.
+    let refused = perform(&options, &Action::ResetBuild(id.clone()));
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(autopilot_engine::worktree_of(&options.data_dir, &id).is_some());
+
     // No pull request can be asked for until the build has passed.
     let refused = perform(&options, &Action::PreparePullRequest(id));
     assert!(refused.is_err(), "{refused:?}");

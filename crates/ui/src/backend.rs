@@ -151,6 +151,12 @@ pub enum Action {
     OpenPullRequest(TicketId),
     /// Show the ticket's copy of the project in the file manager.
     OpenWorktree(TicketId),
+    /// Open a terminal window in the ticket's copy of the project.
+    OpenTerminal(TicketId),
+    /// Delete the Build's copy of the project and its branch and put the step
+    /// back, so the next Build starts from the base branch. The owner has
+    /// confirmed that the work in the copy is lost.
+    ResetBuild(TicketId),
     /// Make the design (static mockups) for a ticket that changes a screen,
     /// or skip the step when it needs none.
     MakeDesign(TicketId),
@@ -210,6 +216,8 @@ impl Action {
             | Self::PreparePullRequest(ticket)
             | Self::OpenPullRequest(ticket)
             | Self::OpenWorktree(ticket)
+            | Self::OpenTerminal(ticket)
+            | Self::ResetBuild(ticket)
             | Self::MakeDesign(ticket)
             | Self::RerunDesign(ticket)
             | Self::OpenDesign(ticket)
@@ -235,6 +243,7 @@ impl Action {
             Self::MakeBuild(_) => "Building: the agent works, the checks run, a reviewer reads it",
             Self::PreparePullRequest(_) => "Getting the pull request ready for your approval",
             Self::OpenPullRequest(_) => "Pushing the commit and opening the pull request",
+            Self::ResetBuild(_) => "Removing the build's copy of the project",
             Self::RunCustom { .. } => "Running your step",
             Self::RerunUnderstand(_) => "Reading the request again",
             Self::Explain { .. } => "Explaining in plain words",
@@ -663,6 +672,10 @@ pub(crate) fn ticket_folder(options: &Options, ticket: &TicketId) -> Option<Path
         .map(PathBuf::from)
         .filter(|path| path.is_dir())
 }
+
+/// Said by every action that needs the ticket's copy of the project.
+pub(crate) const NO_WORKTREE: &str =
+    "There is no copy of the project for this ticket yet: it is made when Build starts";
 
 const WORKSPACE_FILE: &str = "ui-workspace.txt";
 
@@ -1112,10 +1125,17 @@ pub fn perform(options: &Options, action: &Action) -> Result<String, String> {
         Action::OpenPullRequest(ticket) => crate::build_actions::open_pull_request(options, ticket),
         Action::OpenWorktree(ticket) => {
             let folder = autopilot_engine::worktree_of(directory, ticket)
-                .ok_or_else(|| "There is no copy of the project for this ticket yet: it is made when Build starts".to_owned())?;
+                .ok_or_else(|| NO_WORKTREE.to_owned())?;
             autopilot_update::open_installer(&folder)?;
             Ok("Opened the worktree".to_owned())
         }
+        Action::OpenTerminal(ticket) => {
+            let folder = autopilot_engine::worktree_of(directory, ticket)
+                .ok_or_else(|| NO_WORKTREE.to_owned())?;
+            autopilot_notify::open_terminal(&folder)?;
+            Ok("Opened a terminal in the worktree".to_owned())
+        }
+        Action::ResetBuild(ticket) => crate::build_actions::reset_build(options, ticket),
         Action::MakeDesign(ticket) => {
             orchestrated_first(options, ticket);
             let folder = design_folder(options, ticket);

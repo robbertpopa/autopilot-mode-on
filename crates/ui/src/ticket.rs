@@ -654,6 +654,21 @@ impl App {
         }
     }
 
+    /// The row that opens a terminal in the ticket's copy of the project.
+    fn open_terminal_row(&mut self, ui: &mut egui::Ui, view: &TicketView) {
+        let worktree = autopilot_engine::worktree_of(&self.options.data_dir, &view.id);
+        let row = egui::Button::new("Open in a terminal")
+            .frame(false)
+            .min_size(egui::vec2(ui.available_width(), 28.0));
+        if ui
+            .add_enabled(worktree.is_some(), row)
+            .on_disabled_hover_text(crate::backend::NO_WORKTREE)
+            .clicked()
+        {
+            self.act(Action::OpenTerminal(view.id.clone()));
+        }
+    }
+
     /// The right panel without a drawer: pipeline, stepper, cost, actions.
     pub(crate) fn stepper_panel(&mut self, ui: &mut egui::Ui, view: &TicketView) {
         let mut open = None;
@@ -737,11 +752,7 @@ impl App {
             for (text, why) in [
                 (
                     "Re-run from here",
-                    "open the step and use Re-run this step: Understand, Design and Plan can run again; a finished build is not re-run",
-                ),
-                (
-                    "Open in a terminal",
-                    "not built: starting a terminal in the worktree",
+                    "open the step and use Re-run this step: Understand, Design and Plan can run again; to build again after a finished Build, reset it from the More menu",
                 ),
                 (
                     "Explain in plain words",
@@ -757,6 +768,7 @@ impl App {
                 .on_disabled_hover_text(why);
             }
             self.open_worktree_row(ui, view);
+            self.open_terminal_row(ui, view);
         });
     }
 }
