@@ -61,10 +61,19 @@ The schema must not carry a `$schema` URI. `schemars` writes `https://json-schem
 - `--permission-mode dontAsk` with `--tools Bash` and no allow list **still ran `echo hi`**. Treat read-only shell commands as allowed by default, and never rely on `dontAsk` as a deny list.
 - A `PreToolUse` hook passed with `--settings` denied `git push origin main`. The model received a tool error ("PreToolUse:Bash hook error: ..."), the stream showed `hook_started` and `hook_response` frames, and the result's `permission_denials` listed the command. The same hook let `echo hello` through. The hook ran as `pwsh -NoProfile -File <script>` and replied with `hookSpecificOutput.permissionDecision: "deny"`.
 
+## Permission prompt tool
+
+Observed 2026-11-25 with Claude Code **2.1.332**, Haiku, API key, `--tools Read --strict-mcp-config --mcp-config <file> --permission-prompt-tool mcp__prompt__approve`, two calls, $0.0014 in total. Fixtures: `live-2.1.332-permission-prompt-{mcp,deny,allow}.jsonl`.
+
+- The tool is called only when the built-in rules do not decide: a `Read` inside the working folder ran without a prompt, a `Read` outside it asked.
+- Request: an MCP `tools/call` of the named tool with `arguments` `{tool_name, input, tool_use_id}` (and `_meta.claudecode/toolUseId`). The server is first probed with `server/discover` and then initialised with protocol `2025-11-25`; a server that answers `{}` to the probe and echoes the protocol version works.
+- Reply: one text content block whose text is JSON. `{"behavior":"deny","message":"..."}`: the model got a tool error with that message, the run went on, and `result.permission_denials` listed the call. `{"behavior":"allow","updatedInput":{...}}` (the input as received): the tool ran and `permission_denials` was empty.
+- Not observed: a reply that is not valid JSON, `updatedPermissions`, a server that never answers, and any tool other than `Read`.
+
 ## Streaming volume
 
 `--include-partial-messages` added 17 `stream_event` deltas for a three-sentence answer and roughly doubled the stream (16 KB against 8 KB). Not worth it for the pipeline.
 
 ## Not observed
 
-`--permission-prompt-tool`, subagent messages and `parent_tool_use_id`, `error_max_structured_output_retries`, `api_retry` frames against the real API, a real subscription rate limit, and the PowerShell-vs-bash tool behaviour. S2 still owns the limit evidence.
+subagent messages and `parent_tool_use_id`, `error_max_structured_output_retries`, `api_retry` frames against the real API, a real subscription rate limit, and the PowerShell-vs-bash tool behaviour. S2 still owns the limit evidence.

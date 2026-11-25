@@ -9,6 +9,10 @@
 //! `answer_request`, `read_file`, `write_file`. `answer_request` goes through the
 //! same inbox and checks as the window, and never approves a forced
 //! confirmation: only the owner can.
+//! `approve` is the tool Claude Code calls through `--permission-prompt-tool`:
+//! it puts the agent's request in the inbox and waits for the owner. It can only
+//! ask. The answer is allow with the input unchanged, or deny; a wait that ends
+//! without a plain approval, and anything it cannot show whole, is a deny.
 //! Nothing here starts an agent or spends money.
 
 mod scope;
@@ -16,12 +20,13 @@ mod scope;
 use std::{
     io::{BufRead, Write},
     path::PathBuf,
+    time::{Duration, Instant},
 };
 
 use autopilot_core::{RequestId, TicketId};
 use autopilot_pipeline::{
     clarify::Choice,
-    inbox::{Decision, Inbox, Reply, RequestBody, check_reply},
+    inbox::{Decision, Inbox, Reply, Request, RequestBody, check_reply},
 };
 use serde_json::{Value, json};
 
@@ -36,6 +41,11 @@ pub const MAX_WRITE_BYTES: usize = 1024 * 1024;
 const HISTORY_LINES: usize = 100;
 /// A line from a ticket or an agent is data of unknown size.
 const LINE_CHARS: usize = 500;
+/// How often a waiting `approve` looks for the owner's answer.
+const ANSWER_POLL: Duration = Duration::from_millis(50);
+/// Prefix of the inbox id of a permission request, so it is told apart from the
+/// engine's own requests.
+pub const PERMISSION_PREFIX: &str = "perm-";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -48,6 +58,13 @@ pub enum Error {
 pub struct Server {
     data: PathBuf,
     scope: Scope,
+    prompt: Option<PermissionPrompt>,
+}
+
+/// Where a permission request goes and how long it may wait.
+struct PermissionPrompt {
+    ticket: TicketId,
+    wait: Duration,
 }
 
 impl Server {
@@ -57,7 +74,17 @@ impl Server {
         Ok(Self {
             data,
             scope: Scope::new(reads, writes)?,
+            prompt: None,
         })
+    }
+
+    /// Let `approve` ask the owner about this ticket. Without it, `approve`
+    /// denies everything, so a server started for files alone never grants a
+    /// tool call.
+    #[must_use]
+    pub fn with_permission_prompt(mut self, ticket: TicketId, wait: Duration) -> Self {
+        self.prompt = Some(PermissionPrompt { ticket, wait });
+        self
     }
 
     /// Answer requests, one JSON object per line, until the input ends.
@@ -153,9 +180,70 @@ impl Server {
         inbox
             .write_answer(&id, &reply)
             .map_err(|error| Error::Refused(error.to_string()))?;
-        autopilot_engine::sync_inbox(&self.data, &waiting.ticket)
-            .map_err(|error| Error::Refused(error.to_string()))?;
+        // The engine's event log knows nothing of a permission request, and a
+        // sync would delete its files before `approve` has read the answer.
+        if !request.starts_with(PERMISSION_PREFIX) {
+            autopilot_engine::sync_inbox(&self.data, &waiting.ticket)
+                .map_err(|error| Error::Refused(error.to_string()))?;
+        }
         Ok(format!("answered {request}"))
+    }
+
+    /// The reply Claude Code expects from a permission prompt tool: JSON text
+    /// with `behavior` `allow` (and the input to run) or `deny` (and why).
+    fn approve(&self, arguments: &Value) -> Value {
+        match self.ask_owner(arguments) {
+            Ok(input) => json!({"behavior": "allow", "updatedInput": input}),
+            Err(why) => json!({"behavior": "deny", "message": why}),
+        }
+    }
+
+    // Every way out except a plain Approve is a deny, so a bug here fails
+    // closed. The input goes back as it came: a prompt tool that rewrote it
+    // could widen what the agent runs beyond what the owner saw.
+    fn ask_owner(&self, arguments: &Value) -> Result<Value, String> {
+        let prompt = self
+            .prompt
+            .as_ref()
+            .ok_or("this server is not set up to approve tool calls")?;
+        let tool = arguments
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .ok_or("the request names no tool")?;
+        let input = arguments.get("input").ok_or("the request has no input")?;
+        let call = arguments
+            .get("tool_use_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let action = format!("let the agent run {tool} with {input}");
+        // The owner approves what they can read; a cut-off action is not that.
+        if action.chars().count() > LINE_CHARS {
+            return Err("the call is too long to show to the owner".to_owned());
+        }
+        let id = RequestId::from(format!("{PERMISSION_PREFIX}{call}"));
+        let inbox = Inbox::in_data_dir(&self.data);
+        let request = Request {
+            id: id.clone(),
+            ticket: prompt.ticket.clone(),
+            body: RequestBody::Approval {
+                action,
+                forced: true,
+            },
+        };
+        inbox
+            .write_request(&request)
+            .map_err(|error| format!("could not ask the owner: {error}"))?;
+        let answer = wait_for_answer(&inbox, &id, prompt.wait);
+        // A stale answer must not satisfy a later call that reuses the id.
+        let _ = inbox.clean_up(&id);
+        match answer {
+            Some(Reply::Approval {
+                decision: Decision::Approve,
+                ..
+            }) => Ok(input.clone()),
+            Some(_) => Err("the owner did not approve this call".to_owned()),
+            None => Err("the owner did not answer in time".to_owned()),
+        }
     }
 
     fn run(&self, name: &str, arguments: &Value) -> Result<String, Error> {
@@ -233,10 +321,24 @@ impl Server {
                     ))
             }
             "answer_request" => self.answer(text("request")?, text("answer")?),
+            "approve" => Ok(self.approve(arguments).to_string()),
             "read_file" => self.scope.read(text("path")?),
             "write_file" => self.scope.write(text("path")?, text("text")?),
             other => Err(Error::Refused(format!("no tool {other}"))),
         }
+    }
+}
+
+fn wait_for_answer(inbox: &Inbox, id: &RequestId, wait: Duration) -> Option<Reply> {
+    let start = Instant::now();
+    loop {
+        if let Ok(Some(reply)) = inbox.read_answer(id) {
+            return Some(reply);
+        }
+        if start.elapsed() >= wait {
+            return None;
+        }
+        std::thread::sleep(ANSWER_POLL);
     }
 }
 
@@ -265,6 +367,8 @@ fn tools() -> Value {
          "inputSchema": object(&json!({}), &[])},
         {"name": "answer_request", "description": "Answer a waiting request: \"recommended\" for a question, \"approve\" or \"reject\" for an approval. A forced approval can only be rejected.",
          "inputSchema": object(&json!({"request": {"type": "string"}, "answer": {"type": "string"}}), &["request", "answer"])},
+        {"name": "approve", "description": "Permission prompt for Claude Code (--permission-prompt-tool): asks the owner whether the agent may run one tool call.",
+         "inputSchema": object(&json!({"tool_name": {"type": "string"}, "input": {"type": "object"}, "tool_use_id": {"type": "string"}}), &["tool_name", "input"])},
         {"name": "read_file", "description": "Read a text file inside a read root.",
          "inputSchema": object(&json!({"path": {"type": "string"}}), &["path"])},
         {"name": "write_file", "description": "Write a text file inside a write root. The folder must exist.",
@@ -391,7 +495,7 @@ mod tests {
         let list = server
             .handle(r#"{"jsonrpc":"2.0","id":8,"method":"tools/list"}"#)
             .unwrap();
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 7);
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 8);
         assert!(
             server
                 .handle(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
@@ -533,5 +637,214 @@ the commit"
             text,
             "r1 t-1 approval (forced, owner only): push the commit"
         );
+    }
+
+    const PROMPT_FIXTURE: &str =
+        include_str!("../../../fixtures/claude/live-2.1.332-permission-prompt-mcp.jsonl");
+    const DENY_RUN: &str =
+        include_str!("../../../fixtures/claude/live-2.1.332-permission-prompt-deny.jsonl");
+    const ALLOW_RUN: &str =
+        include_str!("../../../fixtures/claude/live-2.1.332-permission-prompt-allow.jsonl");
+
+    /// The recorded call, and the recorded allow and deny replies.
+    fn recorded() -> (String, Value, Value) {
+        let lines: Vec<Value> = PROMPT_FIXTURE
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let ask = lines[0]["message"].to_string();
+        (
+            ask,
+            lines[2]["message"].clone(),
+            lines[1]["message"].clone(),
+        )
+    }
+
+    fn prompting(dir: &std::path::Path, wait: Duration) -> Server {
+        server(dir, dir).with_permission_prompt(TicketId::from("t-1"), wait)
+    }
+
+    /// Plays the owner: waits for the permission request, hands it to `check`,
+    /// then writes `reply` as the answer.
+    fn owner_answers(
+        data: &std::path::Path,
+        reply: Reply,
+        check: fn(&Request),
+    ) -> std::thread::JoinHandle<()> {
+        let inbox = Inbox::in_data_dir(data);
+        std::thread::spawn(move || {
+            for _ in 0..400 {
+                if let Some(request) = inbox.requests().unwrap().first() {
+                    check(request);
+                    inbox.write_answer(&request.id, &reply).unwrap();
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            panic!("no permission request reached the inbox");
+        })
+    }
+
+    fn queued(data: &std::path::Path) -> usize {
+        Inbox::in_data_dir(data).requests().unwrap().len()
+    }
+
+    fn approval(decision: Decision) -> Reply {
+        Reply::Approval {
+            decision,
+            allow_for_project: false,
+        }
+    }
+
+    fn behavior(reply: &Value) -> Value {
+        let text = reply["result"]["content"][0]["text"].as_str().unwrap();
+        serde_json::from_str(text).unwrap()
+    }
+
+    // Invariant: a tool call from the agent reaches the inbox as a forced
+    // approval, and the owner's approval comes back in the shape Claude Code
+    // recorded as letting the call run (same id, same input). A change to the
+    // reply shape or to what the inbox gets would stall or mis-answer a real
+    // run; only the recorded exchange knows the shape.
+    #[test]
+    fn an_approved_call_reaches_the_inbox_and_the_run_continues() {
+        let dir = tempfile::tempdir().unwrap();
+        let (asked, allow, _) = recorded();
+        let owner = owner_answers(dir.path(), approval(Decision::Approve), |request| {
+            assert!(request.id.as_str().starts_with(PERMISSION_PREFIX));
+            let RequestBody::Approval { action, forced } = &request.body else {
+                panic!("a permission request is an approval");
+            };
+            assert!(*forced);
+            assert!(action.contains("Read"), "{action}");
+        });
+        let reply = prompting(dir.path(), Duration::from_secs(10))
+            .handle(&asked)
+            .unwrap();
+        owner.join().unwrap();
+        assert_eq!(behavior(&reply), behavior(&allow));
+        assert_eq!(reply["id"], allow["id"]);
+        assert_eq!(queued(dir.path()), 0);
+    }
+
+    // Invariant: every answer but a plain approval, and no answer at all, is
+    // a deny with no input to run. Widening the match on the decision (or
+    // defaulting a timeout to allow) would let a call the owner refused or
+    // never saw run.
+    #[test]
+    fn a_denied_call_stays_denied() {
+        let (asked, _, deny) = recorded();
+        let check = |reply: &Value| {
+            let decision = behavior(reply);
+            assert_eq!(decision["behavior"], "deny", "{decision}");
+            assert!(decision.get("updatedInput").is_none());
+            assert!(decision["message"].is_string());
+            assert_eq!(reply["id"], deny["id"]);
+        };
+        for decision in [
+            Decision::Reject,
+            Decision::Edit("rm -rf /".into()),
+            Decision::SendBack("again".into()),
+            Decision::ApproveCorrected(vec![]),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let owner = owner_answers(dir.path(), approval(decision), |_| {});
+            let reply = prompting(dir.path(), Duration::from_secs(10))
+                .handle(&asked)
+                .unwrap();
+            owner.join().unwrap();
+            check(&reply);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let reply = prompting(dir.path(), Duration::from_millis(100))
+            .handle(&asked)
+            .unwrap();
+        check(&reply);
+    }
+
+    // Invariant: the prompt tool can only ask. Without a ticket it denies and
+    // writes nothing; an allow returns exactly the input it was given and
+    // nothing else (no rewritten input, no standing permission); a call too
+    // long to show whole is denied unasked; a client cannot approve the
+    // request for the owner. A change that echoes a different input or adds
+    // `updatedPermissions` would widen what Claude Code lets the agent do.
+    #[test]
+    fn the_prompt_tool_can_only_ask() {
+        let (asked, _, _) = recorded();
+        let dir = tempfile::tempdir().unwrap();
+        let reply = server(dir.path(), dir.path()).handle(&asked).unwrap();
+        assert_eq!(behavior(&reply)["behavior"], "deny");
+        assert_eq!(queued(dir.path()), 0);
+
+        let long = json!({"tool_name": "Bash", "tool_use_id": "toolu_2",
+            "input": {"command": "x".repeat(2 * LINE_CHARS)}});
+        let (error, text) = call(
+            &prompting(dir.path(), Duration::from_secs(1)),
+            "approve",
+            &long,
+        );
+        assert!(!error);
+        assert!(text.contains("deny"), "{text}");
+        assert_eq!(queued(dir.path()), 0);
+
+        let input = json!({"command": "ls", "extra": [1, {"a": null}]});
+        let ask = json!({"tool_name": "Bash", "tool_use_id": "toolu_3", "input": input});
+        let owner = owner_answers(dir.path(), approval(Decision::Approve), |_| {});
+        let (_, text) = call(
+            &prompting(dir.path(), Duration::from_secs(10)),
+            "approve",
+            &ask,
+        );
+        owner.join().unwrap();
+        let decision: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            decision,
+            json!({"behavior": "allow", "updatedInput": input})
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let waiting = Request {
+            id: RequestId::from("perm-toolu_4"),
+            ticket: TicketId::from("t-1"),
+            body: RequestBody::Approval {
+                action: "run".into(),
+                forced: true,
+            },
+        };
+        let inbox = Inbox::in_data_dir(dir.path());
+        inbox.write_request(&waiting).unwrap();
+        let (error, _) = call(
+            &server(dir.path(), dir.path()),
+            "answer_request",
+            &json!({"request": "perm-toolu_4", "answer": "approve"}),
+        );
+        assert!(error);
+        assert!(inbox.read_answer(&waiting.id).unwrap().is_none());
+    }
+
+    // Invariant: what the recorded runs show about the two answers: a deny
+    // gives the model a tool error and a listed denial, an allow gives it the
+    // file's text and no denial, and both runs go on to a normal result. If
+    // Claude Code changed this, the shapes above would no longer mean what
+    // these tests say they mean.
+    #[test]
+    fn the_recorded_runs_show_what_each_answer_does() {
+        for (run, denied) in [(DENY_RUN, true), (ALLOW_RUN, false)] {
+            let frames: Vec<Value> = run
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            let result = frames.last().unwrap();
+            assert_eq!(result["type"], "result");
+            assert_eq!(result["subtype"], "success");
+            let denials = result["permission_denials"].as_array().unwrap();
+            assert_eq!(denials.len(), usize::from(denied));
+            let tool_result = frames
+                .iter()
+                .flat_map(|f| f["message"]["content"].as_array().into_iter().flatten())
+                .find(|block| block["type"] == "tool_result")
+                .unwrap();
+            assert_eq!(tool_result["is_error"].as_bool().unwrap_or(false), denied);
+        }
     }
 }

@@ -15,7 +15,7 @@ Start with a synthetic prompt, a structured response, a resumed response and a t
 - [x] `--max-turns 1` on a task that needs a tool: confirm `error_max_turns` and its fields.
 - [x] `--max-budget-usd 0.001`: confirm `error_max_budget_usd`; is the response that crosses the cap still returned?
 - [ ] `--allowedTools` and `--disallowedTools`: a denied call shows up in `permission_denials`; in Manual mode with no tools allowed, what exactly is denied and how is it reported?
-- [ ] Optional after the minimal live path: `--permission-prompt-tool`. Build a tiny stdio MCP server that logs the request it receives; find the response shape by trial and by the docs' error page (`errors.md#permission-prompt-tool-returned-an-invalid-result`). Record both a request and a valid allow and deny response.
+- [x] Optional after the minimal live path: `--permission-prompt-tool` (done in A11, 2.1.332; see the headless contract). Build a tiny stdio MCP server that logs the request it receives; find the response shape by trial and by the docs' error page (`errors.md#permission-prompt-tool-returned-an-invalid-result`). Record both a request and a valid allow and deny response.
 - [x] `--settings` with a `PreToolUse` hook that denies `Write` outside the working directory and `Bash` containing `git push`: confirm the deny reaches the model and the stream.
 - [x] A long prompt on stdin (more than 40,000 characters) instead of an argument.
 - [x] Which credentials were used: with `ANTHROPIC_API_KEY` set and unset (compare the init message and the cost field).
@@ -58,4 +58,4 @@ What the live run changed in the adapter:
 - A limit stop (`error_max_turns`, `error_max_budget_usd`) has `is_error: true` and exit 1, which the adapter already treated as a stop first.
 - `authMethod` is `api_key` for API use, matching the preflight guess.
 
-Not done: `--allowedTools` and `--disallowedTools` with the denial list (only `dontAsk` with `--tools Bash` was seen, and it still ran a read-only command), the optional `--permission-prompt-tool`, and the subagent check. The loopback-only S2 caveats are unchanged.
+Not done: `--allowedTools` and `--disallowedTools` with the denial list (only `dontAsk` with `--tools Bash` was seen, and it still ran a read-only command), and the subagent check (`--permission-prompt-tool` was done later, in A11). The loopback-only S2 caveats are unchanged.
