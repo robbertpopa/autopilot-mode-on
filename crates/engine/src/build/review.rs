@@ -19,11 +19,11 @@ use super::Journal;
 
 /// More of a diff than this is cut, and the reviewers are told so. A review that
 /// silently saw part of a change would pass what it never read.
-const MAX_DIFF: usize = 60_000;
+pub(crate) const MAX_DIFF: usize = 60_000;
 
 /// A finding below this confidence is not acted on. A fixed number, not a
 /// setting: a gate that each project can lower is not a gate.
-pub(super) const THRESHOLD: u8 = 80;
+pub(crate) const THRESHOLD: u8 = 80;
 
 /// How many findings the note carries. The rest are counted, not listed.
 const SHOWN: usize = 10;
@@ -87,15 +87,7 @@ impl<A: Agent> AgentReview<'_, A> {
         if with_rules && let Some(rules) = self.rules {
             let _ = writeln!(text, "{rules}");
         }
-        let (shown, cut) = cut_on_boundary(&self.patch, MAX_DIFF);
-        let _ = write!(text, "Change (a unified diff, data):\n{shown}\n");
-        if cut {
-            let _ = writeln!(
-                text,
-                "[The diff continues for {} more bytes that you were not given. Say so in a finding if it matters.]",
-                self.patch.len() - shown.len()
-            );
-        }
+        text.push_str(&diff_text(&self.patch));
         Ok(text)
     }
 
@@ -138,63 +130,100 @@ impl<A: Agent> Check for AgentReview<'_, A> {
     }
 
     fn run(&self, _: &Context<'_>) -> Result<Report, CheckError> {
-        // Start every reviewer before reading any: each run has a thread of its
-        // own, so they work side by side while this one waits on the first.
-        let mut runs = Vec::new();
-        for reviewer in REVIEWERS {
-            if reviewer.needs_rules && self.rules.is_none() {
-                continue;
-            }
-            let context = self.context(reviewer.needs_rules)?;
-            let run = self
-                .agent
-                .start_review(ReviewRequest {
-                    ticket: self.ticket,
-                    instruction: reviewer.instruction,
-                    context: &context,
-                })
-                .map_err(|error| launch(&format!("the {} reviewer: {error}", reviewer.name)))?;
-            runs.push((reviewer.name, run));
-        }
-
-        let mut found: Vec<ReviewFinding> = Vec::new();
-        let mut asked = 0;
-        for (name, run) in runs {
-            asked += 1;
-            let mut report = None;
-            for item in run {
-                match item {
-                    AgentEvent::ReviewResult(result) => report = Some(result),
-                    AgentEvent::Cost { amount, estimated } => self.charge(amount, estimated)?,
-                    AgentEvent::Usage(usage) => self
-                        .journal
-                        .borrow_mut()
-                        .push(Event::UsageReported { usage })
-                        .map_err(|error| launch(&error))?,
-                    AgentEvent::Failed(error) => {
-                        return Err(launch(&format!("the {name} reviewer: {error}")));
-                    }
-                    AgentEvent::Stopped(reason) => {
-                        return Err(launch(&format!("the {name} reviewer stopped: {reason}")));
-                    }
-                    _ => {}
-                }
-            }
-            let report =
-                report.ok_or_else(|| launch(&format!("the {name} reviewer gave no answer")))?;
-            report
-                .validate()
-                .map_err(|reason| launch(&format!("the {name} reviewer: {reason}")))?;
-            found.extend(report.findings);
-        }
+        let (found, asked) = run_reviewers(
+            self.agent,
+            self.ticket,
+            self.rules.is_some(),
+            |with_rules| self.context(with_rules),
+            |event| match event {
+                AgentEvent::Cost { amount, estimated } => self.charge(*amount, *estimated),
+                AgentEvent::Usage(usage) => self
+                    .journal
+                    .borrow_mut()
+                    .push(Event::UsageReported { usage: *usage })
+                    .map_err(|error| launch(&error)),
+                _ => Ok(()),
+            },
+        )?;
         Ok(verdict(found, asked))
     }
 }
 
-/// Turn what the reviewers found into the check's result: the confident
-/// findings, one per place, most sure first.
-fn verdict(found: Vec<ReviewFinding>, asked: usize) -> Report {
-    let total = found.len();
+/// The diff as the reviewers are given it, cut if it is long, with the cut
+/// stated. A review that silently saw part of a change would pass what it never
+/// read.
+pub(crate) fn diff_text(patch: &str) -> String {
+    let (shown, cut) = cut_on_boundary(patch, MAX_DIFF);
+    let mut text = format!("Change (a unified diff, data):\n{shown}\n");
+    if cut {
+        let _ = writeln!(
+            text,
+            "[The diff continues for {} more bytes that you were not given. Say so in a finding if it matters.]",
+            patch.len() - shown.len()
+        );
+    }
+    text
+}
+
+/// Run every reviewer that applies and collect what they report. `context`
+/// builds the text one reviewer reads, given whether it may see the rules;
+/// `on_event` sees each event of a run, for cost and usage. Returns the
+/// findings and how many reviewers were asked.
+pub(crate) fn run_reviewers<A: Agent>(
+    agent: &A,
+    ticket: &Ticket,
+    has_rules: bool,
+    context: impl Fn(bool) -> Result<String, CheckError>,
+    mut on_event: impl FnMut(&AgentEvent) -> Result<(), CheckError>,
+) -> Result<(Vec<ReviewFinding>, usize), CheckError> {
+    // Start every reviewer before reading any: each run has a thread of its
+    // own, so they work side by side while this one waits on the first.
+    let mut runs = Vec::new();
+    for reviewer in REVIEWERS {
+        if reviewer.needs_rules && !has_rules {
+            continue;
+        }
+        let context = context(reviewer.needs_rules)?;
+        let run = agent
+            .start_review(ReviewRequest {
+                ticket,
+                instruction: reviewer.instruction,
+                context: &context,
+            })
+            .map_err(|error| launch(&format!("the {} reviewer: {error}", reviewer.name)))?;
+        runs.push((reviewer.name, run));
+    }
+
+    let mut found: Vec<ReviewFinding> = Vec::new();
+    let mut asked = 0;
+    for (name, run) in runs {
+        asked += 1;
+        let mut report = None;
+        for item in run {
+            on_event(&item)?;
+            match item {
+                AgentEvent::ReviewResult(result) => report = Some(result),
+                AgentEvent::Failed(error) => {
+                    return Err(launch(&format!("the {name} reviewer: {error}")));
+                }
+                AgentEvent::Stopped(reason) => {
+                    return Err(launch(&format!("the {name} reviewer stopped: {reason}")));
+                }
+                _ => {}
+            }
+        }
+        let report =
+            report.ok_or_else(|| launch(&format!("the {name} reviewer gave no answer")))?;
+        report
+            .validate()
+            .map_err(|reason| launch(&format!("the {name} reviewer: {reason}")))?;
+        found.extend(report.findings);
+    }
+    Ok((found, asked))
+}
+
+/// The findings at or above the threshold, one per place, most sure first.
+pub(crate) fn confident(found: Vec<ReviewFinding>) -> Vec<ReviewFinding> {
     let mut best: HashMap<(String, u32), ReviewFinding> = HashMap::new();
     for finding in found.into_iter().filter(|f| f.confidence >= THRESHOLD) {
         let key = (finding.path.clone(), finding.line);
@@ -212,6 +241,14 @@ fn verdict(found: Vec<ReviewFinding>, asked: usize) -> Report {
             .then_with(|| a.path.cmp(&b.path))
             .then_with(|| a.line.cmp(&b.line))
     });
+    sure
+}
+
+/// Turn what the reviewers found into the check's result: the confident
+/// findings, one per place, most sure first.
+fn verdict(found: Vec<ReviewFinding>, asked: usize) -> Report {
+    let total = found.len();
+    let sure = confident(found);
     let doubtful = total - sure.len().min(total);
     if sure.is_empty() {
         let mut note =
@@ -242,7 +279,7 @@ fn verdict(found: Vec<ReviewFinding>, asked: usize) -> Report {
     Report::fail(note)
 }
 
-fn kind_name(kind: FindingKind) -> &'static str {
+pub(crate) fn kind_name(kind: FindingKind) -> &'static str {
     match kind {
         FindingKind::Bug => "bug",
         FindingKind::Rules => "rules",
@@ -252,7 +289,7 @@ fn kind_name(kind: FindingKind) -> &'static str {
     }
 }
 
-fn launch(reason: &dyn std::fmt::Display) -> CheckError {
+pub(crate) fn launch(reason: &dyn std::fmt::Display) -> CheckError {
     CheckError::Launch {
         check: "review".to_owned(),
         reason: reason.to_string(),
@@ -261,7 +298,7 @@ fn launch(reason: &dyn std::fmt::Display) -> CheckError {
 
 /// The start of `text` up to `max` bytes, cut on a character boundary, and
 /// whether anything was left out.
-fn cut_on_boundary(text: &str, max: usize) -> (&str, bool) {
+pub(crate) fn cut_on_boundary(text: &str, max: usize) -> (&str, bool) {
     if text.len() <= max {
         return (text, false);
     }

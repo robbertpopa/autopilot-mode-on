@@ -41,6 +41,7 @@ mod overlap;
 mod pipelines;
 mod places;
 mod plan;
+mod pr_review;
 mod pr_rules;
 mod pr_watch;
 mod profile_edit;
@@ -96,6 +97,7 @@ pub use pipelines::{
 };
 pub use places::{Places, gh_for, places, worktree_of};
 pub use plan::{approved_plan, plan_ticket, run_plan};
+pub use pr_review::{PrReview, review_pull_request};
 pub use pr_rules::{
     ChecksState, MergeState, PrAction, PrState, PrSummary, ReviewDecision, next_action,
 };
@@ -114,8 +116,8 @@ pub use rerun::{rerun_plan, rerun_understand, reset_step};
 pub use reset_build::{ResetSetup, reset_build};
 pub use review::{Finding, ReviewOutcome, Rule, findings_for, open_findings, run_review};
 pub use rules::{
-    MAX_RULES_BYTES, RulesInfo, check_rules, project_key, read_rules, rules_info, rules_path,
-    save_rules,
+    MAX_RULES_BYTES, RulesInfo, check_rules, project_key, prompt_block, read_rules, rules_info,
+    rules_path, save_rules,
 };
 pub use settings::{
     effective_overrides, effective_when_unsure, override_settings, project_overrides,
@@ -165,6 +167,8 @@ pub enum Error {
     Rules(String),
     #[error("the project card cannot be used: {0}")]
     Card(String),
+    #[error("the review of the pull request was refused: {0}")]
+    ReviewRefused(String),
     #[error("the recorded history is invalid: {0}")]
     History(String),
     #[error("ticket has no recorded run")]

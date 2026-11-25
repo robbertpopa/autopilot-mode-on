@@ -20,7 +20,8 @@ use serde::{Deserialize, Serialize};
 pub use body::{CheckLine, description, redact};
 pub use names::{Repo, valid_branch};
 pub use state::{
-    Decision, FailedCheck, Feedback, Mergeable, PrState, PullState, ci_block, feedback_block,
+    Decision, FailedCheck, Feedback, Mergeable, PrState, PrSubject, PullState, ci_block,
+    feedback_block,
 };
 
 const LIMITS: Limits = Limits {
@@ -427,6 +428,53 @@ impl Gh {
             feedback: threads.feedback,
             ci,
         })
+    }
+
+    /// The words and head commit of one pull request, for a review of it.
+    ///
+    /// # Errors
+    /// Returns an error if `gh` fails or its answer cannot be read.
+    pub fn pr_subject(&self, number: u64) -> Result<PrSubject, Error> {
+        let number_text = number.to_string();
+        let repo = self.repo.to_string();
+        let text = self.run(
+            &[
+                "pr",
+                "view",
+                &number_text,
+                "--repo",
+                &repo,
+                "--json",
+                "number,headRefOid,title,body,isDraft,state",
+            ],
+            &[],
+        )?;
+        state::decode_subject(&text)
+    }
+
+    /// The unified diff of one pull request, cleaned. It is attacker-controlled
+    /// text that only a reviewer without tools may read. A diff over the output
+    /// limit is an error, not a shorter diff.
+    ///
+    /// # Errors
+    /// Returns an error if `gh` fails, including when GitHub refuses a diff
+    /// that is too large.
+    pub fn pr_diff(&self, number: u64) -> Result<String, Error> {
+        let number_text = number.to_string();
+        let repo = self.repo.to_string();
+        let text = self.run(
+            &[
+                "pr",
+                "diff",
+                &number_text,
+                "--repo",
+                &repo,
+                "--color",
+                "never",
+            ],
+            &[],
+        )?;
+        Ok(state::clean_diff(&text))
     }
 
     /// The failing checks of one exact commit, each with the end of its log.

@@ -551,3 +551,126 @@ fn a_build_that_cannot_start_does_not_leave_build_check_running() {
         .unwrap();
     assert_eq!(build_check["state"], "idle", "{status}");
 }
+
+fn review_pr(prs: &Value) -> (Output, Value, tempfile::TempDir) {
+    let scratch = tempfile::tempdir().unwrap();
+    let data = scratch.path().join("data");
+    let fake_gh = PathBuf::from(env!("CARGO_BIN_EXE_autopilot"))
+        .with_file_name(format!("autopilot-fake-gh{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        fake_gh.is_file(),
+        "build the workspace first: cargo build --workspace"
+    );
+    let state = scratch.path().join("fake-gh-state.json");
+    std::fs::write(
+        &state,
+        serde_json::json!({"issues": {}, "heads": {}, "prs": prs, "runs": {}, "calls": []})
+            .to_string(),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_autopilot"))
+        .args([
+            "pr",
+            "review",
+            "7",
+            "--github=owner/name",
+            "--agent",
+            "fake",
+        ])
+        .arg("--gh-path")
+        .arg(&fake_gh)
+        .arg("--data-dir")
+        .arg(&data)
+        .env("GH_CONFIG_DIR", scratch.path())
+        .output()
+        .unwrap();
+    let after: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+    (output, after, scratch)
+}
+
+fn someone_elses(title: &str, state: &str, draft: bool, diff: &str) -> Value {
+    serde_json::json!([{
+        "number": 7, "url": "https://example.invalid/pull/7", "headRefOid": "a".repeat(40),
+        "branch": "someone/feature", "isDraft": draft, "state": state, "title": title,
+        "body": "", "base": "main", "diff": diff,
+    }])
+}
+
+const SMALL_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1,2 @@\n+// one line\n";
+
+// Invariant: the review of a pull request someone else opened reads it (the
+// view, the diff, the view again) and reports; it never writes to GitHub. A
+// draft is reviewed like any other, and the same place found by several
+// reviewers is one finding. Breaks if the command posts a comment or review,
+// skips a draft or a trivial change, or stops merging findings by place; no
+// build-side test runs this path.
+#[test]
+fn a_review_of_someone_elses_pull_request_reports_and_posts_nothing() {
+    let (output, state, _scratch) = review_pr(&someone_elses(
+        "scenario:review-finding",
+        "OPEN",
+        true,
+        SMALL_DIFF,
+    ));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["state"], "draft");
+    assert_eq!(report["posted"], false);
+    assert_eq!(report["reviewers"], 3);
+    assert_eq!(report["head"], "a".repeat(40));
+    let findings = report["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{report}");
+    assert_eq!(findings[0]["path"], "src/lib.rs");
+    let verbs: Vec<String> = state["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|call| format!("{} {}", call["args"][0], call["args"][1]))
+        .collect();
+    assert_eq!(
+        verbs,
+        [r#""pr" "view""#, r#""pr" "diff""#, r#""pr" "view""#]
+    );
+}
+
+// Invariant: a change with nothing for the reviewers to find gives an empty
+// report, and a remark under the threshold is counted, not listed. Breaks if
+// the threshold is not applied to a pull request's review.
+#[test]
+fn a_clean_or_doubtful_pull_request_lists_no_findings() {
+    let (output, _, _scratch) = review_pr(&someone_elses("plain", "CLOSED", false, SMALL_DIFF));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["state"], "closed");
+    assert_eq!(report["findings"], serde_json::json!([]));
+    let (output, _, _scratch) = review_pr(&someone_elses(
+        "scenario:review-low",
+        "OPEN",
+        false,
+        SMALL_DIFF,
+    ));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["findings"], serde_json::json!([]));
+    assert_eq!(report["doubtful"], 3);
+}
+
+// Invariant: no report is made for a commit the reviewers did not read. Breaks
+// if the head is not read again after the diff, or an empty diff passes as a
+// clean review.
+#[test]
+fn a_moved_head_or_an_empty_diff_is_refused_not_reported_clean() {
+    let mut moved = someone_elses("plain", "OPEN", false, SMALL_DIFF);
+    moved[0]["headAfterDiff"] = serde_json::json!("b".repeat(40));
+    moved[0]["branch"] = "someone/feature".into();
+    let (output, _, _scratch) = review_pr(&moved);
+    assert!(!output.status.success());
+    assert_eq!(output.stdout.len(), 0);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("moved"));
+
+    let (output, _, _scratch) = review_pr(&someone_elses("plain", "OPEN", false, "  \n"));
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no changes"));
+}
