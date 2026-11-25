@@ -54,9 +54,13 @@ enum Command {
         /// Reasoning effort: low, medium, high, xhigh or max. Omit for the model default.
         #[arg(long)]
         effort: Option<String>,
-        /// Dollar cap per call. Applies to --auth api only.
-        #[arg(long, default_value = "0.05")]
-        max_budget_usd: String,
+        /// Dollar cap per call. Applies to --auth api only. Defaults to the
+        /// profile's `[spend]` per-call cap.
+        #[arg(long)]
+        max_budget_usd: Option<String>,
+        /// The profile whose `[spend]` limits apply to a paid call.
+        #[arg(long)]
+        profile: Option<PathBuf>,
         /// Absolute path to a native claude executable. Defaults to a PATH search.
         #[arg(long)]
         claude_path: Option<PathBuf>,
@@ -336,6 +340,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             max_turns,
             effort,
             max_budget_usd,
+            profile,
             claude_path,
             timeout_seconds,
             ask_after,
@@ -349,15 +354,25 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
                     run_step(&cli.data_dir, step, &ticket, &agent, ask_after, &attach)?
                 }
                 Agent::Claude => {
+                    let auth = match auth {
+                        AuthArg::Subscription => Auth::Subscription,
+                        AuthArg::Api => Auth::Api,
+                    };
+                    let max_budget_usd = if auth == Auth::Api {
+                        Some(paid_budget(
+                            &cli.data_dir,
+                            profile.as_deref(),
+                            max_budget_usd.as_deref(),
+                        )?)
+                    } else {
+                        max_budget_usd
+                    };
                     let config = ClaudeConfig {
-                        auth: match auth {
-                            AuthArg::Subscription => Auth::Subscription,
-                            AuthArg::Api => Auth::Api,
-                        },
+                        auth,
                         model,
                         effort,
                         max_turns,
-                        max_budget_usd: Some(max_budget_usd),
+                        max_budget_usd,
                         executable: claude_path,
                         timeout: Duration::from_secs(timeout_seconds),
                     };
@@ -793,7 +808,7 @@ fn run_build(
             )
         }
         Agent::Claude => {
-            let config = sandbox_config(profile)?;
+            let config = sandbox_config(data_dir, profile)?;
             let boundary = wsl_boundary(data_dir, &guardian)?;
             let sandbox = autopilot_agent_claude::Sandbox {
                 boundary: boundary.clone(),
@@ -823,9 +838,35 @@ fn run_build(
     })
 }
 
+/// The dollar cap of one paid call: the explicit `--max-budget-usd` or the
+/// profile's per-call default, cut down to what is left of the total cap. A
+/// call is refused when the total is spent.
+fn paid_budget(
+    data_dir: &Path,
+    profile: Option<&Path>,
+    explicit: Option<&str>,
+) -> Result<String, Box<dyn Error>> {
+    let limits = match profile {
+        Some(path) => autopilot_engine::load_profile(path)?.spend,
+        None => autopilot_profile::SpendLimits::default(),
+    };
+    let explicit = match explicit {
+        Some(text) => Some(autopilot_core::Money::from_microusd(
+            autopilot_engine::micro_from_dollars(text)
+                .ok_or("--max-budget-usd must be dollars such as 0.05")?,
+        )),
+        None => None,
+    };
+    let micro = autopilot_engine::paid_call_cap(data_dir, &limits, explicit)?.as_microusd();
+    Ok(format!("{}.{:06}", micro / 1_000_000, micro % 1_000_000))
+}
+
 /// What a real Build turn runs with: the profile's `build_check` step. Only
 /// API-key mode exists inside the boundary.
-fn sandbox_config(profile: &autopilot_profile::Profile) -> Result<ClaudeConfig, Box<dyn Error>> {
+fn sandbox_config(
+    data_dir: &Path,
+    profile: &autopilot_profile::Profile,
+) -> Result<ClaudeConfig, Box<dyn Error>> {
     let refused = |reason: &str| -> Box<dyn Error> {
         format!(
             "a real agent cannot run the Build step: {reason} (docs/spikes/S6-containment.md, S6);              use --agent fake"
@@ -840,10 +881,9 @@ fn sandbox_config(profile: &autopilot_profile::Profile) -> Result<ClaudeConfig, 
             "build_check must use auth = \"api\", because a subscription sign-in cannot be kept out of the agent's reach",
         ));
     }
-    let micro = settings
-        .limits
-        .budget_microusd
-        .map_or(50_000, autopilot_core::Money::as_microusd);
+    let micro =
+        autopilot_engine::paid_call_cap(data_dir, &profile.spend, settings.limits.budget_microusd)?
+            .as_microusd();
     Ok(ClaudeConfig {
         auth: Auth::Api,
         model: settings.model.clone().unwrap_or_else(|| "haiku".to_owned()),

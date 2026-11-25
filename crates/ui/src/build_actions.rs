@@ -136,7 +136,7 @@ fn claude_build_agent(
     guardian: PathBuf,
     hook: BuildConfig,
 ) -> Result<(ClaudeAgent, Isolation, bool), String> {
-    let config = claude_config(options, Step::BuildCheck, Some(ticket));
+    let config = claude_config(options, Step::BuildCheck, Some(ticket))?;
     if config.auth != Auth::Api {
         return Err(
             "Build with Claude runs in API-key mode only: a subscription sign-in cannot be kept \

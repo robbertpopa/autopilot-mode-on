@@ -62,6 +62,7 @@ pub enum Tab {
 /// One engine action on its own thread.
 struct Running {
     id: u64,
+    action: Action,
     ticket: Option<TicketId>,
     what: &'static str,
     starts_ticket: bool,
@@ -139,6 +140,10 @@ pub struct App {
     /// action at a time.
     running: Vec<Running>,
     next_action: u64,
+    /// The action the spending cap stopped, to run again once the cap is raised.
+    pub(crate) cap_retry: Option<Action>,
+    /// Text being typed into the spend limit boxes, in dollars.
+    pub(crate) spend_edit: crate::spend::SpendEdit,
     /// The palette in use, resolved from `theme`.
     pub(crate) light: bool,
     pub(crate) theme: theme::ThemeChoice,
@@ -272,6 +277,8 @@ impl App {
             profile_problem: None,
             running: Vec::new(),
             next_action: 0,
+            cap_retry: None,
+            spend_edit: crate::spend::SpendEdit::default(),
             light,
             theme: choice,
             agent,
@@ -618,6 +625,7 @@ impl App {
         self.next_action += 1;
         self.running.push(Running {
             id: self.next_action,
+            action: action.clone(),
             ticket: action.ticket().cloned(),
             what: action.describe(),
             starts_ticket: matches!(action, Action::Start { .. }),
@@ -715,10 +723,16 @@ impl App {
                         .map(|at| self.running.remove(at));
                     // A new ticket opens by itself only when the owner is still
                     // waiting on it, not when they went on to something else.
-                    if outcome.is_ok() && ended.is_some_and(|each| each.starts_ticket) {
+                    if outcome.is_ok() && ended.as_ref().is_some_and(|each| each.starts_ticket) {
                         self.new_tickets += 1;
                         self.open_newest = self.selected.is_none() && self.mode == Mode::Watch;
                     }
+                    self.cap_retry = match (&outcome, ended) {
+                        (Err(text), Some(each)) if autopilot_engine::is_cap_refusal(text) => {
+                            Some(each.action)
+                        }
+                        _ => None,
+                    };
                     self.notice = Some(match outcome {
                         Ok(text) => (true, text),
                         Err(text) => (false, text),
@@ -875,8 +889,10 @@ impl App {
                 banner(ui, &text, ok);
                 if ui.small_button("dismiss").clicked() {
                     self.notice = None;
+                    self.cap_retry = None;
                 }
             });
+            self.cap_retry_row(ui);
         }
         // A ticket page and the inbox show the same line beside the button that
         // started the work; a second one up here would say it twice.
@@ -911,6 +927,8 @@ impl App {
         ui.label(theme::muted(
             "API spend is exact. Subscription spend is an estimate and is shown apart.",
         ));
+        ui.add_space(12.0);
+        self.spend_card(ui);
         ui.add_space(12.0);
         theme::card(theme::CARD(), theme::BORDER()).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -1189,6 +1207,10 @@ mod tests {
         app.open(&id);
         app.running.push(Running {
             id: 1,
+            action: Action::Attach {
+                ticket: id.clone(),
+                paths: Vec::new(),
+            },
             ticket: Some(id),
             what: "Making the plan",
             starts_ticket: false,
