@@ -23,6 +23,11 @@ pub struct Finish {
     pub peak_context: Option<u64>,
     /// The model's window, from the result frame's `modelUsage`.
     pub context_window: Option<u64>,
+    /// The turns the run used, from the result frame.
+    pub turns: Option<u32>,
+    /// What the run cost as the pipeline counts it: the provider's figure on
+    /// an API key, the priced tokens on a subscription. Set by the adapter.
+    pub spent_microusd: Option<u64>,
     /// The error kind of the assistant frame that preceded the result, such
     /// as `rate_limit`. Kept for the failure message only.
     pub error_kind: Option<String>,
@@ -35,6 +40,53 @@ pub struct Decoder {
     last_error: Option<String>,
     model: Option<String>,
     peak_context: Option<u64>,
+    progress: Progress,
+}
+
+/// What the run has used so far, built from assistant frames while it runs.
+/// Claude Code sends one frame per content block of a message with the same
+/// id and usage, so a message counts once and its latest figures win.
+#[derive(Default)]
+struct Progress {
+    turns: u32,
+    message: Option<String>,
+    current: Usage,
+    finished: Usage,
+}
+
+impl Progress {
+    /// Returns true when the frame began a new turn.
+    fn note(&mut self, id: Option<&str>, turn: Usage) -> bool {
+        let new = id.is_none() || self.message.as_deref() != id;
+        if new {
+            self.finished = add(self.finished, self.current);
+            self.turns = self.turns.saturating_add(1);
+            self.message = id.map(str::to_owned);
+        }
+        self.current = turn;
+        new
+    }
+
+    fn total(&self) -> Usage {
+        add(self.finished, self.current)
+    }
+}
+
+fn add(a: Usage, b: Usage) -> Usage {
+    Usage {
+        input: a.input.saturating_add(b.input),
+        output: a.output.saturating_add(b.output),
+        cache_read: a.cache_read.saturating_add(b.cache_read),
+        cache_write_5m: a.cache_write_5m.saturating_add(b.cache_write_5m),
+        cache_write_1h: a.cache_write_1h.saturating_add(b.cache_write_1h),
+    }
+}
+
+/// Dollars with two decimals, rounded up, for a line the owner reads.
+#[must_use]
+pub fn money_text(microusd: u64) -> String {
+    let cents = microusd.div_ceil(10_000);
+    format!("${}.{:02}", cents / 100, cents % 100)
 }
 
 impl Decoder {
@@ -99,6 +151,7 @@ impl Decoder {
             if prompt > 0 {
                 self.peak_context = Some(self.peak_context.map_or(prompt, |peak| peak.max(prompt)));
             }
+            self.progress_line(frame, &usage(turn), report);
         }
         let content = frame.pointer("/message/content").and_then(Value::as_array);
         for item in content.into_iter().flatten() {
@@ -130,6 +183,28 @@ impl Decoder {
                 _ => {}
             }
         }
+    }
+
+    /// One line per turn, so the window can show that a long step still moves
+    /// and what it has cost so far. The figure is an estimate and a lower
+    /// bound: a frame carries the output tokens written when it was sent.
+    fn progress_line(&mut self, frame: &Value, turn: &Usage, report: &mut impl FnMut(String)) {
+        let id = frame.pointer("/message/id").and_then(Value::as_str);
+        if !self.progress.note(id, *turn) {
+            return;
+        }
+        let so_far = self
+            .model
+            .as_deref()
+            .and_then(|model| crate::pricing::estimate_microusd(model, self.progress.total()));
+        report(match so_far {
+            Some(micro) => format!(
+                "progress: turn {}, about {} so far",
+                self.progress.turns,
+                money_text(micro)
+            ),
+            None => format!("progress: turn {}", self.progress.turns),
+        });
     }
 
     fn result(&mut self, frame: &Value) {
@@ -165,6 +240,11 @@ impl Decoder {
                         .filter_map(|each| each.get("contextWindow").and_then(Value::as_u64))
                         .max()
                 }),
+            turns: frame
+                .get("num_turns")
+                .and_then(Value::as_u64)
+                .and_then(|turns| u32::try_from(turns).ok()),
+            spent_microusd: None,
             error_kind: self.last_error.take(),
         });
     }
@@ -462,5 +542,38 @@ mod tests {
         for bad in [f64::NAN, f64::INFINITY, -0.01, 1e12] {
             assert_eq!(microusd(bad), None);
         }
+    }
+
+    // Invariant: a message sent as several frames counts as one turn and its
+    // usage is taken once, and the running figure never goes down. Counting
+    // frames, or adding a repeated usage again, would show 3 turns and a
+    // doubled cost for these two messages.
+    #[test]
+    fn progress_counts_a_message_once_however_many_frames_it_has() {
+        let frame = |id: &str, output: u64| {
+            format!(
+                "{{\"type\":\"assistant\",\"message\":{{\"id\":\"{id}\",\"usage\":{{\"input_tokens\":1,\"output_tokens\":{output}}}}}}}
+"
+            )
+        };
+        let input = format!(
+            "{{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"claude-opus-5-5\"}}
+{}{}{}",
+            frame("a", 100_000),
+            frame("a", 100_000),
+            frame("b", 100_000)
+        );
+        let (activity, _) = decode(input.as_bytes(), true);
+        let progress: Vec<_> = activity
+            .iter()
+            .filter(|line| line.starts_with("progress"))
+            .collect();
+        assert_eq!(
+            progress,
+            [
+                "progress: turn 1, about $2.01 so far",
+                "progress: turn 2, about $4.01 so far"
+            ]
+        );
     }
 }

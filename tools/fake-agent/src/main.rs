@@ -78,10 +78,27 @@ fn claude_print() -> Result<ExitCode, Box<dyn std::error::Error>> {
         thread::sleep(Duration::from_secs(60));
         return Ok(ExitCode::SUCCESS);
     }
-    if prompt.contains("scenario:max-turns") {
+    if prompt.contains("scenario:max-turns") || prompt.contains("scenario:budget-cap") {
+        // Two turns of an Opus Plan, then the stop Claude Code reports with the
+        // money the run already spent.
+        let subtype = if prompt.contains("scenario:max-turns") {
+            "error_max_turns"
+        } else {
+            "error_max_budget_usd"
+        };
         writeln!(
             output,
-            "{init}{{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true,\"total_cost_usd\":0.002}}"
+            "{{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"claude-opus-5-5\"}}"
+        )?;
+        for (id, text) in [("m1", "reading"), ("m2", "still reading")] {
+            writeln!(
+                output,
+                "{{\"type\":\"assistant\",\"message\":{{\"id\":\"{id}\",\"usage\":{{\"input_tokens\":2,\"cache_read_input_tokens\":10000,\"output_tokens\":500}},\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}}}"
+            )?;
+        }
+        writeln!(
+            output,
+            "{{\"type\":\"result\",\"subtype\":\"{subtype}\",\"is_error\":true,\"num_turns\":20,\"total_cost_usd\":1.32}}"
         )?;
         return Ok(ExitCode::FAILURE);
     }

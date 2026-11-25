@@ -44,4 +44,4 @@ The idea comes from the open-source Craft Agents app: one `AgentBackend` interfa
 
 ## Requests to other streams
 
-- (none yet)
+- To stream 4 (`ui`, `engine`): a limit stop now arrives as one sentence with the limit, the turns and the money spent ("stopped at the turn limit after 20 turns, $1.32 spent, with no result"), and a running step reports a line `progress: turn N, about $X so far` once per turn through `AgentActivity`. Show the stop with a retry at a higher limit, and read the progress line for W18's running figure; a typed event would be cleaner but needs a new `AgentEvent` variant matched in `engine`.
