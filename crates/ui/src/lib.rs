@@ -2715,6 +2715,36 @@ effort = \"high\"
         assert!(found.is_empty(), "{} overlaps: {:#?}", found.len(), found);
     }
 
+    // Invariant: a notice describes the ticket that was open when it showed. A
+    // notice kept for the whole window would tell the owner that ticket B did
+    // what ticket A did. It fails if `notice` is shown again after the owner
+    // opens another ticket.
+    #[test]
+    fn a_notice_does_not_follow_the_owner_to_another_ticket() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = Options {
+            data_dir: directory.path().join("data"),
+            profile: directory.path().join("profile.toml"),
+            view: None,
+            ticket: None,
+        };
+        backend::AgentChoice::Practice.save(&options.data_dir);
+        demo::seed(&options.data_dir, now_ms()).unwrap();
+        let context = egui::Context::default();
+        let mut app = App::new(&context, options.clone(), false);
+        app.set_snapshot(read(&options));
+        let first = app.snapshot.tickets[0].id.clone();
+        let second = app.snapshot.tickets[1].id.clone();
+        app.open(&first);
+        frame(&mut app, &context);
+        app.notice = Some((true, "Opened the mockups".to_owned()));
+        frame(&mut app, &context);
+        assert!(app.notice.is_some(), "the notice stays on its own ticket");
+        app.open(&second);
+        frame(&mut app, &context);
+        assert_eq!(app.notice, None);
+    }
+
     // Invariant: on the plan review page at about 900 px, no text is drawn past
     // the window's right edge, even for a long criterion or verification id. A
     // criterion in one row with its pill ran off the screen. The overlap test

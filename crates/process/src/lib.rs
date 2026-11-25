@@ -2,6 +2,7 @@
 
 pub mod isolation;
 pub mod refusal;
+pub mod terminal;
 pub mod wsl;
 
 #[cfg(target_os = "linux")]
