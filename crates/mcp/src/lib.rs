@@ -6,7 +6,9 @@
 //! root, and refuses every file path that resolves outside them. Links are
 //! followed only to see where they lead, and a path that leads out is refused.
 //! Tools: `list_tickets`, `ticket_status`, `ticket_history`, `waiting_requests`,
-//! `read_file`, `write_file`.
+//! `answer_request`, `read_file`, `write_file`. `answer_request` goes through the
+//! same inbox and checks as the window, and never approves a forced
+//! confirmation: only the owner can.
 //! Nothing here starts an agent or spends money.
 
 mod scope;
@@ -16,8 +18,11 @@ use std::{
     path::PathBuf,
 };
 
-use autopilot_core::TicketId;
-use autopilot_pipeline::inbox::{Inbox, RequestBody};
+use autopilot_core::{RequestId, TicketId};
+use autopilot_pipeline::{
+    clarify::Choice,
+    inbox::{Decision, Inbox, Reply, RequestBody, check_reply},
+};
 use serde_json::{Value, json};
 
 pub use scope::Scope;
@@ -110,6 +115,49 @@ impl Server {
         }
     }
 
+    /// `answer` is `approve` or `reject` for an approval, and `recommended`
+    /// for a question.
+    fn answer(&self, request: &str, answer: &str) -> Result<String, Error> {
+        let refuse = |why: &str| Err(Error::Refused(why.to_owned()));
+        let inbox = Inbox::in_data_dir(&self.data);
+        let id = RequestId::from(request);
+        let waiting = inbox
+            .read_request(&id)
+            .map_err(|error| Error::Refused(error.to_string()))?
+            .ok_or_else(|| Error::Refused("no such waiting request".to_owned()))?;
+        let reply = match (&waiting.body, answer) {
+            (RequestBody::Question { questions }, "recommended") => Reply::Question {
+                choices: vec![Choice::Recommended; questions.len()],
+            },
+            (RequestBody::Approval { forced: true, .. }, "approve") => {
+                // A client is not the owner: a forced confirmation exists so a
+                // person looks at the exact action first.
+                return refuse("this approval is forced; only the owner can approve it");
+            }
+            (RequestBody::Approval { .. }, "approve" | "reject") => Reply::Approval {
+                decision: if answer == "approve" {
+                    Decision::Approve
+                } else {
+                    Decision::Reject
+                },
+                allow_for_project: false,
+            },
+            (RequestBody::Question { .. }, _) => {
+                return refuse("answer a question with \"recommended\"");
+            }
+            (RequestBody::Approval { .. }, _) => {
+                return refuse("answer an approval with \"approve\" or \"reject\"");
+            }
+        };
+        check_reply(&waiting, &reply).map_err(|error| Error::Refused(error.to_string()))?;
+        inbox
+            .write_answer(&id, &reply)
+            .map_err(|error| Error::Refused(error.to_string()))?;
+        autopilot_engine::sync_inbox(&self.data, &waiting.ticket)
+            .map_err(|error| Error::Refused(error.to_string()))?;
+        Ok(format!("answered {request}"))
+    }
+
     fn run(&self, name: &str, arguments: &Value) -> Result<String, Error> {
         let text = |key: &str| {
             arguments
@@ -184,6 +232,7 @@ impl Server {
 ",
                     ))
             }
+            "answer_request" => self.answer(text("request")?, text("answer")?),
             "read_file" => self.scope.read(text("path")?),
             "write_file" => self.scope.write(text("path")?, text("text")?),
             other => Err(Error::Refused(format!("no tool {other}"))),
@@ -214,6 +263,8 @@ fn tools() -> Value {
          "inputSchema": object(&json!({"ticket": {"type": "string"}}), &["ticket"])},
         {"name": "waiting_requests", "description": "List what is waiting for the owner: questions and approvals.",
          "inputSchema": object(&json!({}), &[])},
+        {"name": "answer_request", "description": "Answer a waiting request: \"recommended\" for a question, \"approve\" or \"reject\" for an approval. A forced approval can only be rejected.",
+         "inputSchema": object(&json!({"request": {"type": "string"}, "answer": {"type": "string"}}), &["request", "answer"])},
         {"name": "read_file", "description": "Read a text file inside a read root.",
          "inputSchema": object(&json!({"path": {"type": "string"}}), &["path"])},
         {"name": "write_file", "description": "Write a text file inside a write root. The folder must exist.",
@@ -340,7 +391,7 @@ mod tests {
         let list = server
             .handle(r#"{"jsonrpc":"2.0","id":8,"method":"tools/list"}"#)
             .unwrap();
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 6);
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 7);
         assert!(
             server
                 .handle(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
@@ -350,6 +401,72 @@ mod tests {
             .handle(r#"{"jsonrpc":"2.0","id":9,"method":"nope"}"#)
             .unwrap();
         assert_eq!(unknown["error"]["code"], -32601);
+    }
+
+    fn waiting(data: &std::path::Path, id: &str, forced: bool) {
+        use autopilot_pipeline::inbox::Request;
+        Inbox::in_data_dir(data)
+            .write_request(&Request {
+                id: RequestId::from(id),
+                ticket: TicketId::from("t-1"),
+                body: RequestBody::Approval {
+                    action: "push".into(),
+                    forced,
+                },
+            })
+            .unwrap();
+    }
+
+    // Invariant: an MCP client cannot approve a forced request on the owner's
+    // behalf. Removing the forced arm in `answer` would let any connected
+    // agent publish; the engine accepts a bare Approve file for a forced
+    // request, so no other test or check stops it.
+    #[test]
+    fn a_client_cannot_approve_a_forced_request() {
+        let dir = tempfile::tempdir().unwrap();
+        waiting(dir.path(), "r1", true);
+        let server = server(dir.path(), dir.path());
+        let (error, text) = call(
+            &server,
+            "answer_request",
+            &json!({"request": "r1", "answer": "approve"}),
+        );
+        assert!(error, "{text}");
+        assert!(text.contains("forced"), "{text}");
+        let inbox = Inbox::in_data_dir(dir.path());
+        let id = RequestId::from("r1");
+        assert!(inbox.read_answer(&id).unwrap().is_none());
+        assert!(inbox.read_request(&id).unwrap().is_some());
+    }
+
+    // Invariant: an answer other than the ones named is refused before any
+    // file is written, so a typo is never read as consent.
+    #[test]
+    fn an_unknown_answer_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        waiting(dir.path(), "r2", false);
+        let server = server(dir.path(), dir.path());
+        for answer in ["yes", "", "recommended"] {
+            let (error, _) = call(
+                &server,
+                "answer_request",
+                &json!({"request": "r2", "answer": answer}),
+            );
+            assert!(error, "{answer}");
+        }
+        let (error, _) = call(
+            &server,
+            "answer_request",
+            &json!({"request": "../x", "answer": "reject"}),
+        );
+        assert!(error);
+        let id = RequestId::from("r2");
+        assert!(
+            Inbox::in_data_dir(dir.path())
+                .read_answer(&id)
+                .unwrap()
+                .is_none()
+        );
     }
 
     // Invariant: history returns the ticket's timeline with control characters
@@ -394,7 +511,6 @@ forged line {}",
     // would hide that from the agent; no other test reads the listing.
     #[test]
     fn waiting_requests_name_the_kind_and_mark_forced_approvals() {
-        use autopilot_core::RequestId;
         use autopilot_pipeline::inbox::Request;
         let dir = tempfile::tempdir().unwrap();
         let inbox = Inbox::in_data_dir(dir.path());
