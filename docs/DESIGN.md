@@ -152,6 +152,20 @@ This is the layering as designed. The crates that exist and their layers are in 
 - M9 can measure whether a different model family improves independent review.
 - The profile schema has `agent` and `auth` per step from M0, so adding the Codex adapter later changes no file format.
 
+### Decision: the Claude Agent SDK (A12, 2026-11-25): defer, do not build
+
+Question: would the Claude Agent SDK (TypeScript or Python) replace or sit beside `agent-claude` for sessions, hooks, permission callbacks and cost data?
+
+**Defer.** Keep the CLI adapter. Reasons, each checked against the code except where marked:
+
+- **Nothing we lack.** The adapter already gets sessions (`--session-id`, `--resume`), a deny hook (`--settings`), a permission mode, structured output and cost from the stream-JSON result (`crates/agent-claude/src/command.rs`). The SDK's callbacks would replace flags with in-process code, not add a capability. The one thing the CLI flags do not give us, answering a permission request from our inbox, is A11 (`--permission-prompt-tool` served by `autopilot-mcp`); decide again only if A11 shows the CLI cannot do it.
+- **A second runtime.** The host is Rust. The SDK needs Node or Python on the owner's PC and a sidecar process we would have to launch, supervise and bridge to the engine, plus the same inside the sandbox for Build. Every extra runtime is more to install, pin and probe.
+- **The boundary.** The sandbox launches one pinned program under `srt` or WSL with a validated environment, a hook the agent cannot overwrite and a placeholder key (S6). A sidecar that itself spawns the agent would put our launch policy behind someone else's code, and `cargo xtask layers` only lets `process` run subprocesses.
+- **Subscription sign-in.** Subscription is our default auth (section 7). From memory and not re-checked today: Anthropic's SDK terms do not let a product offer claude.ai sign-in for its users, which would not fit that default. Re-read the SDK's current terms and licence before any reversal.
+- **Cost.** More moving parts for no saving: the cost figures in the CLI result are what the SDK reports too (from memory).
+
+Revisit when: A11 fails, the CLI drops a flag we rely on, or an SDK feature we need has no CLI equivalent.
+
 ## 8. Window (egui) and the Claude Design canvas
 
 A node graph where each step shows its settings, with a profile file as the source of truth. Simple view: four steps (Plan, Build, Check, Ready);
